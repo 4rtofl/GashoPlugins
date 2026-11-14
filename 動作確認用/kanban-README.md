@@ -23,3 +23,5 @@
 | `watch` | write | 見る repo を `{ paths }` に、repo ごとのカンバン用のプラグインを `{ plugins }`（primary checkout からプラグインの名前）に変える。新しく足せるのは `options` にある GitHub の repo だけ。`plugins` が無ければ、前に選んだものを残す。`fetch` のあるプラグインを選んだ repo があれば、読み直す |
 
 会話をカードに振り分け、カンバン用のプラグインの `state` でカードの列を決めるのは画面の部分（`src/cards.ts`）で、daemon の部分は会話を受け取らない。daemon の部分は、選んだプラグインの名前を覚え、その `fetch` を呼ぶ（`src/daemon/reader.ts`）。GitHub の API は、repo 1つを1回読むと2点使う（GraphQL の上限は1時間に5000点）ので、カンバンを開いているあいだ、repo 1つで1時間に120点になる。`fetch` は2分に1回なので、見本（1回2点ほど）なら60点が足される。
+
+動作確認用に足した行

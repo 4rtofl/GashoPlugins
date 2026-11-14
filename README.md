@@ -46,3 +46,4 @@ npm run hub:plugin -- add ~/repos/GashoPlugins/github/dist          # ビルド�
 ```
 
 daemon の部分（working server で動く部分）は、プラグインに対応した gasho-daemon（0.12.0 以降）でだけ動く。
+動作確認用に足した行
