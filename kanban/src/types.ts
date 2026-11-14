@@ -41,12 +41,16 @@ export interface RepoMaterial {
   prs: OpenPr[];
   /** My latest closed pull request of each branch. */
   closed: ClosedPr[];
+  /** The board plugin chosen for it in "見る repo" (a folder of kanban/plugins/). */
+  plugin?: string;
 }
 
 /** What the daemon part read for the kanban. A repository that could not be read keeps its material as last read. */
 export interface Board {
   /** The primary checkouts watched, as chosen. */
   watched: string[];
+  /** The board plugin chosen for each of them that has one, by primary checkout. */
+  plugins?: Record<string, string>;
   repos: RepoMaterial[];
   /** `repo` is OWNER/REPO, or the folder's name when it is not known. */
   errors: { path: string; repo: string; error: string }[];

@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
-import { arrangeCards, assignSessions, boardCards, cardsOf, issueOf, kanbanCards, type SessionLike } from "../src/cards.ts";
+import { arrangeCards, assignSessions, boardCards, cardsOf, issueOf, kanbanCards, placeCard, type BoardPlugins, type SessionLike } from "../src/cards.ts";
 import { ghError, parseClosed, parseGitHubUrl, parsePrs, parseWorktrees, type Exec } from "../src/daemon/git.ts";
 import { READ_EVERY_MS, Reader } from "../src/daemon/reader.ts";
 import type { OpenPr, RepoMaterial } from "../src/types.ts";
 
 const pr = (over: Partial<OpenPr> = {}): OpenPr => ({ number: 1, title: "t", url: "https://github.com/o/r/pull/1", headRefName: "feat/1-x", ...over });
 const session = (status: SessionLike["status"], cwd = "/r/wt", over: Partial<SessionLike> = {}): SessionLike => ({ sessionId: `s-${status}`, cwd, status, ...over });
+const NONE: BoardPlugins = new Map();
 
 test("cards: a worktree without a pull request, a pull request without a worktree, and the primary checkout only when needed", () => {
   const m: RepoMaterial = {
@@ -24,7 +25,7 @@ test("cards: a worktree without a pull request, a pull request without a worktre
     closed: [{ number: 4, headRefName: "feat/3-b", state: "MERGED", title: "B", url: "https://github.com/o/r/pull/4" }],
   };
   assert.deepEqual(
-    cardsOf(m, new Map()).map((c) => [c.label, c.title, c.issue, c.pr?.state, c.pr?.draft, c.column]),
+    cardsOf(m, new Map(), NONE).map((c) => [c.label, c.title, c.issue, c.pr?.state, c.pr?.draft, c.column]),
     [
       ["wt-a", "feat/2-a", 2, undefined, undefined, "mine"],
       ["wt-b", "B", 3, "merged", undefined, "mine"],
@@ -32,8 +33,8 @@ test("cards: a worktree without a pull request, a pull request without a worktre
     ],
   );
   // The primary checkout shows while a session there works or awaits an answer; an idle one does not bring it.
-  assert.equal(cardsOf(m, new Map([["/r/main", [session("idle", "/r/main")]]])).some((c) => c.primary), false);
-  const busy = cardsOf(m, new Map([["/r/main", [session("busy", "/r/main", { managed: true })]]]));
+  assert.equal(cardsOf(m, new Map([["/r/main", [session("idle", "/r/main")]]]), NONE).some((c) => c.primary), false);
+  const busy = cardsOf(m, new Map([["/r/main", [session("busy", "/r/main", { managed: true })]]]), NONE);
   assert.deepEqual(busy.find((c) => c.primary)?.sessions, [{ sessionId: "s-busy", status: "busy", managed: true }]);
   assert.equal(issueOf("release/2.1"), undefined);
 });
@@ -50,14 +51,35 @@ test("sessions go to the deepest worktree that holds their folder, across the re
   const inner: RepoMaterial = { repo: "o/in", primary: { path: "/r/inner" }, worktrees: [{ branch: "x", path: "/r/inner/wt" }], prs: [], closed: [] };
   const board = { watched: ["/r/main", "/r/inner"], repos: [outer, inner], errors: [] };
   assert.deepEqual(
-    boardCards(machine, board).map((c) => [c.label, c.sessions.map((x) => x.sessionId)]),
+    boardCards(machine, board, NONE).map((c) => [c.label, c.sessions.map((x) => x.sessionId)]),
     [
       ["wt-a", ["a"]],
       ["wt", ["c"]],
     ],
   );
   // An offline working server shows no cards.
-  assert.equal(kanbanCards([{ machine: { ...machine, connected: false }, board }]).length, 0);
+  assert.equal(kanbanCards([{ machine: { ...machine, connected: false }, board }], NONE).length, 0);
+});
+
+test("a card goes in the column its repository's board plugin gives, and in the first one when the plugin fails", () => {
+  const m: RepoMaterial = { repo: "o/r", primary: { path: "/r/main" }, worktrees: [{ branch: "feat/2-a", path: "/r/wt-a" }], prs: [pr({ headRefName: "feat/2-a" })], closed: [], plugin: "mine" };
+  const plugins: BoardPlugins = new Map<string, { state?: unknown }>([
+    ["mine", { state: (c: { pr?: { number: number } }) => ({ column: "review", reason: ` PR #${c.pr?.number} ` }) }],
+    ["throws", { state: () => { throw new Error("boom"); } }],
+    ["odd", { state: () => ({ column: "later" }) }],
+    ["empty", {}],
+  ]);
+  const placed = (name: string | undefined) => {
+    const [card] = cardsOf({ ...m, ...(name ? { plugin: name } : { plugin: undefined }) }, new Map(), plugins);
+    return [card?.column, card?.reason?.text, card?.reason?.error];
+  };
+  assert.deepEqual(placed("mine"), ["review", "PR #1", undefined]);
+  assert.deepEqual(placed(undefined), ["mine", undefined, undefined]);
+  assert.deepEqual(placed("throws"), ["mine", "列を決められませんでした（throws）", "state が失敗しました：boom"]);
+  assert.deepEqual(placed("odd"), ["mine", "列を決められませんでした（odd）", "state が知らない列を返しました：later"]);
+  assert.match(placed("empty")[2] ?? "", /state を export していません/);
+  // A plugin chosen on a working server but not in this build, such as another person's.
+  assert.match(placeCard({ id: "x", repo: "o/r", label: "x", title: "", sessions: [] }, "gone", plugins).reason?.error ?? "", /kanban\/plugins\/gone\/ が、このビルドにありません/);
 });
 
 test("a column's order: cards without the value stay below in either direction", () => {
@@ -123,7 +145,7 @@ test("the watched repositories are kept in the plugin's folder, read at most onc
   const first = await reader.watch(["/r/main"]);
   assert.equal(first.checking, true);
   await reader.settled();
-  assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), { paths: ["/r/main"] });
+  assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), { paths: ["/r/main"], plugins: {} });
   const board = reader.board();
   assert.deepEqual(board.repos[0]?.worktrees, [{ branch: "feat/5-x", path: "/r/wt" }]);
   assert.equal(board.repos[0]?.prs[0]?.number, 6);
@@ -143,10 +165,21 @@ test("the watched repositories are kept in the plugin's folder, read at most onc
   assert.equal(failed.repos[0]?.prs[0]?.number, 6);
   assert.deepEqual(failed.errors.map((e) => [e.repo, e.error]), [["o/r", "GitHub から読み込めませんでした：error connecting to api.github.com"]]);
 
+  // The board plugin of a repository is kept with it, comes with its material, and changing it reads nothing again.
+  await assert.rejects(reader.watch(["/r/main"], { "/r/main": 1 }), /プラグインの指定が正しくありません/);
+  const chosen = await reader.watch(["/r/main"], { "/r/main": "mine", "/elsewhere": "mine" });
+  assert.equal(chosen.checking, undefined);
+  assert.deepEqual(chosen.plugins, { "/r/main": "mine" });
+  assert.equal(chosen.repos[0]?.plugin, "mine");
+  assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), { paths: ["/r/main"], plugins: { "/r/main": "mine" } });
+  // Choosing the repositories without the plugins keeps the ones chosen.
+  assert.deepEqual((await reader.watch(["/r/main"])).plugins, { "/r/main": "mine" });
+
   // Another process (the plugin started again) reads the same repositories from the file.
   const again = new Reader({ exec: server.exec, folders: () => ["/r/wt"], file, log: () => undefined });
   await again.load();
   assert.deepEqual(again.board().watched, ["/r/main"]);
+  assert.deepEqual(again.board().plugins, { "/r/main": "mine" });
   await again.settled();
   // A repository watched before may stay while its folder is gone, so that it can be taken off.
   const gone = new Reader({ exec: server.exec, folders: () => [], file, log: () => undefined });
@@ -154,6 +187,7 @@ test("the watched repositories are kept in the plugin's folder, read at most onc
   gone.board();
   await gone.settled();
   assert.match(gone.board().errors[0]?.error ?? "", /信頼しているフォルダーの repo ではない/);
-  assert.deepEqual((await gone.watch([])).watched, []);
+  const none = await gone.watch([]);
+  assert.deepEqual([none.watched, none.plugins], [[], {}]);
   await fs.rm(dir, { recursive: true, force: true });
 });

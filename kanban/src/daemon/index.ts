@@ -38,10 +38,13 @@ export default defineDaemonPlugin({
       await r.load();
       return r.refresh();
     },
-    /** Watches { paths } (primary checkouts from `options`) from now on, and returns the board. */
+    /**
+     * Watches { paths } (primary checkouts from `options`) from now on, with { plugins } (the board plugin of each,
+     * { path: name }), and returns the board.
+     */
     async watch(params) {
-      const p = (typeof params === "object" && params !== null ? params : {}) as { paths?: unknown };
-      return current().watch(p.paths);
+      const p = (typeof params === "object" && params !== null ? params : {}) as { paths?: unknown; plugins?: unknown };
+      return current().watch(p.paths, p.plugins);
     },
   },
 });

@@ -1,8 +1,8 @@
 // The kanban of one working server (moved here from the Kanban class of Gasho's apps/daemon/src/kanban.ts of PR #8):
-// which repositories it watches (kept in the plugin's own folder, ctx.dataDir), and what it last read of them. It
-// reads while someone looks: the web part asks for the board every minute while it shows, and a request that finds the
-// last reading older than a minute starts the next one. However many browsers look, it reads at most once a minute. A
-// repository that fails keeps what it read before, with the error.
+// which repositories it watches and the board plugin chosen for each (kept in the plugin's own folder, ctx.dataDir),
+// and what it last read of them. It reads while someone looks: the web part asks for the board every minute while it
+// shows, and a request that finds the last reading older than a minute starts the next one. However many browsers
+// look, it reads at most once a minute. A repository that fails keeps what it read before, with the error.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PluginError } from "@gasho/plugin-sdk/daemon";
@@ -18,6 +18,15 @@ const PARALLEL = 4;
 /** The repositories that can be watched are listed again when the folders change, or when the list is this old. */
 const OPTIONS_MAX_AGE_MS = 5 * 60_000;
 
+/** A board plugin's name: a folder of kanban/plugins/. Only kept here; the web part looks it up in its build. */
+const pluginName = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 100 && !v.includes("/");
+
+/** The board plugins of `v` ({ path: name }) for the repositories of `paths`; anything else is left out. */
+function pluginsOf(v: unknown, paths: readonly string[]): Record<string, string> {
+  if (typeof v !== "object" || v === null) return {};
+  return Object.fromEntries(Object.entries(v).filter(([p, name]) => paths.includes(p) && pluginName(name)));
+}
+
 export interface ReaderDeps {
   exec: Exec;
   /** The folders Gasho can start sessions in (ctx.folders). */
@@ -32,6 +41,7 @@ export class Reader {
   private deps: ReaderDeps;
   private now: () => number;
   private watched: string[] = [];
+  private plugins: Record<string, string> = {};
   private loaded: Promise<void> | undefined;
   private material = new Map<string, RepoMaterial>();
   private errors = new Map<string, string>();
@@ -53,9 +63,10 @@ export class Reader {
   load(): Promise<void> {
     this.loaded ??= fs.readFile(this.deps.file, "utf8").then(
       (raw) => {
-        const v = JSON.parse(raw) as { paths?: unknown } | null;
+        const v = JSON.parse(raw) as { paths?: unknown; plugins?: unknown } | null;
         const paths = Array.isArray(v?.paths) ? v.paths.filter((p): p is string => typeof p === "string") : [];
         this.watched = [...new Set(paths)].slice(0, MAX_REPOS);
+        this.plugins = pluginsOf(v?.plugins, this.watched);
       },
       (e: unknown) => {
         if ((e as { code?: unknown }).code !== "ENOENT") this.deps.log("kanban: could not read the watched repositories", e);
@@ -94,12 +105,16 @@ export class Reader {
   }
 
   /**
-   * Watches `paths` from now on and keeps them in the file. Each must be a repository on GitHub that can be watched
-   * now, or one watched already (whose folder may be gone: it can stay until it is taken off).
+   * Watches `paths` from now on, with the board plugins `plugins` ({ path: name }; the ones chosen before when it is
+   * not given), and keeps them in the file. Each path must be a repository on GitHub that can be watched now, or one
+   * watched already (whose folder may be gone: it can stay until it is taken off).
    */
-  async watch(paths: unknown): Promise<Board> {
+  async watch(paths: unknown, plugins?: unknown): Promise<Board> {
     await this.load();
     if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) throw new PluginError("見る repo の指定が正しくありません。");
+    if (plugins !== undefined && (typeof plugins !== "object" || plugins === null || !Object.values(plugins).every(pluginName))) {
+      throw new PluginError("カンバン用のプラグインの指定が正しくありません。");
+    }
     const next = [...new Set(paths as string[])];
     if (next.length > MAX_REPOS) throw new PluginError(`見る repo は、1 台の working server に ${MAX_REPOS} 個までです。`);
     const added = next.filter((p) => !this.watched.includes(p));
@@ -108,12 +123,17 @@ export class Reader {
       const bad = added.filter((p) => !offered.has(p));
       if (bad.length > 0) throw new PluginError(`選べない repo です：${bad.join("、")}`);
     }
-    if (JSON.stringify(next) !== JSON.stringify(this.watched)) {
+    const nextPlugins = pluginsOf(plugins ?? this.plugins, next);
+    const moved = JSON.stringify(next) !== JSON.stringify(this.watched);
+    if (moved || JSON.stringify(nextPlugins) !== JSON.stringify(this.plugins)) {
       await fs.mkdir(path.dirname(this.deps.file), { recursive: true });
       const tmp = `${this.deps.file}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, `${JSON.stringify({ paths: next }, null, 2)}\n`);
+      await fs.writeFile(tmp, `${JSON.stringify({ paths: next, plugins: nextPlugins }, null, 2)}\n`);
       await fs.rename(tmp, this.deps.file);
       this.watched = next;
+      this.plugins = nextPlugins;
+    }
+    if (moved) {
       for (const map of [this.material, this.errors]) {
         for (const p of [...map.keys()]) if (!next.includes(p)) map.delete(p);
       }
@@ -139,7 +159,12 @@ export class Reader {
   private snapshot(): Board {
     return {
       watched: [...this.watched],
-      repos: this.watched.flatMap((p) => this.material.get(p) ?? []),
+      plugins: { ...this.plugins },
+      repos: this.watched.flatMap((p) => {
+        const m = this.material.get(p);
+        const plugin = this.plugins[p];
+        return m ? [{ ...m, ...(plugin ? { plugin } : {}) }] : [];
+      }),
       errors: this.watched.flatMap((p) => {
         const error = this.errors.get(p);
         return error ? [{ path: p, repo: this.label(p), error }] : [];
