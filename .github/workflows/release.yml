@@ -1,0 +1,40 @@
+# Checks the plugins (typecheck, tests, build) on every pull request and push to main. On main, it then releases each
+# plugin whose version in gasho-plugin.json has no release yet, and remakes catalog.json in the release "catalog",
+# which Gasho's plugins screen reads (scripts/release.ts; Gasho's docs/plugins.md, P10).
+name: Plugins
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # the releases
+  packages: read # the SDK, @4rtoflow/gasho-plugin-sdk on GitHub Packages
+
+concurrency:
+  # One release at a time; checks of pull requests do not wait for it.
+  group: plugins-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@4rtoflow"
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: node scripts/release.ts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
