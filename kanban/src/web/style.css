@@ -1,0 +1,5 @@
+/* The kanban plugin's styles: the Tailwind classes it uses, in Gasho's theme (see @gasho/plugin-sdk/plugin.css), and the
+   animations of its menus and dialogs (tw-animate-css, as Gasho's screen has them). */
+@import "@gasho/plugin-sdk/plugin.css";
+@import "tw-animate-css";
+@source "../";
