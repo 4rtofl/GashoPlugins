@@ -69,11 +69,17 @@ export interface GitHubCheck {
   url?: string;
 }
 
-/** A file a pull request changes. */
+/** A file a pull request changes (the operation "files"). */
 export interface GitHubFile {
   path: string;
+  /** GitHub's "copied" is added, and a change of only the file's mode is modified. */
+  status: "added" | "modified" | "removed" | "renamed";
+  /** renamed: the path it had. */
+  previousPath?: string;
   additions: number;
   deletions: number;
+  /** Its diff's id on the pull request's page of files: diff-<SHA-256 of the path>. */
+  anchor: string;
 }
 
 /** A change of an issue or pull request, shown between its comments (GraphQL timelineItems). */
@@ -120,6 +126,5 @@ export interface GitHubItemDetail {
   additions?: number;
   deletions?: number;
   changedFiles?: number;
-  files?: GitHubFile[];
   checks?: GitHubCheck[];
 }
