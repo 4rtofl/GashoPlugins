@@ -6,7 +6,8 @@
   "workspaces": [
     "github",
     "kanban",
-    "pondering"
+    "pondering",
+    "remote-control-shell"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
