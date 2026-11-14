@@ -1,0 +1,3 @@
+/* The styles of github-almighty: the Tailwind classes it uses, in Gasho's theme (see @gasho/plugin-sdk/plugin.css). */
+@import "@gasho/plugin-sdk/plugin.css";
+@source "../";
