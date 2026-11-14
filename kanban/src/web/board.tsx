@@ -1,6 +1,6 @@
 // The kanban's page (moved here from Gasho's views/kanban.tsx of PR #8, after 4rtoflow/Dashboard): the worktrees and my
-// pull requests of the watched repositories, read by each working server's daemon part. Nothing decides the columns yet,
-// so every card is in the first one; the columns, their widths, views and orders are ready for that. The look follows
+// pull requests of the watched repositories, read by each working server's daemon part, in the columns the board plugin
+// of each repository gives (in the first one without a plugin). The look follows
 // easyui.site: dark tiles with hairline borders, color only where it tells a state, and springs. On a computer the board
 // fills the page and each column scrolls by itself; on a phone one column shows at a time, picked with a sliding pill.
 import { ArrowUpDown, Check, LoaderCircle, RefreshCw, Settings2, SquareKanban, X } from "lucide-react";
@@ -31,6 +31,7 @@ import {
   type PlacedCard,
 } from "../cards.ts";
 import type { Board } from "../types.ts";
+import { BOARD_PLUGINS } from "./board-plugins";
 import { Card, CardActionsContext, CardSkeleton, CompactCard, type CardActions, type Notice, type Where } from "./card";
 import { clampWidth, columnCompact, columnWidth, setColumnCompact, setColumnSort, setColumnWidth, useKanbanPrefs, type KanbanPrefs } from "./prefs";
 import { ReposDialog } from "./repos-dialog";
@@ -145,12 +146,13 @@ export function KanbanPage(_: PageProps) {
     const board = sources[machine.id]?.board;
     return board ? [{ machine, board }] : [];
   });
-  const cards = useMemo(() => kanbanCards(boards), [machines, sources]);
+  const cards = useMemo(() => kanbanCards(boards, BOARD_PLUGINS), [machines, sources]);
   const watched = boards.reduce((n, b) => n + b.board.watched.length, 0);
   const updatedAt = Math.max(0, ...boards.map((b) => b.board.updatedAt ?? 0)) || undefined;
   const stale = updatedAt !== undefined && now - updatedAt > STALE_MS;
   const checking = asked || boards.some((b) => b.board.checking) || ready.some((m) => sources[m.id]?.refreshing);
   const errors = boards.flatMap(({ machine, board }) => board.errors.map((e) => ({ machine, ...e })));
+  const paused = boards.flatMap(({ machine, board }) => (board.fetchPausedUntil ? [{ machine, until: board.fetchPausedUntil }] : []));
   const failed = ready.flatMap((m) => {
     const error = sources[m.id]?.error;
     return error ? [{ machine: m, error }] : [];
@@ -249,6 +251,15 @@ export function KanbanPage(_: PageProps) {
               </AlertDescription>
             </Alert>
           )}
+          {paused.length > 0 && (
+            <Alert tone="warning">
+              <AlertTitle>GitHub の API の残りが少ないので、カンバン用のプラグインの fetch を止めています</AlertTitle>
+              <AlertDescription>
+                {paused.map((p) => `${ready.length > 1 ? `${p.machine.name}：` : ""}${time(p.until)}`).join("、")}
+                に再開します。それまでは、前に fetch で読んだ情報でカードの列を決めます。
+              </AlertDescription>
+            </Alert>
+          )}
           {failed.length > 0 && (
             <Alert tone="danger">
               <AlertTitle>カンバンを読み込めなかった working server があります</AlertTitle>
@@ -326,7 +337,10 @@ export function KanbanPage(_: PageProps) {
             open={choosing}
             onClose={() => setChoosing(false)}
             machines={ready}
-            watched={(id) => sources[id]?.board?.watched}
+            watched={(id) => {
+              const board = sources[id]?.board;
+              return board && { paths: board.watched, plugins: board.plugins ?? {} };
+            }}
             reload={(id) => sources[id]?.reload()}
           />
           <TrustDialog question={trust} onAnswer={answerTrust} />

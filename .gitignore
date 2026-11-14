@@ -1,2 +1,5 @@
 node_modules/
 dist/
+# Each person's board plugins stay out of git; only the sample is in it.
+kanban/plugins/*/
+!kanban/plugins/example/
