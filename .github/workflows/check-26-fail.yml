@@ -1,0 +1,21 @@
+name: 動作確認用 26 失敗
+on:
+  push:
+    branches: ["動作確認用-26-head"]
+jobs:
+  fail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "準備"
+      - name: わざと失敗する
+        run: |
+          for i in $(seq 1 150); do echo "line $i"; done
+          printf '\033[31m赤い行\033[0m\n'
+          echo "::warning::注意の行"
+          echo "::error::わざと失敗させた"
+          exit 1
+  pass:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
