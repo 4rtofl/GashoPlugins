@@ -5,6 +5,7 @@
   "description": "Gasho のプラグイン。プラグインごとのディレクトリが並ぶ",
   "workspaces": [
     "github",
+    "kanban",
     "pondering"
   ],
   "scripts": {
