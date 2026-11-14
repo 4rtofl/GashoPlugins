@@ -1,15 +1,14 @@
 // Reading a repository for the kanban (moved here from Gasho's apps/daemon/src/kanban.ts of PR #8): its worktrees with
-// git, and my open and closed pull requests with the GitHub CLI (gh) of the working server, logged in as whoever runs
-// gasho-daemon. Only reads. Both run through the daemon part's context (ctx.exec): no shell, no terminal, no prompts.
+// git (ctx.exec: no shell, no terminal, no prompts), and my open and closed pull requests with the GitHub CLI (gh) of
+// the working server, which gasho-daemon runs for every plugin (ctx.github), logged in as whoever runs it. Only reads.
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DaemonStartContext } from "@gasho/plugin-sdk/daemon";
 import type { ClosedPr, OpenPr, RepoMaterial, RepoOption } from "../types.ts";
 
 export type Exec = DaemonStartContext["exec"];
+export type GitHubRead = DaemonStartContext["github"]["read"];
 
-/** The GitHub CLI: as gasho-daemon is told (GASHO_GH_BIN), or gh. */
-const GH = process.env.GASHO_GH_BIN || "gh";
 const PR_LIMIT = 100;
 const PR_FIELDS = "number,title,url,headRefName,isDraft,updatedAt";
 const CLOSED_FIELDS = "number,headRefName,state,title,url";
@@ -106,8 +105,8 @@ async function git(exec: Exec, cwd: string, args: string[]): Promise<string> {
   return stdout;
 }
 
-async function ghJson(exec: Exec, args: string[]): Promise<unknown> {
-  const { stdout } = await exec(GH, args, { timeoutMs: 30_000, maxBuffer: 32 * 1024 * 1024 });
+async function ghJson(github: GitHubRead, args: string[]): Promise<unknown> {
+  const { stdout } = await github(args, { timeoutMs: 30_000, maxBuffer: 32 * 1024 * 1024 });
   return JSON.parse(stdout) as unknown;
 }
 
@@ -135,21 +134,21 @@ export async function repoOptions(exec: Exec, folders: readonly string[]): Promi
 }
 
 /** Reads one watched repository: its worktrees, and my open and closed pull requests. */
-export async function readRepo(exec: Exec, option: RepoOption): Promise<RepoMaterial> {
-  const github = option.github;
-  if (!github) throw new KanbanError("origin が GitHub の repo ではないので、見られません。");
+export async function readRepo(exec: Exec, gh: GitHubRead, option: RepoOption): Promise<RepoMaterial> {
+  const repo = option.github;
+  if (!repo) throw new KanbanError("origin が GitHub の repo ではないので、見られません。");
   const porcelain = await git(exec, option.path, ["worktree", "list", "--porcelain"]).catch((e: unknown) => {
     throw new KanbanError(`Git の情報を読めませんでした：${String(e instanceof Error ? e.message : e).split("\n")[0]}`);
   });
   const { primary, worktrees } = parseWorktrees(porcelain);
   if (!primary) throw new KanbanError("worktree の一覧を読めませんでした。");
   const list = (state: string, fields: string) =>
-    ghJson(exec, ["pr", "list", "--repo", github, "--author", "@me", "--state", state, "--limit", String(PR_LIMIT), "--json", fields]);
+    ghJson(gh, ["pr", "list", "--repo", repo, "--author", "@me", "--state", state, "--limit", String(PR_LIMIT), "--json", fields]);
   const [open, closed] = await Promise.all([list("open", PR_FIELDS), list("closed", CLOSED_FIELDS)]).catch((e: unknown) => {
     throw new KanbanError(ghError(e));
   });
   return {
-    repo: github,
+    repo,
     primary: { path: await realPath(primary.path), ...(primary.branch ? { branch: primary.branch } : {}) },
     worktrees: await Promise.all(worktrees.map(async (w) => ({ branch: w.branch, path: await realPath(w.path) }))),
     prs: parsePrs(open),

@@ -152,6 +152,7 @@ export function KanbanPage(_: PageProps) {
   const stale = updatedAt !== undefined && now - updatedAt > STALE_MS;
   const checking = asked || boards.some((b) => b.board.checking) || ready.some((m) => sources[m.id]?.refreshing);
   const errors = boards.flatMap(({ machine, board }) => board.errors.map((e) => ({ machine, ...e })));
+  const paused = boards.flatMap(({ machine, board }) => (board.fetchPausedUntil ? [{ machine, until: board.fetchPausedUntil }] : []));
   const failed = ready.flatMap((m) => {
     const error = sources[m.id]?.error;
     return error ? [{ machine: m, error }] : [];
@@ -247,6 +248,15 @@ export function KanbanPage(_: PageProps) {
                   ))}
                 </ul>
                 <p className="mt-1">前に読めたカードは、そのまま出しています。</p>
+              </AlertDescription>
+            </Alert>
+          )}
+          {paused.length > 0 && (
+            <Alert tone="warning">
+              <AlertTitle>GitHub の API の残りが少ないので、カンバン用のプラグインの fetch を止めています</AlertTitle>
+              <AlertDescription>
+                {paused.map((p) => `${ready.length > 1 ? `${p.machine.name}：` : ""}${time(p.until)}`).join("、")}
+                に再開します。それまでは、前に fetch で読んだ情報でカードの列を決めます。
               </AlertDescription>
             </Alert>
           )}
