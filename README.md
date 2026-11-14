@@ -5,6 +5,7 @@
 | フォルダー | プラグイン |
 |---|---|
 | `github/` | セッションのリポジトリの、開いている Issue と Pull request を読む。working server の GitHub CLI（gh）を使う |
+| `kanban/` | 選んだ repo の worktree と自分の Pull request を、列のボードに並べる。working server の git と gh を使う。仕様は [kanban/README.md](kanban/README.md) |
 
 ## ビルドする
 
