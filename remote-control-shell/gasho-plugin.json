@@ -1,0 +1,78 @@
+{
+  "id": "remote-control-shell",
+  "name": "Remote Control Shell",
+  "version": "1.0.0",
+  "description": "セッションのフォルダーでシェルのコマンドを実行し、出力をパネルで見る（出力は Claude の会話に入らない）",
+  "api": "1.1",
+  "web": { "js": "web.js", "css": "web.css" },
+  "daemon": { "js": "daemon.js" },
+  "methods": {
+    "run": { "kind": "write", "timeoutSeconds": 15 },
+    "signal": { "kind": "write", "timeoutSeconds": 10 },
+    "chdir": { "kind": "write", "timeoutSeconds": 10 },
+    "clear": { "kind": "write", "timeoutSeconds": 10 },
+    "watch": { "kind": "read", "timeoutSeconds": 30 },
+    "output": { "kind": "read", "timeoutSeconds": 15 },
+    "status": { "kind": "read", "timeoutSeconds": 10 }
+  },
+  "settings": {
+    "shell": {
+      "type": "select",
+      "scope": "server",
+      "default": "auto",
+      "label": "使うシェル",
+      "description": "自動では、環境変数 SHELL が bash、zsh、sh、dash、ksh ならそれを、それ以外なら bash を使う",
+      "options": [
+        { "value": "auto", "label": "自動" },
+        { "value": "bash", "label": "bash" },
+        { "value": "zsh", "label": "zsh" },
+        { "value": "sh", "label": "sh" }
+      ]
+    },
+    "startup": {
+      "type": "select",
+      "scope": "server",
+      "default": "login",
+      "label": "シェルの起動のしかた",
+      "description": "ログインシェルは ~/.profile などを読む。対話シェルは alias も使えるが、ターミナルがないという警告が出ることがある",
+      "options": [
+        { "value": "login", "label": "ログインシェル（-l）" },
+        { "value": "interactive", "label": "対話シェル（-i）" },
+        { "value": "plain", "label": "どちらも付けない" }
+      ]
+    },
+    "maxOutputKB": {
+      "type": "number",
+      "scope": "server",
+      "default": 1024,
+      "min": 64,
+      "max": 8192,
+      "step": 64,
+      "label": "1つのコマンドで残す出力（KB）",
+      "description": "超えたら先頭から捨てて、末尾を残す。1KB は 1,024 文字として数える"
+    },
+    "keepJobs": {
+      "type": "number",
+      "scope": "server",
+      "default": 50,
+      "min": 10,
+      "max": 500,
+      "step": 10,
+      "label": "フォルダーごとに残す記録の数",
+      "description": "これを超えたら、終わったコマンドの記録を古いものから消す"
+    },
+    "logCommands": {
+      "type": "boolean",
+      "scope": "server",
+      "default": true,
+      "label": "操作のログに、実行したコマンドの文字を残す",
+      "description": "切ると、操作のログには「コマンドを実行」とだけ残す"
+    },
+    "wrap": {
+      "type": "boolean",
+      "scope": "browser",
+      "default": true,
+      "label": "出力の長い行を折り返す"
+    }
+  }
+}
