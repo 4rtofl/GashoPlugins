@@ -1,0 +1,8 @@
+{
+  "id": "pondering",
+  "name": "Pondering",
+  "version": "1.0.0",
+  "description": "Claude が作業しているあいだ、会話の末尾に Claude Code のスピナーのような文言とアニメーションを出す。作業の時間、書いたトークン数、動いているツールも添える",
+  "api": "1.2",
+  "web": { "js": "web.js", "css": "web.css" }
+}
