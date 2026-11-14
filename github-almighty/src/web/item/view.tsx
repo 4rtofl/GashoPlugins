@@ -16,6 +16,7 @@ import { Skeleton, SkeletonText } from "../ui/skeleton.tsx";
 import { AnimatedTabs } from "../ui/tabs.tsx";
 import { ToastProvider } from "../ui/toast.tsx";
 import { ItemProvider, useChanges, useItem, type Where } from "./context.tsx";
+import { ItemPalette } from "./palette.tsx";
 import { partsOf, type ItemSection, type ItemTab } from "./parts.ts";
 
 const TABS = partsOf(import.meta.glob<{ default: ItemTab }>("./tabs/*.tsx", { eager: true }));
@@ -90,6 +91,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
       {item && where && (
         <ItemProvider value={{ machine: machine.id, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision }}>
           <Detail />
+          <ItemPalette worktree={worktree} />
         </ItemProvider>
       )}
       {r.at && <p className="text-xs text-muted-foreground">{new Date(r.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} に読み込み</p>}

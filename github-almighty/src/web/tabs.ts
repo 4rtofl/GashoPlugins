@@ -3,8 +3,10 @@
 // and adds more. They are read again every "refreshSeconds" while they show.
 import { CircleCheck, CircleDot, CircleSlash, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, ListPlus } from "lucide-react";
 import { useRequest, useSetting, type RequestOptions, type RequestTarget, type WorktreeContext, type WorktreeInfo, type WorktreeTab } from "@gasho/plugin-sdk";
+import { newsCount } from "../news.ts";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
 import { readOp } from "./daemon.ts";
+import { newsText, useNews } from "./news.ts";
 
 /** The call that reads a worktree's items; undefined when there is nothing to read. */
 export function itemsTarget(machine: string, worktree: WorktreeInfo, ready: boolean): RequestTarget | undefined {
@@ -40,15 +42,22 @@ export function itemsInOrder(items: WorktreeItems): ItemSummary[] {
 
 export function useItemTabs({ machine, worktree, daemon }: WorktreeContext): WorktreeTab[] {
   const target = itemsTarget(machine.id, worktree, daemon.ready);
-  const r = useRequest<WorktreeItems>(target, useRefreshOptions());
-  if (!worktree.github || !daemon.ready) return [];
-  const tabs: WorktreeTab[] = (r.data ? itemsInOrder(r.data) : []).map((i) => ({
-    label: `#${i.number}`,
-    icon: itemIcon(i),
-    title: `${i.kind === "pulls" ? "Pull request" : "Issue"} #${i.number}：${i.title}`,
-    view: "item",
-    params: { kind: i.kind, number: String(i.number) },
-  }));
+  const options = useRefreshOptions();
+  const r = useRequest<WorktreeItems>(target, options);
+  const github = worktree.github;
+  const news = useNews(machine.id, github && `${github.owner}/${github.name}`, daemon.ready ? r.data : undefined, options);
+  if (!github || !daemon.ready) return [];
+  const tabs: WorktreeTab[] = (r.data ? itemsInOrder(r.data) : []).map((i) => {
+    const n = news.get(i.number);
+    return {
+      label: `#${i.number}`,
+      icon: itemIcon(i),
+      title: `${i.kind === "pulls" ? "Pull request" : "Issue"} #${i.number}：${i.title}${n ? `（新着：${newsText(n)}）` : ""}`,
+      view: "item",
+      params: { kind: i.kind, number: String(i.number) },
+      ...(n && { badge: newsCount(n) }),
+    };
+  });
   tabs.push({ label: "GitHub", icon: ListPlus, title: "この worktree の Issue と Pull request（手で足す）", view: "home" });
   return tabs;
 }
