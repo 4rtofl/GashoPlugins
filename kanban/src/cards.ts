@@ -1,9 +1,11 @@
 // The kanban's cards (moved here from Gasho's apps/daemon/src/kanban.ts and apps/web/src/lib/kanban.ts of PR #8): a card
 // for each worktree of a watched repository, with its branch's pull request and the Claude Code sessions in it, and one
 // for each open pull request of mine without a worktree. The web part makes them from what the daemon part read
-// (Board) and the sessions of the working server (MachineInfo.sessions, Gasho's and the others alike). Nothing decides
-// the columns yet: every card goes in the first one. No React here, so that the tests run it as it is.
+// (Board) and the sessions of the working server (MachineInfo.sessions, Gasho's and the others alike). The board plugin
+// chosen for the repository decides each card's column (kanban/plugins/); without one, every card goes in the first
+// column. No React here, so that the tests run it as it is.
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
+import type { StateCard } from "../plugins/types.ts";
 import type { Board, ClosedPr, OpenPr, RepoMaterial } from "./types.ts";
 
 /** The columns, in their order: my move, the agent works, GitHub works (CI), the reviewers' move, done. */
@@ -52,8 +54,9 @@ export interface KanbanCard {
   pr?: { number: number; url: string; state: "open" | "merged" | "closed"; draft?: boolean };
   /** When the open pull request last changed (ISO 8601). */
   updatedAt?: string;
-  /** Nothing decides the columns yet: every card is in the first one. */
   column: KanbanColumn;
+  /** Why the card is in its column, as the board plugin said; `error` when it could not tell (the card is in "mine"). */
+  reason?: { text: string; error?: string };
   sessions: CardSession[];
 }
 
@@ -83,13 +86,36 @@ export function assignSessions(sessions: readonly SessionLike[], paths: readonly
   return out;
 }
 
+/** The board plugins built in, by their folder's name: what each kanban/plugins/<name>/index.ts exports. */
+export type BoardPlugins = ReadonlyMap<string, { state?: unknown }>;
+
+const COLUMN_IDS = new Set<string>(KANBAN_COLUMNS.map((c) => c.id));
+
+/** Where the board plugin `name` puts a card: "mine" without one, and when it fails. */
+export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins): Pick<KanbanCard, "column" | "reason"> {
+  if (name === undefined) return { column: "mine" };
+  const failed = (error: string) => ({ column: "mine" as const, reason: { text: `列を決められませんでした（${name}）`, error } });
+  const state = plugins.get(name)?.state;
+  if (typeof state !== "function") return failed(plugins.has(name) ? "index.ts が state を export していません。" : `kanban/plugins/${name}/ が、このビルドにありません。`);
+  let placed: unknown;
+  try {
+    placed = state(card);
+  } catch (e) {
+    return failed(`state が失敗しました：${e instanceof Error ? e.message : String(e)}`);
+  }
+  const { column, reason } = (placed ?? {}) as { column?: unknown; reason?: unknown };
+  if (typeof column !== "string" || !COLUMN_IDS.has(column)) return failed(`state が知らない列を返しました：${String(column)}`);
+  const text = typeof reason === "string" ? reason.trim() : "";
+  return { column: column as KanbanColumn, ...(text ? { reason: { text } } : {}) };
+}
+
 const cardSession = (s: SessionLike): CardSession => ({ sessionId: s.sessionId, status: s.status, ...(s.managed ? { managed: true } : {}) });
 
 /**
  * The cards of one repository: its worktrees, its primary checkout while it has an open pull request or a session
  * there works or awaits an answer (work on main is not missed), and my open pull requests without a worktree.
  */
-export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>): KanbanCard[] {
+export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>, plugins: BoardPlugins): KanbanCard[] {
   const open = new Map(m.prs.map((p) => [p.headRefName, p]));
   const closedOf = new Map(m.closed.map((p) => [p.headRefName, p]));
   const trees: { branch?: string; path: string; primary: boolean }[] = m.worktrees.map((w) => ({ branch: w.branch, path: w.path, primary: false }));
@@ -98,7 +124,7 @@ export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>): Ka
   const card = (t: { branch?: string; path?: string; primary: boolean }, pr: OpenPr | undefined, closed: ClosedPr | undefined, sessions: SessionLike[]) => {
     const shown = pr ?? closed;
     const issue = issueOf(t.branch);
-    cards.push({
+    const base: StateCard = {
       // A pull request without a worktree shows once per clone of its repository, so the clone is part of its id.
       id: `${m.repo}:${t.path ?? `${m.primary.path}#pr-${pr?.number}`}`,
       repo: m.repo,
@@ -114,9 +140,9 @@ export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>): Ka
           ? { pr: { number: closed.number, url: closed.url, state: closed.state === "MERGED" ? ("merged" as const) : ("closed" as const) } }
           : {}),
       ...(pr?.updatedAt ? { updatedAt: pr.updatedAt } : {}),
-      column: "mine",
       sessions: sessions.map(cardSession),
-    });
+    };
+    cards.push({ ...base, ...placeCard(base, m.plugin, plugins) });
   };
   for (const t of trees) {
     const pr = t.branch === undefined ? undefined : open.get(t.branch);
@@ -130,7 +156,7 @@ export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>): Ka
 }
 
 /** The cards of one working server's board, with its sessions as they are now. */
-export function boardCards(machine: MachineInfo, board: Board): KanbanCard[] {
+export function boardCards(machine: MachineInfo, board: Board, plugins: BoardPlugins): KanbanCard[] {
   const live: SessionLike[] = machine.sessions
     .filter((s) => s.status !== "unknown")
     .map((s) => ({ sessionId: s.sessionId, cwd: s.cwd, status: s.status, ...(s.managed ? { managed: true } : {}) }));
@@ -139,7 +165,7 @@ export function boardCards(machine: MachineInfo, board: Board): KanbanCard[] {
     live,
     board.repos.flatMap((m) => [m.primary.path, ...m.worktrees.map((w) => w.path)]),
   );
-  return board.repos.flatMap((m) => cardsOf(m, byPath));
+  return board.repos.flatMap((m) => cardsOf(m, byPath, plugins));
 }
 
 const ORDER = new Map(KANBAN_COLUMNS.map((c, i) => [c.id, i]));
@@ -155,8 +181,10 @@ export function sortCards(cards: PlacedCard[]): PlacedCard[] {
 }
 
 /** The cards of the connected working servers. */
-export function kanbanCards(boards: { machine: MachineInfo; board: Board }[]): PlacedCard[] {
-  return sortCards(boards.filter((b) => b.machine.connected).flatMap(({ machine, board }) => boardCards(machine, board).map((card) => ({ machine, card }))));
+export function kanbanCards(boards: { machine: MachineInfo; board: Board }[], plugins: BoardPlugins): PlacedCard[] {
+  return sortCards(
+    boards.filter((b) => b.machine.connected).flatMap(({ machine, board }) => boardCards(machine, board, plugins).map((card) => ({ machine, card }))),
+  );
 }
 
 /**

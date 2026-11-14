@@ -1,13 +1,24 @@
-// Chooses the repositories each working server's kanban watches (moved here from Gasho's views/kanban.tsx of PR #8). The
-// daemon part of each working server offers the repositories in the folders Gasho can start sessions in, and keeps
-// the ones chosen in its own folder.
+// Chooses the repositories each working server's kanban watches (moved here from Gasho's views/kanban.tsx of PR #8), and
+// the board plugin that puts each one's cards in their columns. The daemon part of each working server offers the
+// repositories in the folders Gasho can start sessions in, and keeps the choices in its own folder; the board plugins
+// offered are the ones built into this web part.
 import { ChevronDown, Search, Server, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { cn, useCall, useRequest, type MachineInfo } from "@gasho/plugin-sdk";
 import { MAX_REPOS, type Board, type RepoOption } from "../types.ts";
+import { BOARD_PLUGINS } from "./board-plugins";
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL } from "./ui/styles";
+
+/** What a working server watches: its repositories, and the board plugin of each that has one ({ path: name }). */
+interface WatchChoice {
+  paths: string[];
+  plugins: Record<string, string>;
+}
+
+const samePlugins = (a: Record<string, string>, b: Record<string, string>): boolean =>
+  JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 
 export function ReposDialog({
   open,
@@ -21,12 +32,12 @@ export function ReposDialog({
   /** The working servers whose daemon part runs. */
   machines: MachineInfo[];
   /** What each one watches now; undefined until its board has been read. */
-  watched: (machine: string) => string[] | undefined;
+  watched: (machine: string) => WatchChoice | undefined;
   /** Reads a working server's board again. */
   reload: (machine: string) => void;
 }) {
   const call = useCall();
-  const [picked, setPicked] = useState<Record<string, string[]>>({});
+  const [picked, setPicked] = useState<Record<string, WatchChoice>>({});
   const [query, setQuery] = useState("");
   const [others, setOthers] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -35,7 +46,14 @@ export function ReposDialog({
   useEffect(() => {
     if (!open) return;
     // Only when it opens: what is ticked stays while the machines change.
-    setPicked(Object.fromEntries(machines.flatMap((m) => (watched(m.id) ? [[m.id, watched(m.id) ?? []]] : []))));
+    setPicked(
+      Object.fromEntries(
+        machines.flatMap((m) => {
+          const w = watched(m.id);
+          return w ? [[m.id, w]] : [];
+        }),
+      ),
+    );
     setQuery("");
     setOthers(false);
     setError(undefined);
@@ -44,18 +62,39 @@ export function ReposDialog({
     if (!open) return;
     // A working server whose board arrives while this is open starts from what it watches, so saving does not empty it.
     setPicked((cur) => {
-      const added = machines.filter((m) => !(m.id in cur) && watched(m.id));
-      return added.length === 0 ? cur : { ...cur, ...Object.fromEntries(added.map((m) => [m.id, watched(m.id) ?? []])) };
+      const added = machines.flatMap((m) => {
+        const w = m.id in cur ? undefined : watched(m.id);
+        return w ? [[m.id, w] as const] : [];
+      });
+      return added.length === 0 ? cur : { ...cur, ...Object.fromEntries(added) };
     });
   }, [open, known]);
 
   const toggle = (machine: string, p: string) =>
     setPicked((cur) => {
-      const list = cur[machine] ?? [];
-      return { ...cur, [machine]: list.includes(p) ? list.filter((x) => x !== p) : [...list, p] };
+      const c = cur[machine] ?? { paths: [], plugins: {} };
+      if (!c.paths.includes(p)) return { ...cur, [machine]: { ...c, paths: [...c.paths, p] } };
+      const plugins = { ...c.plugins };
+      delete plugins[p];
+      return { ...cur, [machine]: { paths: c.paths.filter((x) => x !== p), plugins } };
+    });
+  const choosePlugin = (machine: string, p: string, name: string | undefined) =>
+    setPicked((cur) => {
+      const c = cur[machine];
+      if (!c) return cur;
+      const plugins = { ...c.plugins };
+      if (name) plugins[p] = name;
+      else delete plugins[p];
+      return { ...cur, [machine]: { ...c, plugins } };
     });
   const save = async () => {
-    const changed = machines.filter((m) => picked[m.id] && JSON.stringify(picked[m.id]) !== JSON.stringify(watched(m.id)));
+    const changed = machines.flatMap((m) => {
+      const c = picked[m.id];
+      const w = watched(m.id);
+      if (!c) return [];
+      const moved = JSON.stringify(c.paths) !== JSON.stringify(w?.paths);
+      return moved || !samePlugins(c.plugins, w?.plugins ?? {}) ? [{ m, c, moved }] : [];
+    });
     if (changed.length === 0) {
       onClose();
       return;
@@ -63,19 +102,23 @@ export function ReposDialog({
     setSaving(true);
     setError(undefined);
     const results = await Promise.all(
-      changed.map((m) => {
-        const paths = picked[m.id] ?? [];
-        return call<Board>({ machine: m.id, method: "watch", params: { paths }, summary: `見る repo を ${paths.length} 個にする` });
-      }),
+      changed.map(({ m, c, moved }) =>
+        call<Board>({
+          machine: m.id,
+          method: "watch",
+          params: { paths: c.paths, plugins: c.plugins },
+          summary: moved ? `見る repo を ${c.paths.length} 個にする` : "repo ごとのカンバン用のプラグインを変える",
+        }),
+      ),
     );
-    for (const m of changed) reload(m.id);
+    for (const { m } of changed) reload(m.id);
     setSaving(false);
-    const failed = results.flatMap((r, i) => (r.ok ? [] : [`${changed[i]?.name ?? ""}：${r.error}`]));
+    const failed = results.flatMap((r, i) => (r.ok ? [] : [`${changed[i]?.m.name ?? ""}：${r.error}`]));
     if (failed.length > 0) setError(failed.join("\n"));
     else onClose();
   };
   const q = query.trim().toLowerCase();
-  const chosen = Object.values(picked).reduce((n, l) => n + l.length, 0);
+  const chosen = Object.values(picked).reduce((n, c) => n + c.paths.length, 0);
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
@@ -87,7 +130,7 @@ export function ReposDialog({
               <Dialog.Title className="text-base font-semibold tracking-tight">見る repo</Dialog.Title>
               <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
                 選んだ repo の worktree と自分の PR を、カンバンを開いているあいだ、working server の gh で 1 分おきに読みます。working server ごとに {MAX_REPOS}{" "}
-                個まで選べます。
+                個まで選べます。カードを置く列は、repo ごとに選んだカンバン用のプラグインが決めます。選ばない repo のカードは「自分の番」に置きます。
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -112,11 +155,12 @@ export function ReposDialog({
             <MachineRepos
               key={m.id}
               machine={m}
-              list={picked[m.id]}
+              choice={picked[m.id]}
               query={q}
               others={others}
               onOthers={() => setOthers(!others)}
               onToggle={(p) => toggle(m.id, p)}
+              onPlugin={(p, name) => choosePlugin(m.id, p, name)}
             />
           ))}
 
@@ -138,33 +182,35 @@ export function ReposDialog({
   );
 }
 
-/** The repositories one working server offers, with the ones it watches ticked. */
+/** The repositories one working server offers, with the ones it watches ticked and the board plugin of each. */
 function MachineRepos({
   machine,
-  list,
+  choice,
   query,
   others,
   onOthers,
   onToggle,
+  onPlugin,
 }: {
   machine: MachineInfo;
-  /** What is ticked; undefined until the board has been read. */
-  list: string[] | undefined;
+  /** What is ticked and chosen; undefined until the board has been read. */
+  choice: WatchChoice | undefined;
   query: string;
   others: boolean;
   onOthers: () => void;
   onToggle: (path: string) => void;
+  onPlugin: (path: string, name: string | undefined) => void;
 }) {
   // Read again whenever the dialog opens (the daemon part keeps the list for 30 seconds).
   const r = useRequest<RepoOption[]>({ machine: machine.id, method: "options" }, { staleSeconds: 0 });
   const options = r.data ?? [];
-  const ticked = list ?? [];
+  const ticked = choice?.paths ?? [];
   const matches = (text: string) => !query || text.toLowerCase().includes(query);
   const onGitHub = options.filter((o) => o.github && matches(`${o.github} ${o.path}`));
   const elsewhere = options.filter((o) => !o.github && !ticked.includes(o.path) && matches(o.path));
   // Chosen before, but no longer among the options on GitHub: shown first so they can be taken off.
   const gone = r.data ? ticked.filter((p) => !options.some((o) => o.path === p && o.github) && matches(p)) : [];
-  const waiting = !list || (!r.data && r.loading);
+  const waiting = !choice || (!r.data && r.loading);
   return (
     <section className="space-y-2">
       <h3 className="flex items-center gap-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
@@ -190,11 +236,12 @@ function MachineRepos({
             const checked = ticked.includes(o.path);
             const [owner, name] = (o.github ?? "").split("/");
             return (
-              <li key={o.path} className="px-3 py-2.5 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+              <li key={o.path} className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
                 <DrawCheckbox
                   checked={checked}
                   disabled={!checked && ticked.length >= MAX_REPOS}
                   onChange={() => onToggle(o.path)}
+                  className="min-w-0 flex-1"
                   label={
                     <>
                       <span className="text-muted-foreground">{owner}/</span>
@@ -203,6 +250,7 @@ function MachineRepos({
                   }
                   description={<span className="font-mono break-all">{o.path}</span>}
                 />
+                {checked && <PluginSelect repo={o.github ?? o.path} value={choice?.plugins[o.path]} onChange={(n) => onPlugin(o.path, n)} />}
               </li>
             );
           })}
@@ -231,5 +279,27 @@ function MachineRepos({
         </div>
       )}
     </section>
+  );
+}
+
+/** The board plugin of a watched repository: none, or one built into this web part (or the one chosen before, gone). */
+function PluginSelect({ repo, value, onChange }: { repo: string; value: string | undefined; onChange: (name: string | undefined) => void }) {
+  const names = [...BOARD_PLUGINS.keys()];
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      aria-label={`${repo} のカンバン用のプラグイン`}
+      title="カードを置く列を決めるカンバン用のプラグイン"
+      className="h-7 max-w-40 shrink-0 cursor-pointer rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+    >
+      <option value="">プラグインなし</option>
+      {names.map((n) => (
+        <option key={n} value={n}>
+          {n}
+        </option>
+      ))}
+      {value && !BOARD_PLUGINS.has(value) && <option value={value}>{value}（ありません）</option>}
+    </select>
   );
 }
