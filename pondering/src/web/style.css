@@ -1,0 +1,82 @@
+/* Pondering's styles: the Tailwind classes it uses, in Gasho's theme (see @gasho/plugin-sdk/plugin.css), and the star
+   and the shine of the word. The page is Gasho's own, so every class of its own starts with "pondering". */
+@import "@gasho/plugin-sdk/plugin.css";
+@source "../";
+
+/* Claude's orange: darker on a light screen, to be read there; the shine is a lighter orange. */
+.pondering {
+  --pondering-ink: #b5502f;
+  --pondering-shine: #f0a383;
+}
+.dark .pondering {
+  --pondering-ink: #d77757;
+  --pondering-shine: #f6cbb7;
+}
+
+/* The frames lie on one another, so that the star keeps its place and size whichever is shown. */
+.pondering-glyph {
+  display: inline-grid;
+  width: 1.25rem;
+  justify-items: center;
+  color: var(--pondering-ink);
+}
+.pondering-glyph > span {
+  grid-area: 1 / 1;
+  opacity: 0;
+  animation: pondering-frame 1.2s linear infinite;
+}
+/* Ten frames: each shows for a tenth of the round, from its own delay. */
+@keyframes pondering-frame {
+  0%,
+  9.99% {
+    opacity: 1;
+  }
+  10%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.pondering-phrase {
+  color: var(--pondering-ink);
+}
+/* A band of light that runs over the word from left to right. */
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .pondering-phrase {
+    background-image: linear-gradient(90deg, var(--pondering-ink) 40%, var(--pondering-shine) 50%, var(--pondering-ink) 60%);
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: pondering-shine 2.2s linear infinite;
+  }
+}
+@keyframes pondering-shine {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+/* Gasho's fonts are for Japanese: Chinese and Korean get theirs. */
+.pondering :lang(zh-Hans) {
+  font-family: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+}
+.pondering :lang(ko) {
+  font-family: "Apple SD Gothic Neo", "Noto Sans KR", "Noto Sans CJK KR", "Malgun Gothic", sans-serif;
+}
+
+/* Without motion: the star stands still as ✻ (the fifth frame), and the word does not shine. */
+@media (prefers-reduced-motion: reduce) {
+  .pondering-glyph > span {
+    animation: none;
+  }
+  .pondering-glyph > span:nth-child(5) {
+    opacity: 1;
+  }
+  .pondering-phrase {
+    animation: none;
+  }
+}

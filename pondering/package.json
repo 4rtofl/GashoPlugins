@@ -1,0 +1,10 @@
+{
+  "name": "gasho-plugin-pondering",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "gasho-plugin build",
+    "dev": "gasho-plugin build --watch",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
