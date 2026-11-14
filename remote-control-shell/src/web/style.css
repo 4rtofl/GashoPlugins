@@ -1,0 +1,92 @@
+/* Remote Control Shell's styles: the Tailwind classes it uses, in Gasho's theme (see @gasho/plugin-sdk/plugin.css), and
+   the colors of commands' output. The page is Gasho's own, so every class of its own starts with "rcs". */
+@import "@gasho/plugin-sdk/plugin.css";
+@source "../";
+
+/* The 16 colors of the ANSI palette, readable on Gasho's light theme… */
+.rcs {
+  --rcs-fg: var(--foreground);
+  --rcs-bg: var(--background);
+  --rcs-0: #1f2328;
+  --rcs-1: #c4262e;
+  --rcs-2: #1a7f37;
+  --rcs-3: #8a6a00;
+  --rcs-4: #0b5cbd;
+  --rcs-5: #9a2ba3;
+  --rcs-6: #0e7c86;
+  --rcs-7: #57606a;
+  --rcs-8: #6e7781;
+  --rcs-9: #d93a3a;
+  --rcs-10: #2a8f45;
+  --rcs-11: #9a7b00;
+  --rcs-12: #2f6fd1;
+  --rcs-13: #b03cb8;
+  --rcs-14: #12909c;
+  --rcs-15: #24292f;
+}
+/* …and on its dark theme. */
+.dark .rcs {
+  --rcs-0: #6e7681;
+  --rcs-1: #ff7b72;
+  --rcs-2: #56d364;
+  --rcs-3: #e3b341;
+  --rcs-4: #79c0ff;
+  --rcs-5: #d2a8ff;
+  --rcs-6: #56d4dd;
+  --rcs-7: #c9d1d9;
+  --rcs-8: #8b949e;
+  --rcs-9: #ffa198;
+  --rcs-10: #7ee787;
+  --rcs-11: #f2cc60;
+  --rcs-12: #a5d6ff;
+  --rcs-13: #e2c5ff;
+  --rcs-14: #b3f0ff;
+  --rcs-15: #f0f6fc;
+}
+
+.rcs-output {
+  tab-size: 8;
+}
+
+.rcs-fg-0 { color: var(--rcs-0); }
+.rcs-fg-1 { color: var(--rcs-1); }
+.rcs-fg-2 { color: var(--rcs-2); }
+.rcs-fg-3 { color: var(--rcs-3); }
+.rcs-fg-4 { color: var(--rcs-4); }
+.rcs-fg-5 { color: var(--rcs-5); }
+.rcs-fg-6 { color: var(--rcs-6); }
+.rcs-fg-7 { color: var(--rcs-7); }
+.rcs-fg-8 { color: var(--rcs-8); }
+.rcs-fg-9 { color: var(--rcs-9); }
+.rcs-fg-10 { color: var(--rcs-10); }
+.rcs-fg-11 { color: var(--rcs-11); }
+.rcs-fg-12 { color: var(--rcs-12); }
+.rcs-fg-13 { color: var(--rcs-13); }
+.rcs-fg-14 { color: var(--rcs-14); }
+.rcs-fg-15 { color: var(--rcs-15); }
+.rcs-bg-0 { background-color: var(--rcs-0); }
+.rcs-bg-1 { background-color: var(--rcs-1); }
+.rcs-bg-2 { background-color: var(--rcs-2); }
+.rcs-bg-3 { background-color: var(--rcs-3); }
+.rcs-bg-4 { background-color: var(--rcs-4); }
+.rcs-bg-5 { background-color: var(--rcs-5); }
+.rcs-bg-6 { background-color: var(--rcs-6); }
+.rcs-bg-7 { background-color: var(--rcs-7); }
+.rcs-bg-8 { background-color: var(--rcs-8); }
+.rcs-bg-9 { background-color: var(--rcs-9); }
+.rcs-bg-10 { background-color: var(--rcs-10); }
+.rcs-bg-11 { background-color: var(--rcs-11); }
+.rcs-bg-12 { background-color: var(--rcs-12); }
+.rcs-bg-13 { background-color: var(--rcs-13); }
+.rcs-bg-14 { background-color: var(--rcs-14); }
+.rcs-bg-15 { background-color: var(--rcs-15); }
+/* Inverse with the default colors: the text in the background's color, on the text's. */
+.rcs-fg-bg { color: var(--rcs-bg); }
+.rcs-bg-fg { background-color: var(--rcs-fg); }
+
+.rcs-b { font-weight: 600; }
+.rcs-d { opacity: 0.7; }
+.rcs-i { font-style: italic; }
+.rcs-u { text-decoration-line: underline; }
+.rcs-s { text-decoration-line: line-through; }
+.rcs-u.rcs-s { text-decoration-line: underline line-through; }

@@ -5,16 +5,19 @@
   "description": "Gasho のプラグイン。プラグインごとのディレクトリが並ぶ",
   "workspaces": [
     "github",
+    "github-almighty",
     "kanban",
-    "pondering"
+    "pondering",
+    "remote-control-shell",
+    "usage"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces",
+    "typecheck": "npm run typecheck --workspaces && tsc -p scripts",
     "test": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\""
   },
   "devDependencies": {
-    "@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1.3.0",
+    "@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1.5.0",
     "@types/node": "^24.0.0",
     "@types/react": "19.3.0",
     "lucide-react": "^1.72.0",

@@ -2,8 +2,8 @@
 // for each worktree of a watched repository, with its branch's pull request and the Claude Code sessions in it, and one
 // for each open pull request of mine without a worktree. The web part makes them from what the daemon part read
 // (Board) and the sessions of the working server (MachineInfo.sessions, Gasho's and the others alike). The board plugin
-// chosen for the repository decides each card's column (kanban/plugins/); without one, every card goes in the first
-// column. No React here, so that the tests run it as it is.
+// chosen for the repository decides each card's column and the instructions on its menu (kanban/plugins/); without
+// one, every card goes in the first column. No React here, so that the tests run it as it is.
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
 import type { StateCard } from "../plugins/types.ts";
 import type { Board, ClosedPr, OpenPr, RepoMaterial } from "./types.ts";
@@ -20,6 +20,12 @@ export const KANBAN_COLUMNS: { id: KanbanColumn; label: string }[] = [
 ];
 
 type SessionStatus = SessionInfo["status"];
+
+/** An instruction on a card's menu, as the board plugin gave it: pressing it sends `text` to the worktree's Gasho session. */
+export interface CardAction {
+  label: string;
+  text: string;
+}
 
 /** A Claude Code session working in a card's worktree: any session on the working server, not only Gasho's. */
 export interface CardSession {
@@ -57,6 +63,8 @@ export interface KanbanCard {
   column: KanbanColumn;
   /** Why the card is in its column, as the board plugin said; `error` when it could not tell (the card is in "mine"). */
   reason?: { text: string; error?: string };
+  /** The instructions the board plugin gave for the card's menu. */
+  actions?: CardAction[];
   sessions: CardSession[];
 }
 
@@ -91,8 +99,21 @@ export type BoardPlugins = ReadonlyMap<string, { state?: unknown }>;
 
 const COLUMN_IDS = new Set<string>(KANBAN_COLUMNS.map((c) => c.id));
 
-/** Where the board plugin `name` puts a card, with what its `fetch` gave: "mine" without one, and when it fails. */
-export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins, fetched?: unknown): Pick<KanbanCard, "column" | "reason"> {
+/** The instructions `state` gave, or why they cannot be used; none given is an empty list. */
+function actionsOf(given: unknown): CardAction[] | string {
+  if (given === undefined) return [];
+  if (!Array.isArray(given)) return "actions が配列ではありません。";
+  const out: CardAction[] = [];
+  for (const a of given) {
+    const { label, text } = (a ?? {}) as { label?: unknown; text?: unknown };
+    if (typeof label !== "string" || !label.trim() || typeof text !== "string" || !text.trim()) return "actions のそれぞれに、空でない label と text が要ります。";
+    out.push({ label: label.trim(), text: text.trim() });
+  }
+  return out;
+}
+
+/** Where the board plugin `name` puts a card, with what its `fetch` gave, and what its menu sends: "mine" and nothing without one, and when it fails. */
+export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins, fetched?: unknown): Pick<KanbanCard, "column" | "reason" | "actions"> {
   if (name === undefined) return { column: "mine" };
   const failed = (error: string) => ({ column: "mine" as const, reason: { text: `列を決められませんでした（${name}）`, error } });
   const state = plugins.get(name)?.state;
@@ -103,10 +124,12 @@ export function placeCard(card: StateCard, name: string | undefined, plugins: Bo
   } catch (e) {
     return failed(`state が失敗しました：${e instanceof Error ? e.message : String(e)}`);
   }
-  const { column, reason } = (placed ?? {}) as { column?: unknown; reason?: unknown };
+  const { column, reason, actions } = (placed ?? {}) as { column?: unknown; reason?: unknown; actions?: unknown };
   if (typeof column !== "string" || !COLUMN_IDS.has(column)) return failed(`state が知らない列を返しました：${String(column)}`);
+  const menu = actionsOf(actions);
+  if (typeof menu === "string") return failed(`state が返した指示を使えません：${menu}`);
   const text = typeof reason === "string" ? reason.trim() : "";
-  return { column: column as KanbanColumn, ...(text ? { reason: { text } } : {}) };
+  return { column: column as KanbanColumn, ...(text ? { reason: { text } } : {}), ...(menu.length > 0 ? { actions: menu } : {}) };
 }
 
 const cardSession = (s: SessionLike): CardSession => ({ sessionId: s.sessionId, status: s.status, ...(s.managed ? { managed: true } : {}) });

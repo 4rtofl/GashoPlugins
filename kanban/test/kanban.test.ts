@@ -62,10 +62,11 @@ test("sessions go to the deepest worktree that holds their folder, across the re
   assert.equal(kanbanCards([{ machine: { ...machine, connected: false }, board }], NONE).length, 0);
 });
 
-test("a card goes in the column its repository's board plugin gives, and in the first one when the plugin fails", () => {
+test("a card goes in the column its repository's board plugin gives, with its instructions, and in the first one when the plugin fails", () => {
   const m: RepoMaterial = { repo: "o/r", primary: { path: "/r/main" }, worktrees: [{ branch: "feat/2-a", path: "/r/wt-a" }], prs: [pr({ headRefName: "feat/2-a" })], closed: [], plugin: "mine" };
   const plugins: BoardPlugins = new Map<string, { state?: unknown }>([
-    ["mine", { state: (c: { pr?: { number: number } }) => ({ column: "review", reason: ` PR #${c.pr?.number} ` }) }],
+    ["mine", { state: (c: { pr?: { number: number } }) => ({ column: "review", reason: ` PR #${c.pr?.number} `, actions: [{ label: " レビューする ", text: `/review ${c.pr?.number}` }] }) }],
+    ["blank", { state: () => ({ column: "agent", actions: [{ label: "送る", text: " " }] }) }],
     ["throws", { state: () => { throw new Error("boom"); } }],
     ["odd", { state: () => ({ column: "later" }) }],
     ["empty", {}],
@@ -76,7 +77,11 @@ test("a card goes in the column its repository's board plugin gives, and in the 
     return [card?.column, card?.reason?.text, card?.reason?.error];
   };
   assert.deepEqual(placed("mine"), ["review", "PR #1", undefined]);
+  assert.deepEqual(cardsOf(m, new Map(), plugins)[0]?.actions, [{ label: "レビューする", text: "/review 1" }]);
   assert.deepEqual(placed(undefined), ["mine", undefined, undefined]);
+  // An instruction that would send nothing makes the card fail as a whole, so that the plugin's mistake shows.
+  assert.deepEqual(placed("blank"), ["mine", "列を決められませんでした（blank）", "state が返した指示を使えません：actions のそれぞれに、空でない label と text が要ります。"]);
+  assert.equal(cardsOf({ ...m, plugin: "blank" }, new Map(), plugins)[0]?.actions, undefined);
   assert.deepEqual(placed("throws"), ["mine", "列を決められませんでした（throws）", "state が失敗しました：boom"]);
   assert.deepEqual(placed("odd"), ["mine", "列を決められませんでした（odd）", "state が知らない列を返しました：later"]);
   assert.match(placed("empty")[2] ?? "", /state を export していません/);

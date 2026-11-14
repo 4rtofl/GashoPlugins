@@ -1,5 +1,6 @@
 // The sample board plugin: puts a card in a column by its pull request, the pull request's CI and conflicts, and its
-// Claude Code sessions. The cards do not have the CI and the conflicts, so `fetch` reads them with gh.
+// Claude Code sessions, and offers what to ask Claude next on the card's menu. The cards do not have the CI and the
+// conflicts, so `fetch` reads them with gh.
 import type { Fetch, State } from "../types.ts";
 
 /** Of my open pull requests (by number), those whose CI runs or failed, or that conflict. */
@@ -39,7 +40,14 @@ export const state: State<Info> = (card, info) => {
   if (open?.conflict) return { column: "mine", reason: "コンフリクトしている" };
   if (open?.ci === "failure") return { column: "mine", reason: "CI が落ちた" };
   if (open?.ci === "pending") return { column: "github", reason: "CI が動いている" };
-  if (card.pr && !card.pr.draft) return { column: "review", reason: "PR がレビュー待ち" };
-  if (card.pr?.draft) return { column: "mine", reason: "PR が Draft" };
-  return { column: "mine", reason: "PR がまだない" };
+  if (card.pr && !card.pr.draft) {
+    const text = `PR #${card.pr.number} のレビューのコメントを読んで、直すものを直して`;
+    return { column: "review", reason: "PR がレビュー待ち", actions: [{ label: "レビューのコメントに対応する", text }] };
+  }
+  if (card.pr?.draft) {
+    const text = `PR #${card.pr.number} の差分を見直して、Ready for review にしてよいか教えて`;
+    return { column: "mine", reason: "PR が Draft", actions: [{ label: "PR を見直す", text }] };
+  }
+  const actions = card.issue === undefined ? [] : [{ label: "Issue を実装する", text: `Issue #${card.issue} を読んで実装して` }];
+  return { column: "mine", reason: "PR がまだない", actions };
 };
