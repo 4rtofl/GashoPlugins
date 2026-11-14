@@ -4,16 +4,13 @@
 import { CircleCheck, CircleDot, CircleSlash, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, ListPlus } from "lucide-react";
 import { useRequest, useSetting, type RequestOptions, type RequestTarget, type WorktreeContext, type WorktreeInfo, type WorktreeTab } from "@gasho/plugin-sdk";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
+import { readOp } from "./daemon.ts";
 
 /** The call that reads a worktree's items; undefined when there is nothing to read. */
 export function itemsTarget(machine: string, worktree: WorktreeInfo, ready: boolean): RequestTarget | undefined {
   const github = worktree.github;
   if (!ready || !github) return undefined;
-  return {
-    machine,
-    method: "items",
-    params: { repo: `${github.owner}/${github.name}`, worktree: worktree.path, ...(worktree.branch ? { branch: worktree.branch } : {}) },
-  };
+  return readOp(machine, "items", { repo: `${github.owner}/${github.name}`, worktree: worktree.path, ...(worktree.branch ? { branch: worktree.branch } : {}) });
 }
 
 /** How often the screen reads again: the setting, or (0) only when shown and when asked. */
