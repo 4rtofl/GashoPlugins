@@ -1,11 +1,14 @@
 // The "GitHub" tab of a worktree: its issues and pull requests (the one its branch is named after, the pull requests of
-// its branch, the ones added by hand), and a box that adds one by its number or its GitHub URL.
+// its branch, the ones added by hand), a box that makes the pull request of a branch without one, a box that adds one by
+// its number, its GitHub URL or words of its title (home/), and a form for a new issue.
 import { ExternalLink, RefreshCw, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
 import { useWriteOp } from "./daemon.ts";
-import { numberFrom } from "./number.ts";
+import { AddBox } from "./home/add.tsx";
+import { NewIssueBox } from "./home/new-issue.tsx";
+import { NewPullBox } from "./home/new-pull.tsx";
 import { itemIcon, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
 import { Alert } from "./ui/alert.tsx";
 import { Badge, type BadgeTone } from "./ui/badge.tsx";
@@ -28,9 +31,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
   const nav = useNavigation();
   const write = useWriteOp();
   const toast = useToast();
-  const [text, setText] = useState("");
   const [busy, setBusy] = useState<string>();
-  const [error, setError] = useState<string>();
   const github = worktree.github;
   const repo = github ? `${github.owner}/${github.name}` : undefined;
   const items = r.data;
@@ -44,21 +45,11 @@ function Home({ machine, worktree }: WorktreeViewProps) {
     return res.ok ? undefined : res.error;
   };
 
-  const add = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!repo) return;
-    const number = numberFrom(text, repo);
-    setError(undefined);
-    if (!number) {
-      setError(`番号（17 や #17）か、${repo} の Issue や Pull request の URL を入れてください。`);
-      return;
-    }
+  const add = async (number: number): Promise<string | undefined> => {
+    if (!repo) return undefined;
     const failed = await run("add", "add", { repo, worktree: worktree.path, number }, `${repo} #${number} を worktree に足す`);
-    if (failed) setError(failed);
-    else {
-      setText("");
-      toast({ title: `#${number} を worktree に足しました` });
-    }
+    if (!failed) toast({ title: `#${number} を worktree に足しました` });
+    return failed;
   };
 
   const remove = async (number: number) => {
@@ -136,7 +127,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
           ))}
           {itemsInOrder(items).length === 0 && (
             <li className="px-3 py-2.5 text-sm text-muted-foreground">
-              {worktree.branch ? "ブランチ名に番号がなく、このブランチの Pull request もありません。" : "この worktree にはブランチがありません。"}下から番号で足せます。
+              {worktree.branch ? "ブランチ名に番号がなく、このブランチの Pull request もありません。" : "この worktree にはブランチがありません。"}下から番号や題の語で足せます。
             </li>
           )}
         </ul>
@@ -154,21 +145,17 @@ function Home({ machine, worktree }: WorktreeViewProps) {
         </Alert>
       )}
 
-      {github && daemon.ready && (
-        <form onSubmit={add} className="flex flex-wrap items-center gap-2">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="番号か URL（例: 17）"
-            aria-label="worktree に足す Issue や Pull request"
-            className="min-w-0 flex-1 rounded-lg border border-border bg-transparent px-3 py-1.5 text-sm outline-none focus:border-foreground/40"
-          />
-          <Button type="submit" variant="primary" disabled={busy !== undefined || !text.trim()} isLoading={busy === "add"} loadingText="確かめています…">
-            worktree に足す
-          </Button>
-        </form>
+      {/* A branch whose pull request is open or merged is done with: a closed one may be made again. */}
+      {repo && daemon.ready && items && worktree.branch && !items.pulls.some((p) => p.state !== "closed") && (
+        <NewPullBox machine={machine.id} worktree={worktree} branch={worktree.branch} repo={repo} {...(items.named?.kind === "issues" ? { title: items.named.title } : {})} onCreated={r.reload} />
       )}
-      {error && <Alert tone="danger">{error}</Alert>}
+
+      {repo && daemon.ready && (
+        <>
+          <AddBox machine={machine.id} repo={repo} has={new Set(items ? itemsInOrder(items).map((i) => i.number) : [])} busy={busy !== undefined} adding={busy === "add"} onAdd={add} />
+          <NewIssueBox machine={machine.id} worktree={worktree} repo={repo} onCreated={r.reload} />
+        </>
+      )}
       {r.at && <p className="text-xs text-muted-foreground">{new Date(r.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} に読み込み</p>}
     </div>
   );
