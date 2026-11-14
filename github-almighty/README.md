@@ -30,15 +30,4 @@ worktree の Issue（ブランチ名の番号）と Pull request（そのブラ�
 
 `gasho-plugin.json` の `methods` は `read`（30 秒）と `write`（60 秒）の 2 つだけで、どちらも `{ op: "<操作>", ... }` を受け取り、`src/daemon/ops/` の操作を走らせる。`write` の操作を `read` で呼ぶと断る（`write` の呼び出しだけが Gasho の操作のログに残るため）。
 
-| 操作 | 種類 | すること |
-|---|---|---|
-| `items` | read | worktree の Issue と Pull request（`WorktreeItems`）。worktree を開いたことも覚える |
-| `item` | read | 1 件の本文と会話（`GitHubItemDetail`） |
-| `events` | read | 会話に並べる状態の変化（`GitHubEvent[]`、最新の 100 件）。GraphQL で 1 点。裏では読まない |
-| `meta` | read | repo のラベルと担当にできる人、gh のログイン |
-| `status` | read | ここ 24 時間に開いた worktree の数と、読み直す間隔 |
-| `add` / `remove` | write | worktree に Issue や Pull request を手で足す・外す（working server に覚える） |
-| `edit` | write | 題・本文・担当・ラベル |
-| `comment` | write | コメントを足す |
-| `state` | write | 閉じる（Issue は完了か対応しないか）・開き直す |
-| `ready` | write | Ready for review にする・Draft に戻す |
+操作の名前・引数・結果は、`src/daemon/ops/<操作>.ts` の先頭のコメントに書く。ここには表にしない（操作を足す Pull request が、同じ表に行を足してぶつかるため）。
