@@ -2,10 +2,11 @@
 // for each worktree of a watched repository, with its branch's pull request and the Claude Code sessions in it, and one
 // for each open pull request of mine without a worktree. The web part makes them from what the daemon part read
 // (Board) and the sessions of the working server (MachineInfo.sessions, Gasho's and the others alike). The board plugin
-// chosen for the repository decides each card's column and the instructions on its menu (kanban/plugins/); without
-// one, every card goes in the first column. No React here, so that the tests run it as it is.
+// chosen for the repository decides each card's column, the marks on it and the instructions on its menu, and the
+// headings above the board (kanban/plugins/); without one, every card goes in the first column. No React here, so that
+// the tests run it as it is.
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
-import type { StateCard } from "../plugins/types.ts";
+import type { FetchRepo, StateCard } from "../plugins/types.ts";
 import type { Board, ClosedPr, OpenPr, RepoMaterial } from "./types.ts";
 
 /** The columns, in their order: my move, the agent works, GitHub works (CI), the reviewers' move, done. */
@@ -40,6 +41,29 @@ export interface SessionLike extends CardSession {
   cwd: string;
 }
 
+/** A mark the board plugin put on a card: a Stack the worktree deployed to last, or deploys to now. */
+export interface CardMark {
+  text: string;
+  /** Shown when the pointer rests on the mark, and in the card's menu. */
+  detail?: string;
+  /** Going on now (a deploy): in amber, and on the one-line card too. */
+  active?: boolean;
+}
+
+/** A heading above the board, from a repository's board plugin: a Stack and the worktree that deployed to it last. */
+export interface BoardHeading {
+  /** What it is about, in bold: the Stack's name. */
+  label: string;
+  /** How it stands: the worktree, or that there is no record. */
+  text?: string;
+  /** When it happened (ms since the epoch): shown as how long ago. */
+  at?: number;
+  /** Going on now (a deploy): in amber. */
+  active?: boolean;
+  /** Shown when the pointer rests on it. */
+  detail?: string;
+}
+
 /** One worktree with its branch's pull request, or an open pull request of mine without a worktree. */
 export interface KanbanCard {
   /** Unique on its working server. */
@@ -65,6 +89,8 @@ export interface KanbanCard {
   reason?: { text: string; error?: string };
   /** The instructions the board plugin gave for the card's menu. */
   actions?: CardAction[];
+  /** The marks the board plugin put on the card. */
+  marks?: CardMark[];
   sessions: CardSession[];
 }
 
@@ -95,9 +121,12 @@ export function assignSessions(sessions: readonly SessionLike[], paths: readonly
 }
 
 /** The board plugins built in, by their folder's name: what each kanban/plugins/<name>/index.ts exports. */
-export type BoardPlugins = ReadonlyMap<string, { state?: unknown }>;
+export type BoardPlugins = ReadonlyMap<string, { state?: unknown; headings?: unknown }>;
 
 const COLUMN_IDS = new Set<string>(KANBAN_COLUMNS.map((c) => c.id));
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
 /** The instructions `state` gave, or why they cannot be used; none given is an empty list. */
 function actionsOf(given: unknown): CardAction[] | string {
@@ -112,8 +141,24 @@ function actionsOf(given: unknown): CardAction[] | string {
   return out;
 }
 
-/** Where the board plugin `name` puts a card, with what its `fetch` gave, and what its menu sends: "mine" and nothing without one, and when it fails. */
-export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins, fetched?: unknown): Pick<KanbanCard, "column" | "reason" | "actions"> {
+/** The marks `state` gave, or why they cannot be used; none given is an empty list. */
+function marksOf(given: unknown): CardMark[] | string {
+  if (given === undefined) return [];
+  if (!Array.isArray(given)) return "marks が配列ではありません。";
+  const out: CardMark[] = [];
+  for (const m of given) {
+    if (!isRecord(m) || !text(m.text)) return "marks のそれぞれに、空でない text が要ります。";
+    const detail = text(m.detail);
+    out.push({ text: text(m.text), ...(detail ? { detail } : {}), ...(m.active === true ? { active: true } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Where the board plugin `name` puts a card, the marks it puts on it and what its menu sends, with what its `fetch`
+ * gave: "mine" and nothing without one, and when it fails.
+ */
+export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins, fetched?: unknown): Pick<KanbanCard, "column" | "reason" | "marks" | "actions"> {
   if (name === undefined) return { column: "mine" };
   const failed = (error: string) => ({ column: "mine" as const, reason: { text: `列を決められませんでした（${name}）`, error } });
   const state = plugins.get(name)?.state;
@@ -124,12 +169,69 @@ export function placeCard(card: StateCard, name: string | undefined, plugins: Bo
   } catch (e) {
     return failed(`state が失敗しました：${e instanceof Error ? e.message : String(e)}`);
   }
-  const { column, reason, actions } = (placed ?? {}) as { column?: unknown; reason?: unknown; actions?: unknown };
+  const { column, reason, marks, actions } = (placed ?? {}) as { column?: unknown; reason?: unknown; marks?: unknown; actions?: unknown };
   if (typeof column !== "string" || !COLUMN_IDS.has(column)) return failed(`state が知らない列を返しました：${String(column)}`);
+  const shown = marksOf(marks);
+  if (typeof shown === "string") return failed(`state が返した印を使えません：${shown}`);
   const menu = actionsOf(actions);
   if (typeof menu === "string") return failed(`state が返した指示を使えません：${menu}`);
-  const text = typeof reason === "string" ? reason.trim() : "";
-  return { column: column as KanbanColumn, ...(text ? { reason: { text } } : {}), ...(menu.length > 0 ? { actions: menu } : {}) };
+  const why = text(reason);
+  return {
+    column: column as KanbanColumn,
+    ...(why ? { reason: { text: why } } : {}),
+    ...(shown.length > 0 ? { marks: shown } : {}),
+    ...(menu.length > 0 ? { actions: menu } : {}),
+  };
+}
+
+/** The headings `headings` gave, or why they cannot be used. */
+function headingsOf(given: unknown): BoardHeading[] | string {
+  if (!Array.isArray(given)) return "配列ではありません。";
+  const out: BoardHeading[] = [];
+  for (const h of given) {
+    if (!isRecord(h) || !text(h.label)) return "それぞれに、空でない label が要ります。";
+    const [said, detail] = [text(h.text), text(h.detail)];
+    out.push({
+      label: text(h.label),
+      ...(said ? { text: said } : {}),
+      ...(typeof h.at === "number" && Number.isFinite(h.at) ? { at: h.at } : {}),
+      ...(h.active === true ? { active: true } : {}),
+      ...(detail ? { detail } : {}),
+    });
+  }
+  return out;
+}
+
+/** The headings above the board from one repository's board plugin; `error` (and no headings) when it failed. */
+export interface RepoHeadings {
+  machine: MachineInfo;
+  repo: string;
+  plugin: string;
+  headings: BoardHeading[];
+  error?: string;
+}
+
+/** The headings the board plugins of the connected working servers' repositories give, with what their `fetch` gave. */
+export function boardHeadings(boards: { machine: MachineInfo; board: Board }[], plugins: BoardPlugins): RepoHeadings[] {
+  return boards
+    .filter((b) => b.machine.connected)
+    .flatMap(({ machine, board }) =>
+      board.repos.flatMap((m): RepoHeadings[] => {
+        const plugin = m.plugin;
+        const headings = plugin === undefined ? undefined : plugins.get(plugin)?.headings;
+        if (plugin === undefined || typeof headings !== "function") return [];
+        const failed = (error: string): RepoHeadings[] => [{ machine, repo: m.repo, plugin, headings: [], error }];
+        const { plugin: _, fetched, ...repo } = m;
+        let given: unknown;
+        try {
+          given = headings(structuredClone(repo) satisfies FetchRepo, fetched);
+        } catch (e) {
+          return failed(`headings が失敗しました：${e instanceof Error ? e.message : String(e)}`);
+        }
+        const shown = headingsOf(given);
+        return typeof shown === "string" ? failed(`headings が返した見出しを使えません：${shown}`) : [{ machine, repo: m.repo, plugin, headings: shown }];
+      }),
+    );
 }
 
 const cardSession = (s: SessionLike): CardSession => ({ sessionId: s.sessionId, status: s.status, ...(s.managed ? { managed: true } : {}) });

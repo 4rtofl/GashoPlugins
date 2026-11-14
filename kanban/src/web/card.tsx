@@ -65,7 +65,7 @@ const AGENT: Record<"busy" | "waiting" | "idle", { Icon: LucideIcon; text: strin
 export function CompactCard({ row, now, where }: { row: PlacedCard; now: number; where: Where }) {
   const { machine, card } = row;
   const updated = card.updatedAt ? Date.parse(card.updatedAt) : undefined;
-  const tip = [where.machines && machine.name, where.repos && card.repo, card.title, card.reason?.text].filter(Boolean).join("\n");
+  const tip = [where.machines && machine.name, where.repos && card.repo, card.title, card.reason?.text, ...(card.marks ?? []).map((m) => m.detail ?? m.text)].filter(Boolean).join("\n");
   return (
     <CardMenu row={row}>
       <button
@@ -75,6 +75,13 @@ export function CompactCard({ row, now, where }: { row: PlacedCard; now: number;
       >
         <PrIcon card={card} />
         <span className="min-w-0 flex-1 truncate">{card.label}</span>
+        {card.marks
+          ?.filter((m) => m.active)
+          .map((m, i) => (
+            <span key={i} className={cn(MARK, MARK_ACTIVE, "h-4 px-1.5 text-[10px]")}>
+              {m.text}
+            </span>
+          ))}
         {card.sessions.some((s) => s.status === "busy" || s.status === "waiting") && (
           <StatusDot status={card.sessions.some((s) => s.status === "waiting") ? "waiting" : "busy"} />
         )}
@@ -146,12 +153,15 @@ export function Card({ row, now, where }: { row: PlacedCard; now: number; where:
 const reasonTone = (card: KanbanCard): string => (card.reason?.error ? "text-amber-700 dark:text-amber-300" : "text-neutral-500");
 
 const CHIP = "inline-flex h-5 items-center gap-1 rounded-full bg-black/[0.05] px-2 text-[11px] whitespace-nowrap text-neutral-600 dark:bg-white/[0.06] dark:text-neutral-400";
+/** A mark the board plugin put on the card; an active one (a deploy going on) in amber. */
+const MARK = "inline-flex h-5 max-w-full shrink-0 items-center rounded-full px-2 text-[11px] font-medium whitespace-nowrap ring-1 ring-inset ring-sky-500/30 text-sky-700 dark:text-sky-300";
+const MARK_ACTIVE = "bg-amber-500/15 ring-amber-500/30 text-amber-800 dark:text-amber-300";
 
 function Chips({ machine, card, where, children }: { machine: MachineInfo; card: KanbanCard; where: Where; children: ReactNode }) {
   const pr = card.pr && card.label !== `PR #${card.pr.number}` ? card.pr : undefined;
   // Sessions Gasho did not start, once per state.
   const others = [...new Set(card.sessions.filter((s) => !s.managed && s.status !== "unknown").map((s) => s.status as keyof typeof AGENT))];
-  const any = where.machines || where.repos || pr || card.issue !== undefined || !card.path || others.length > 0 || card.sessions.some((s) => s.managed);
+  const any = where.machines || where.repos || pr || card.issue !== undefined || !card.path || (card.marks?.length ?? 0) > 0 || others.length > 0 || card.sessions.some((s) => s.managed);
   if (!any) return null;
   return (
     <div className="flex flex-wrap items-center gap-1">
@@ -170,6 +180,11 @@ function Chips({ machine, card, where, children }: { machine: MachineInfo; card:
       {pr && <span className={CHIP}>PR #{pr.number}</span>}
       {card.issue !== undefined && <span className={CHIP}>Issue #{card.issue}</span>}
       {!card.path && <span className={cn(CHIP, "bg-transparent ring-1 ring-black/[0.1] ring-inset dark:bg-transparent dark:ring-white/[0.1]")}>worktree なし</span>}
+      {card.marks?.map((m, i) => (
+        <span key={`mark-${i}`} className={cn(MARK, m.active && MARK_ACTIVE)} title={m.detail}>
+          <span className="truncate">{m.text}</span>
+        </span>
+      ))}
       {others.map((status) => {
         const a = AGENT[status];
         return (
@@ -296,6 +311,15 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
               {card.reason.text}
               {card.reason.error && <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">{card.reason.error}</span>}
             </p>
+          )}
+          {card.marks && (
+            <ul className="max-w-64 space-y-0.5 px-2.5 pb-1.5 text-xs break-words text-muted-foreground">
+              {card.marks.map((m, i) => (
+                <li key={i} className={cn(m.active && "text-amber-700 dark:text-amber-300")}>
+                  {m.detail ?? m.text}
+                </li>
+              ))}
+            </ul>
           )}
           {card.actions?.map((a, i) => (
             <DropdownMenu.Item

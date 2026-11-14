@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
-import { arrangeCards, assignSessions, boardCards, cardsOf, issueOf, kanbanCards, placeCard, type BoardPlugins, type SessionLike } from "../src/cards.ts";
-import type { FetchContext, FetchRepo } from "../plugins/types.ts";
+import { arrangeCards, assignSessions, boardCards, boardHeadings, cardsOf, issueOf, kanbanCards, placeCard, type BoardPlugins, type SessionLike } from "../src/cards.ts";
+import * as example from "../plugins/example/index.ts";
+import type { Stacks } from "../plugins/example/stacks.ts";
+import type { FetchContext, FetchRepo, FetchStore, StateCard } from "../plugins/types.ts";
 import { ghError, parseClosed, parseGitHubUrl, parsePrs, parseWorktrees, type Exec, type GitHubRead } from "../src/daemon/git.ts";
 import { FETCH_EVERY_MS, READ_EVERY_MS, Reader, type BoardFetchers } from "../src/daemon/reader.ts";
 import type { OpenPr, RepoMaterial } from "../src/types.ts";
@@ -89,6 +91,36 @@ test("a card goes in the column its repository's board plugin gives, with its in
   assert.equal(cardsOf({ ...m, plugin: "fetched", fetched: { ci: "pending" } }, new Map(), plugins)[0]?.column, "github");
   // A plugin chosen on a working server but not in this build, such as another person's.
   assert.match(placeCard({ id: "x", repo: "o/r", label: "x", title: "", sessions: [] }, "gone", plugins).reason?.error ?? "", /kanban\/plugins\/gone\/ が、このビルドにありません/);
+
+  // The marks `state` gives come on the card; marks that cannot be shown put the card in "mine".
+  const card: StateCard = { id: "x", repo: "o/r", label: "x", title: "", sessions: [] };
+  const marked = new Map([
+    ["marks", { state: () => ({ column: "github", marks: [{ text: " dev1 デプロイ中 ", detail: " since 10:00 ", active: true }, { text: "dev2", active: "yes" }] }) }],
+    ["blank", { state: () => ({ column: "github", marks: [{ text: " " }] }) }],
+  ]);
+  assert.deepEqual(placeCard(card, "marks", marked).marks, [{ text: "dev1 デプロイ中", detail: "since 10:00", active: true }, { text: "dev2" }]);
+  assert.deepEqual(placeCard(card, "blank", marked), { column: "mine", reason: { text: "列を決められませんでした（blank）", error: "state が返した印を使えません：marks のそれぞれに、空でない text が要ります。" } });
+});
+
+test("the headings above the board come from the board plugins that have them, with what their fetch gave, or say why not", () => {
+  const machine = { id: "m", name: "mac", connected: true, lastSeen: 0, sessions: [] } as unknown as MachineInfo;
+  const repo = (name: string, plugin?: string, fetched?: unknown): RepoMaterial => ({ repo: `o/${name}`, primary: { path: `/r/${name}` }, worktrees: [], prs: [], closed: [], ...(plugin ? { plugin } : {}), ...(fetched ? { fetched } : {}) });
+  const plugins: BoardPlugins = new Map<string, { state?: unknown; headings?: unknown }>([
+    ["stacks", { headings: (r: FetchRepo, f?: { last: string }) => [{ label: " dev1 ", text: `${f?.last} of ${r.repo}`, at: 5, active: false, extra: Object.keys(r).join() }] }],
+    ["throws", { headings: () => { throw new Error("boom"); } }],
+    ["odd", { headings: () => [{ text: "no label" }] }],
+    ["plain", {}],
+  ]);
+  const board = { watched: [], repos: [repo("a", "stacks", { last: "wt" }), repo("b", "throws"), repo("c", "odd"), repo("d", "plain"), repo("e")], errors: [] };
+  assert.deepEqual(
+    boardHeadings([{ machine, board }], plugins).map(({ repo: r, plugin, headings, error }) => [r, plugin, headings, error]),
+    [
+      ["o/a", "stacks", [{ label: "dev1", text: "wt of o/a", at: 5 }], undefined],
+      ["o/b", "throws", [], "headings が失敗しました：boom"],
+      ["o/c", "odd", [], "headings が返した見出しを使えません：それぞれに、空でない label が要ります。"],
+    ],
+  );
+  assert.deepEqual(boardHeadings([{ machine: { ...machine, connected: false }, board }], plugins), []);
 });
 
 test("a column's order: cards without the value stay below in either direction", () => {
@@ -132,6 +164,7 @@ function fakeServer() {
     const cwd = at >= 0 ? args[at + 1] : undefined;
     const rest = at >= 0 ? args.slice(at + 2) : args;
     calls.push([command, ...rest].join(" "));
+    if (command === "ps") return { stdout: "", stderr: "" };
     if (command !== "git" || !cwd?.startsWith("/r/")) throw Object.assign(new Error("not a git repository"), { code: 128, stdout: "", stderr: "" });
     if (rest[0] === "rev-parse") return { stdout: "/r/main/.git\n", stderr: "" };
     if (rest[0] === "worktree") return { stdout: "worktree /r/main\nbranch refs/heads/main\n\nworktree /r/wt\nbranch refs/heads/feat/5-x\n", stderr: "" };
@@ -152,7 +185,7 @@ test("the watched repositories are kept in the plugin's folder, read at most onc
   const file = path.join(dir, "watched.json");
   let now = 1_000_000;
   const server = fakeServer();
-  const reader = new Reader({ exec: server.exec, github: server.github, folders: () => ["/r/wt", "/elsewhere"], file, log: () => undefined, now: () => now });
+  const reader = new Reader({ exec: server.exec, github: server.github, storeDir: dir, folders: () => ["/r/wt", "/elsewhere"], file, log: () => undefined, now: () => now });
   await reader.load();
   assert.deepEqual(await reader.repoOptions(), [{ path: "/r/main", github: "o/r" }]);
 
@@ -193,13 +226,13 @@ test("the watched repositories are kept in the plugin's folder, read at most onc
   assert.deepEqual((await reader.watch(["/r/main"])).plugins, { "/r/main": "mine" });
 
   // Another process (the plugin started again) reads the same repositories from the file.
-  const again = new Reader({ exec: server.exec, github: server.github, folders: () => ["/r/wt"], file, log: () => undefined });
+  const again = new Reader({ exec: server.exec, github: server.github, storeDir: dir, folders: () => ["/r/wt"], file, log: () => undefined });
   await again.load();
   assert.deepEqual(again.board().watched, ["/r/main"]);
   assert.deepEqual(again.board().plugins, { "/r/main": "mine" });
   await again.settled();
   // A repository watched before may stay while its folder is gone, so that it can be taken off.
-  const gone = new Reader({ exec: server.exec, github: server.github, folders: () => [], file, log: () => undefined });
+  const gone = new Reader({ exec: server.exec, github: server.github, storeDir: dir, folders: () => [], file, log: () => undefined });
   assert.deepEqual((await gone.watch(["/r/main"])).watched, ["/r/main"]);
   gone.board();
   await gone.settled();
@@ -224,7 +257,7 @@ test("a board plugin's fetch runs in every other reading with gh, its value come
       },
     ],
   ]);
-  const reader = new Reader({ exec: server.exec, github: server.github, fetchers, folders: () => ["/r/wt"], file: path.join(dir, "watched.json"), log: () => undefined, now: () => now });
+  const reader = new Reader({ exec: server.exec, github: server.github, fetchers, storeDir: dir, folders: () => ["/r/wt"], file: path.join(dir, "watched.json"), log: () => undefined, now: () => now });
   const fetches = () => server.calls.filter((c) => c.startsWith("gh pr checks")).length;
   const reading = async (ms: number) => {
     now += ms;
@@ -283,4 +316,96 @@ test("a board plugin's fetch runs in every other reading with gh, its value come
   assert.equal(plain.repos[0]?.fetched, undefined);
   assert.equal(server.calls.length, calls);
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("a board plugin's fetch runs commands and gets what it kept the time before, after gasho-daemon starts again too, and runs only while the board is asked for", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kanban-"));
+  let now = 1_000_000;
+  const server = fakeServer();
+  const fetchers: BoardFetchers = new Map([
+    [
+      "count",
+      async (_: FetchRepo, { exec, store }: FetchContext) => {
+        await exec("ps", ["axww", "-o", "pid=,command="]);
+        const n = ((store.get() as number | undefined) ?? 0) + 1;
+        await store.set(n);
+        return n;
+      },
+    ],
+    ["other", async (_: FetchRepo, { store }: FetchContext) => store.get() ?? "none"],
+  ]);
+  const start = () => new Reader({ exec: server.exec, github: server.github, fetchers, storeDir: path.join(dir, "stores"), folders: () => ["/r/wt"], file: path.join(dir, "watched.json"), log: () => undefined, now: () => now });
+  const reader = start();
+  await reader.watch(["/r/main"], { "/r/main": "count" });
+  await reader.settled();
+  assert.equal(reader.board().repos[0]?.fetched, 1);
+  assert.ok(server.calls.includes("ps axww -o pid=,command="));
+
+  // While no browser asks for the board, nothing runs, however long.
+  const calls = server.calls.length;
+  now += 10 * FETCH_EVERY_MS;
+  await reader.settled();
+  assert.equal(server.calls.length, calls);
+  reader.board();
+  await reader.settled();
+  assert.equal(reader.board().repos[0]?.fetched, 2);
+
+  // gasho-daemon started again: what it kept is in the file.
+  const again = start();
+  await again.load();
+  again.board();
+  await again.settled();
+  assert.equal(again.board().repos[0]?.fetched, 3);
+  // Another plugin does not get it.
+  await again.watch(["/r/main"], { "/r/main": "other" });
+  await again.settled();
+  assert.equal(again.board().repos[0]?.fetched, "none");
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("the sample finds the deploys with ps and lsof, puts the deploying card in GitHub 待ち, and keeps the worktree that deployed to each Stack last", async () => {
+  const repo: FetchRepo = { repo: "o/r", primary: { path: "/r/main", branch: "main" }, worktrees: [{ branch: "feat/5-x", path: "/r/wt" }], prs: [], closed: [] };
+  let ps = [
+    "  101 bash ./deploy.sh --stage dev1 -b",
+    "  102 /bin/zsh -c cd /r/wt && ./deploy.sh --stage dev1",
+    "  103 /bin/bash /r/main/infra/deploy.sh --stage=dev2",
+    "  104 vim deploy.sh --stage dev1",
+    "  105 bash ./deploy.sh -b -- --stage dev3",
+    "  106 bash /elsewhere/deploy.sh --stage dev4",
+    "  107 bash ./deploy.sh --stage dev5",
+  ].join("\n");
+  const exec: FetchContext["exec"] = async (command, args) => {
+    if (command === "ps") return { stdout: ps, stderr: "" };
+    assert.deepEqual([command, ...args], ["lsof", "-a", "-p", "101,107", "-d", "cwd", "-Fpn"]);
+    // 107 ended after ps: lsof fails, and still prints the others.
+    throw Object.assign(new Error("exit 1"), { code: 1, stdout: "p101\nfcwd\nn/r/wt/infra\n", stderr: "" });
+  };
+  let kept: unknown;
+  const store: FetchStore<Stacks> = { get: () => kept as Stacks | undefined, set: async (v) => void (kept = v) };
+  const github = { read: async () => assert.fail("no pull request: gh is not needed") };
+  const fetched = await example.fetch(repo, { github, exec, store });
+  assert.deepEqual(
+    Object.entries(fetched.stacks).map(([s, r]) => [s, r.path, r.running]),
+    [
+      ["dev1", "/r/wt", ["/r/wt"]],
+      ["dev2", "/r/main", ["/r/main"]],
+    ],
+  );
+  assert.deepEqual(kept, fetched.stacks);
+  const card: StateCard = { id: "o/r:/r/wt", repo: "o/r", label: "wt", path: "/r/wt", branch: "feat/5-x", title: "feat/5-x", sessions: [{ sessionId: "s", status: "busy" }] };
+  const deploying = example.state(card, fetched);
+  assert.deepEqual([deploying.column, deploying.reason, deploying.marks?.map((m) => [m.text, m.active])], ["github", "dev1 にデプロイしている", [["dev1 デプロイ中", true]]]);
+
+  // The deploys are over: the worktree stays the one that deployed last, and the card goes back to its column.
+  ps = "";
+  const after = await example.fetch(repo, { github, exec, store });
+  const done = example.state(card, after);
+  assert.deepEqual([done.column, done.marks?.map((m) => [m.text, m.active ?? false])], ["agent", [["dev1", false]]]);
+  assert.deepEqual(
+    example.headings(repo, after).map((h) => [h.label, h.text, h.active ?? false, typeof h.at]),
+    [
+      ["dev1", "wt", false, "number"],
+      ["dev2", "main", false, "number"],
+    ],
+  );
 });

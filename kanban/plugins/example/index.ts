@@ -1,11 +1,14 @@
-// The sample board plugin: puts a card in a column by its pull request, the pull request's CI and conflicts, and its
-// Claude Code sessions, and offers what to ask Claude next on the card's menu. The cards do not have the CI and the
-// conflicts, so `fetch` reads them with gh.
-import type { Fetch, State } from "../types.ts";
+// The sample board plugin: puts a card in a column by its pull request, the pull request's CI and conflicts, its Claude
+// Code sessions and its deploys, marks the Stacks each worktree deployed to, offers what to ask Claude next on the
+// card's menu, and shows above the board the worktree that deployed to each Stack last. The cards do not have the CI,
+// the conflicts and the deploys, so `fetch` reads them with gh and ps (stacks.ts).
+import type { Fetch, Headings, Placement, State, StateCard } from "../types.ts";
+import { deployingTo, readStacks, stackHeadings, stackMarks, type Stacks } from "./stacks.ts";
 
-/** Of my open pull requests (by number), those whose CI runs or failed, or that conflict. */
+/** Of my open pull requests (by number), those whose CI runs or failed, or that conflict; and what was seen of each Stack. */
 export interface Info {
   prs: Record<number, { ci?: "pending" | "failure"; conflict?: true }>;
+  stacks: Stacks;
 }
 
 const FAILED = new Set(["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
@@ -19,8 +22,9 @@ function ciOf(checks: unknown): "pending" | "failure" | undefined {
   return undefined;
 }
 
-export const fetch: Fetch<Info> = async (repo, { github }) => {
-  if (repo.prs.length === 0) return { prs: {} };
+export const fetch: Fetch<Info, Stacks> = async (repo, { github, exec, store }) => {
+  const stacks = await readStacks(repo, { exec, store });
+  if (repo.prs.length === 0) return { prs: {}, stacks };
   const { stdout } = await github.read(["pr", "list", "--repo", repo.repo, "--author", "@me", "--state", "open", "--limit", "100", "--json", "number,mergeable,statusCheckRollup"]);
   const prs: Info["prs"] = {};
   for (const p of JSON.parse(stdout) as { number: number; mergeable?: string; statusCheckRollup?: unknown }[]) {
@@ -28,12 +32,14 @@ export const fetch: Fetch<Info> = async (repo, { github }) => {
     const conflict = p.mergeable === "CONFLICTING";
     if (ci || conflict) prs[p.number] = { ...(ci ? { ci } : {}), ...(conflict ? { conflict: true as const } : {}) };
   }
-  return { prs };
+  return { prs, stacks };
 };
 
-export const state: State<Info> = (card, info) => {
+function column(card: StateCard, info: Info | undefined): Placement {
   if (card.pr?.state === "merged") return { column: "done", reason: "マージ済み" };
   if (card.pr?.state === "closed") return { column: "done", reason: "クローズ済み" };
+  const deploying = deployingTo(card, info?.stacks);
+  if (deploying.length > 0) return { column: "github", reason: `${deploying.join("・")} にデプロイしている` };
   if (card.sessions.some((s) => s.status === "waiting")) return { column: "mine", reason: "Claude が答えを待っている" };
   if (card.sessions.some((s) => s.status === "busy")) return { column: "agent", reason: "Claude が作業している" };
   const open = card.pr?.state === "open" ? info?.prs[card.pr.number] : undefined;
@@ -50,4 +56,8 @@ export const state: State<Info> = (card, info) => {
   }
   const actions = card.issue === undefined ? [] : [{ label: "Issue を実装する", text: `Issue #${card.issue} を読んで実装して` }];
   return { column: "mine", reason: "PR がまだない", actions };
-};
+}
+
+export const state: State<Info> = (card, info) => ({ ...column(card, info), marks: stackMarks(card, info?.stacks) });
+
+export const headings: Headings<Info> = (_repo, info) => stackHeadings(info?.stacks);

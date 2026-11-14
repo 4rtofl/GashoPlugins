@@ -3,11 +3,13 @@
 // and what it last read of them. It reads while someone looks: the web part asks for the board every minute while it
 // shows, and a request that finds the last reading older than a minute starts the next one. However many browsers
 // look, it reads at most once a minute. A repository that fails keeps what it read before, with the error. The board
-// plugin's `fetch` runs in every other reading, and not while few of GitHub's GraphQL points are left for the hour.
+// plugin's `fetch` runs in every other reading, and not while few of GitHub's GraphQL points are left for the hour; what
+// it keeps for itself (FetchStore) is in a file of its own for each repository.
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import type { Fetch } from "../../plugins/types.ts";
+import type { Fetch, FetchContext, FetchStore } from "../../plugins/types.ts";
 import { MAX_REPOS, type Board, type RepoMaterial, type RepoOption } from "../types.ts";
 import { ghError, KanbanError, readRepo, repoOptions, type Exec, type GitHubRead } from "./git.ts";
 
@@ -28,7 +30,7 @@ export const FETCH_EVERY_MS = 110_000;
 /** `fetch` waits for the next hour while fewer GraphQL points than this are left, for the person's own gh and the other plugins. */
 export const FETCH_RESERVE_POINTS = 1000;
 const FETCH_TIMEOUT_MS = 60_000;
-/** What `fetch` gives goes to the web part with the board, as JSON (all of it must stay well under 16 MB). */
+/** What `fetch` gives goes to the web part with the board, as JSON (all of it must stay well under 16 MB); what it keeps, too. */
 const FETCH_MAX_BYTES = 256 * 1024;
 
 /** A board plugin's name: a folder of kanban/plugins/. Only kept here; the web part looks it up in its build. */
@@ -58,21 +60,54 @@ function fetchError(name: string, e: unknown): string {
   return `カンバン用のプラグイン（${name}）の fetch が失敗しました：${why}`;
 }
 
+/** `value` as JSON, up to FETCH_MAX_BYTES; `what` names it when it is larger. */
+function asJson(value: unknown, what: string): string | undefined {
+  const json = JSON.stringify(value);
+  if (json !== undefined && Buffer.byteLength(json) > FETCH_MAX_BYTES) throw new Error(`${what}が大きすぎます（JSON で ${FETCH_MAX_BYTES / 1024}KB まで）。`);
+  return json;
+}
+
 /** `fetch`, with what it gives as JSON, stopped after FETCH_TIMEOUT_MS. */
-async function runFetch(fetch: Fetch, material: RepoMaterial, read: GitHubRead): Promise<unknown> {
+async function runFetch(fetch: Fetch, material: RepoMaterial, ctx: FetchContext): Promise<unknown> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${FETCH_TIMEOUT_MS / 1000} 秒たっても終わりませんでした。`)), FETCH_TIMEOUT_MS);
   });
   try {
-    const value = await Promise.race([fetch(structuredClone(material), { github: { read } }), late]);
-    const json = JSON.stringify(value);
-    if (json === undefined) return undefined;
-    if (Buffer.byteLength(json) > FETCH_MAX_BYTES) throw new Error(`返した値が大きすぎます（JSON で ${FETCH_MAX_BYTES / 1024}KB まで）。`);
-    return JSON.parse(json) as unknown;
+    const json = asJson(await Promise.race([fetch(structuredClone(material), ctx), late]), "返した値");
+    return json === undefined ? undefined : (JSON.parse(json) as unknown);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The store of the board plugin `name` for the repository `p`: its file, read now, and written on each `set`. */
+async function openStore(dir: string, name: string, p: string, log: ReaderDeps["log"]): Promise<FetchStore> {
+  const file = path.join(dir, name, `${createHash("sha256").update(p).digest("hex").slice(0, 16)}.json`);
+  let kept: unknown;
+  try {
+    kept = (JSON.parse(await fs.readFile(file, "utf8")) as { value?: unknown } | null)?.value;
+  } catch (e) {
+    if ((e as { code?: unknown }).code !== "ENOENT") log(`kanban: could not read what ${name} kept for ${p}`, e);
+  }
+  // One write at a time, so that the last `set` is the one in the file.
+  let writing: Promise<void> = Promise.resolve();
+  return {
+    get: () => (kept === undefined ? undefined : structuredClone(kept)),
+    async set(value) {
+      const json = asJson({ path: p, value }, "store に入れる値") ?? "{}";
+      kept = (JSON.parse(json) as { value?: unknown }).value;
+      writing = writing
+        .catch(() => undefined)
+        .then(async () => {
+          await fs.mkdir(path.dirname(file), { recursive: true });
+          const tmp = `${file}.${process.pid}.tmp`;
+          await fs.writeFile(tmp, `${json}\n`);
+          await fs.rename(tmp, file);
+        });
+      return writing;
+    },
+  };
 }
 
 export interface ReaderDeps {
@@ -81,6 +116,8 @@ export interface ReaderDeps {
   github: GitHubRead;
   /** The board plugins' `fetch` (none in the tests that do not need them). */
   fetchers?: BoardFetchers;
+  /** The folder of what they keep (FetchStore): a folder for each plugin, a file for each repository. */
+  storeDir: string;
   /** The folders Gasho can start sessions in (ctx.folders). */
   folders: () => string[];
   /** The file that keeps the watched repositories. */
@@ -318,10 +355,12 @@ export class Reader {
         if (!fetching || !fetch || name === undefined || !this.fetchDue(p, fresh)) continue;
         const last = this.fetched.get(p);
         const at = this.startedAt;
-        const done = await runFetch(fetch, material, gh).then(
-          (value): Fetched => ({ plugin: name, at, value }),
-          (e: unknown): Fetched => ({ plugin: name, at, ...(last?.value !== undefined ? { value: last.value } : {}), error: fetchError(name, e) }),
-        );
+        const done = await openStore(this.deps.storeDir, name, p, this.deps.log)
+          .then((store) => runFetch(fetch, material, { github: { read: gh }, exec: this.deps.exec, store }))
+          .then(
+            (value): Fetched => ({ plugin: name, at, value }),
+            (e: unknown): Fetched => ({ plugin: name, at, ...(last?.value !== undefined ? { value: last.value } : {}), error: fetchError(name, e) }),
+          );
         // The repository may have been taken off, or given another plugin, while it ran.
         if (this.watched.includes(p) && this.plugins[p] === name) this.fetched.set(p, done);
       }
