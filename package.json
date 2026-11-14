@@ -7,7 +7,8 @@
     "github",
     "github-almighty",
     "kanban",
-    "pondering"
+    "pondering",
+    "usage"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
