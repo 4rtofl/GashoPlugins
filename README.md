@@ -20,13 +20,26 @@ npm run typecheck
 npm test
 ```
 
+## 公開する
+
+プラグインを直したら、`gasho-plugin.json` の `version` を上げて main にマージする。GitHub Actions（`.github/workflows/release.yml`）が、型チェック、テスト、ビルドをしてから、版の上がったプラグインを公開する。
+
+- `dist/` の中身を `<ID>-<版>.tgz` にまとめて、リリース `<ID>-v<版>` に置く。前の版のリリースは残す
+- リリース `catalog` の `catalog.json`（プラグインごとの最新の版と、ファイルの SHA-256）を作り直す
+
+版を上げずにマージしたものは公開しない。Pull request でも、型チェック、テスト、ビルドだけを行う。何が公開されるかは、ビルドしてから `node scripts/release.ts --dry-run` で確かめられる（何も変えない）。
+
+GitHub Actions は、GitHub Packages の SDK を、このリポジトリの `GITHUB_TOKEN` で入れる。そのため、SDK のパッケージ（`@4rtoflow/gasho-plugin-sdk`）の設定の「Manage Actions access」に、このリポジトリを Read で足しておく。
+
 ## Gasho に入れる
 
-Gasho サーバーの、Gasho のリポジトリで実行する。入れたプラグインは、Gasho のサイドバーの「プラグイン」の画面に出る。
+公開したプラグインは、Gasho のサイドバーの「プラグイン」の画面で、「GashoPlugins にあるもの」から追加する。新しい版を公開すると、同じ画面に「更新」が出る。
+
+作っているプラグインは、Gasho サーバーの、Gasho のリポジトリで実行して入れる。
 
 ```bash
-npm run hub:plugin -- add ~/repos/GashoPlugins/github/dist          # ビルドしたものを入れる
 npm run hub:plugin -- add --link ~/repos/GashoPlugins/github/dist   # 作っているあいだ。ビルドするたびに画面と gasho-daemon が入れ替わる
+npm run hub:plugin -- add ~/repos/GashoPlugins/github/dist          # ビルドしたものを写して入れる（カタログを使わないとき）
 ```
 
 daemon の部分（working server で動く部分）は、プラグインに対応した gasho-daemon（0.12.0 以降）でだけ動く。
