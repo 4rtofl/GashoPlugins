@@ -112,15 +112,15 @@ function actionsOf(given: unknown): CardAction[] | string {
   return out;
 }
 
-/** Where the board plugin `name` puts a card, and what its menu sends: "mine" and nothing without one, and when it fails. */
-export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins): Pick<KanbanCard, "column" | "reason" | "actions"> {
+/** Where the board plugin `name` puts a card, with what its `fetch` gave, and what its menu sends: "mine" and nothing without one, and when it fails. */
+export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins, fetched?: unknown): Pick<KanbanCard, "column" | "reason" | "actions"> {
   if (name === undefined) return { column: "mine" };
   const failed = (error: string) => ({ column: "mine" as const, reason: { text: `列を決められませんでした（${name}）`, error } });
   const state = plugins.get(name)?.state;
   if (typeof state !== "function") return failed(plugins.has(name) ? "index.ts が state を export していません。" : `kanban/plugins/${name}/ が、このビルドにありません。`);
   let placed: unknown;
   try {
-    placed = state(card);
+    placed = state(card, fetched);
   } catch (e) {
     return failed(`state が失敗しました：${e instanceof Error ? e.message : String(e)}`);
   }
@@ -165,7 +165,7 @@ export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>, plu
       ...(pr?.updatedAt ? { updatedAt: pr.updatedAt } : {}),
       sessions: sessions.map(cardSession),
     };
-    cards.push({ ...base, ...placeCard(base, m.plugin, plugins) });
+    cards.push({ ...base, ...placeCard(base, m.plugin, plugins, m.fetched) });
   };
   for (const t of trees) {
     const pr = t.branch === undefined ? undefined : open.get(t.branch);

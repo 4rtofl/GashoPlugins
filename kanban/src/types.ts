@@ -1,6 +1,6 @@
 // What the kanban's daemon part reads on a working server and sends to the web part: the repositories that can be
-// watched, and the worktrees and my pull requests of the watched ones. The web part turns them into cards with the
-// sessions of the moment (src/cards.ts), so the daemon part never needs the sessions.
+// watched, and the worktrees and my pull requests of the watched ones, with what their board plugins fetched. The web
+// part turns them into cards with the sessions of the moment (src/cards.ts), so the daemon part never needs the sessions.
 
 /** A repository that can be watched: one in the folders Gasho can start sessions in, by its primary checkout. */
 export interface RepoOption {
@@ -43,6 +43,8 @@ export interface RepoMaterial {
   closed: ClosedPr[];
   /** The board plugin chosen for it in "見る repo" (a folder of kanban/plugins/). */
   plugin?: string;
+  /** What that board plugin's `fetch` gave for it last (JSON); its `state` gets it. */
+  fetched?: unknown;
 }
 
 /** What the daemon part read for the kanban. A repository that could not be read keeps its material as last read. */
@@ -58,6 +60,8 @@ export interface Board {
   updatedAt?: number;
   /** Reading the repositories now. */
   checking?: boolean;
+  /** The board plugins' `fetch` waits until then (ms since the epoch): few of GitHub's GraphQL points are left. */
+  fetchPausedUntil?: number;
 }
 
 /** Repositories one working server can watch. */

@@ -1,8 +1,10 @@
 // The daemon part of the kanban plugin: on each working server, the repositories that can be watched (from the folders
-// Gasho can start sessions in), and the worktrees and my pull requests of the watched ones, read with git and gh. The
-// web part asks for the board every minute while it shows; there are no events (P8) yet.
+// Gasho can start sessions in), and the worktrees and my pull requests of the watched ones, read with git and gh, with
+// what their board plugins' `fetch` gives. The web part asks for the board every minute while it shows; there are no
+// events (P8) yet.
 import path from "node:path";
 import { defineDaemonPlugin, PluginError } from "@gasho/plugin-sdk/daemon";
+import { BOARD_FETCHERS } from "./board-plugins.ts";
 import { Reader } from "./reader.ts";
 
 let reader: Reader | undefined;
@@ -14,7 +16,14 @@ function current(): Reader {
 
 export default defineDaemonPlugin({
   start(ctx) {
-    reader = new Reader({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log });
+    reader = new Reader({
+      exec: ctx.exec,
+      github: (args, o) => ctx.github.read(args, o),
+      fetchers: BOARD_FETCHERS,
+      folders: ctx.folders,
+      file: path.join(ctx.dataDir, "watched.json"),
+      log: ctx.log,
+    });
     void reader.load();
   },
   stop() {
