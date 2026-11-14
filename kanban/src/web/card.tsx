@@ -1,12 +1,13 @@
 // The cards of the kanban and the menu that opens from them (moved here from Gasho's views/kanban.tsx of PR #8). A card
-// shows why its board plugin put it in its column. Pressing a card opens its menu: its Gasho sessions to open, or one to
-// start in its worktree and open, and its pull request on GitHub. The pull request opens from the menu only, so a press
-// meant for the menu does not leave for GitHub.
-import { ExternalLink, FolderGit2, GitBranch, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Hand, Moon, Plus, Server, Zap, type LucideIcon } from "lucide-react";
+// shows why its board plugin put it in its column. Pressing a card opens its menu: the instructions its board plugin
+// gave, to send to its Gasho session (started in its worktree when it has none), its Gasho sessions to open, or one to
+// start there and open, and its pull request on GitHub. The pull request opens from the menu only, so a press meant for
+// the menu does not leave for GitHub.
+import { ExternalLink, FolderGit2, GitBranch, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Hand, Moon, Plus, Send, Server, Zap, type LucideIcon } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { createContext, useContext, useRef, useState, type ReactElement, type ReactNode } from "react";
-import { cn, relativeTime, useLaunchSession, useNavigation, type MachineInfo, type SessionInfo } from "@gasho/plugin-sdk";
-import type { KanbanCard, PlacedCard } from "../cards.ts";
+import { cn, relativeTime, useLaunchSession, useNavigation, useSendInput, type MachineInfo, type SessionInfo } from "@gasho/plugin-sdk";
+import type { CardAction, KanbanCard, PlacedCard } from "../cards.ts";
 import { Skeleton, StatusDot, sessionLabel } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
@@ -224,13 +225,34 @@ async function startSession({ machine, card }: PlacedCard, launch: ReturnType<ty
 }
 
 /**
- * The menu that opens from a card, from the edge nearest it (after EasyUI's OriginDropdown): its Gasho sessions to
- * open, or one to start there and open; and its pull request on GitHub. Instructions are written in the session itself.
+ * Sends an instruction of the board plugin to the Gasho session used last in a card's worktree, or to one started there
+ * when it has none. The board stays where it is: the notice opens the session.
+ */
+async function sendAction(
+  row: PlacedCard,
+  action: CardAction,
+  launch: ReturnType<typeof useLaunchSession>,
+  send: ReturnType<typeof useSendInput>,
+  actions: CardActions,
+): Promise<void> {
+  const { machine, card } = row;
+  const sessionId = gashoSessions(row)[0]?.sessionId ?? (await startSession(row, launch, actions));
+  if (!sessionId) return;
+  actions.notify({ text: `${card.label} に「${action.label}」を送っています…`, busy: true });
+  const r = await send({ machine: machine.id, sessionId, text: action.text });
+  actions.notify(r.ok ? { text: `${card.label} に「${action.label}」を送りました。`, session: { machine: machine.id, sessionId } } : { text: r.error, tone: "danger" });
+}
+
+/**
+ * The menu that opens from a card, from the edge nearest it (after EasyUI's OriginDropdown): the instructions its board
+ * plugin gave, its Gasho sessions to open, or one to start there and open; and its pull request on GitHub. Instructions
+ * of one's own are written in the session itself, not here.
  */
 function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }) {
   const { machine, card } = row;
   const nav = useNavigation();
   const launch = useLaunchSession();
+  const send = useSendInput();
   const actions = useContext(CardActionsContext);
   const [open, setOpen] = useState(false);
   // A touch opens the menu on a tap, not when the finger lands: a swipe over the cards must only scroll the page.
@@ -275,6 +297,19 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
               {card.reason.error && <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">{card.reason.error}</span>}
             </p>
           )}
+          {card.actions?.map((a, i) => (
+            <DropdownMenu.Item
+              key={i}
+              disabled={sessions.length === 0 && !canStart}
+              onSelect={() => void sendAction(row, a, launch, send, actions)}
+              title={a.text}
+              className={MENU_ITEM}
+            >
+              <Send />
+              <span className="truncate">{a.label}</span>
+            </DropdownMenu.Item>
+          ))}
+          {card.actions && (sessions.length > 0 || card.path || card.pr) && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
           {sessions.map((s) => (
             <DropdownMenu.Item key={s.sessionId} onSelect={() => nav.openSession(machine.id, s.sessionId)} className={MENU_ITEM}>
               <span className="flex size-4 items-center justify-center">
