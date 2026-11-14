@@ -5,6 +5,7 @@
   "description": "Gasho のプラグイン。プラグインごとのディレクトリが並ぶ",
   "workspaces": [
     "github",
+    "github-almighty",
     "kanban",
     "pondering",
     "remote-control-shell",
@@ -16,7 +17,7 @@
     "test": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\""
   },
   "devDependencies": {
-    "@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1.4.0",
+    "@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1.5.0",
     "@types/node": "^24.0.0",
     "@types/react": "19.3.0",
     "lucide-react": "^1.72.0",

@@ -1,0 +1,66 @@
+{
+  "id": "github-almighty",
+  "name": "GitHub Almighty",
+  "version": "1.0.0",
+  "description": "worktree の Issue と Pull request を、セッションと並んだタブで読み、assign・コメント・本文の変更などの操作をする（working server の gh を使う）",
+  "api": "1.5",
+  "web": {
+    "js": "web.js",
+    "css": "web.css"
+  },
+  "daemon": {
+    "js": "daemon.js"
+  },
+  "methods": {
+    "status": {
+      "kind": "read"
+    },
+    "items": {
+      "kind": "read",
+      "timeoutSeconds": 25
+    },
+    "item": {
+      "kind": "read",
+      "timeoutSeconds": 25
+    },
+    "meta": {
+      "kind": "read",
+      "timeoutSeconds": 25
+    },
+    "add": {
+      "kind": "write",
+      "timeoutSeconds": 25
+    },
+    "remove": {
+      "kind": "write"
+    },
+    "edit": {
+      "kind": "write",
+      "timeoutSeconds": 30
+    },
+    "comment": {
+      "kind": "write",
+      "timeoutSeconds": 30
+    },
+    "state": {
+      "kind": "write",
+      "timeoutSeconds": 30
+    },
+    "ready": {
+      "kind": "write",
+      "timeoutSeconds": 30
+    }
+  },
+  "settings": {
+    "refreshSeconds": {
+      "type": "number",
+      "scope": "server",
+      "default": 60,
+      "min": 0,
+      "max": 3600,
+      "step": 10,
+      "label": "GitHub から読み直す間隔（秒）",
+      "description": "ここ 24 時間に開いた worktree の Issue と Pull request を、この間隔で読み直す。読み直すたびに worktree 1 つにつき GitHub の API を 1〜3 点使い、上限は 1 時間 5000 点（ほかの gh と分け合う）。worktree が多いときは、下の表を見て間隔を延ばす。0 にすると、タブを開いたときと再読み込みを押したときだけ読む"
+    }
+  }
+}
