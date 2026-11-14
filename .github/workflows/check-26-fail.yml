@@ -19,3 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo ok
+  wait:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 90
