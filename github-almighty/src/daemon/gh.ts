@@ -127,7 +127,7 @@ const ISSUE_DETAIL_FIELDS = "number,title,url,state,stateReason,author,createdAt
 const PULL_DETAIL_FIELDS =
   "number,title,url,state,author,createdAt,updatedAt,closedAt,mergedAt,labels,assignees,body,comments,reviews,isDraft," +
   "headRefName,baseRefName,reviewDecision,additions,deletions,changedFiles,files,commits,statusCheckRollup";
-/** Text sent per body or comment, comments per item, and files per pull request. */
+/** Text sent per comment or review, comments per item, and files per pull request. A body is never cut: the edit box starts from it, and saving a cut one would overwrite the rest on GitHub. */
 const TEXT_MAX = 60_000;
 const COMMENTS_MAX = 200;
 const FILES_MAX = 300;
@@ -222,7 +222,7 @@ export function parseDetail(json: string, kind: GitHubKind): GitHubItemDetail | 
     ...(str(raw.closedAt) ? { closedAt: str(raw.closedAt) } : {}),
     ...(str(raw.mergedAt) ? { mergedAt: str(raw.mergedAt) } : {}),
     assignees: (Array.isArray(raw.assignees) ? raw.assignees : []).flatMap((a) => (login(a) ? [login(a) as string] : [])),
-    body: clip(str(raw.body) ?? ""),
+    body: str(raw.body) ?? "",
     comments: comments.slice(-COMMENTS_MAX),
     ...(comments.length > COMMENTS_MAX ? { commentsLeftOut: comments.length - COMMENTS_MAX } : {}),
   };

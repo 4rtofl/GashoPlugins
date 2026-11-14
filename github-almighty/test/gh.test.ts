@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { branchArg, branchNumber, commentArgs, editArgs, itemsQueryArgs, parseItems, repoArg, stateArgs } from "../src/daemon/gh.ts";
+import { branchArg, branchNumber, commentArgs, editArgs, itemsQueryArgs, parseDetail, parseItems, repoArg, stateArgs } from "../src/daemon/gh.ts";
 import { numberFrom } from "../src/web/number.ts";
 
 test("a branch is named after the issue in its number", () => {
@@ -75,4 +75,12 @@ test("a number is taken from 17, #17, or a URL of the same repository only", () 
   assert.equal(numberFrom("https://github.com/4rtoflow/Gasho/pull/36/files", "4rtoflow/Gasho"), 36);
   assert.equal(numberFrom("https://github.com/4rtoflow/GashoPlugins/issues/4", "4rtoflow/Gasho"), undefined);
   assert.equal(numberFrom("abc", "4rtoflow/Gasho"), undefined);
+});
+
+test("a body comes whole, as the edit box starts from it and saves it back", () => {
+  const body = `${"a".repeat(65_000)}\nend`;
+  const json = JSON.stringify({ number: 1, title: "t", url: "https://github.com/o/r/issues/1", state: "OPEN", body, comments: [{ createdAt: "2026-11-15T00:00:00Z", body: "c".repeat(70_000) }] });
+  const item = parseDetail(json, "issues");
+  assert.equal(item?.body, body);
+  assert.ok((item?.comments[0]?.body.length ?? 0) < 70_000);
 });
