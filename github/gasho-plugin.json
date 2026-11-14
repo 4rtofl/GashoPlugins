@@ -1,0 +1,13 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "version": "1.0.0",
+  "description": "セッションのリポジトリの、開いている Issue と Pull request を読む（working server の gh を使う）",
+  "api": "1.0",
+  "web": { "js": "web.js", "css": "web.css" },
+  "daemon": { "js": "daemon.js" },
+  "methods": {
+    "list": { "kind": "read", "timeoutSeconds": 25 },
+    "item": { "kind": "read", "timeoutSeconds": 25 }
+  }
+}

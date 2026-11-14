@@ -1,0 +1,25 @@
+{
+  "name": "gasho-plugins",
+  "private": true,
+  "type": "module",
+  "description": "Gasho のプラグイン。プラグインごとのディレクトリが並ぶ",
+  "workspaces": [
+    "github"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\""
+  },
+  "devDependencies": {
+    "@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "19.3.0",
+    "lucide-react": "^1.72.0",
+    "react": "^19.3.1",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
