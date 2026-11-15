@@ -9,6 +9,7 @@ worktree の Issue（ブランチ名の番号）と Pull request（そのブラ�
 - 読み込み中は Skeleton、読めなかったときは Alert、操作の結果は Toast で出す。担当やラベルを外す・閉じるなど、元に戻せる操作は、Toast の「元に戻す」で取り消せる
 - ここ 24 時間に開いた worktree を、設定 `refreshSeconds`（既定 60 秒、0 で止める）の間隔で裏でも読み直す。設定画面に、間隔ごとに GitHub の上限の半分に収まる worktree の数と、working server ごとのいまの点数を半円のゲージで出す
 - 裏の読み直しで増えたコメント・レビュー・終わったチェックの数を、Issue・Pull request のタブに出す（タブを開くと消える）。⌘K（Ctrl+K）で、いまの画面の操作と worktree の Issue・Pull request を探して実行できる。本文とコメントの #番号 にポインターを置くと、その題と状態が出る
+- Issue の画面の「worktree を作って始める」で、`feat/<番号>-<題の英数字>` のブランチの worktree を、既定のブランチ（fetch したもの）から作る。Pull request の画面の「worktree で開く」では、head のブランチの worktree を作る（fork からの Pull request は `refs/pull/<番号>/head` から）。置き場所は、リポジトリのフォルダーの隣の `<フォルダー>-<ブランチの最後の部分>` で、押す前にブランチ・置き場所・最初の指示を変えられる。作ると、そこでセッションを起動し、最初の指示を送って開く。Claude Code がフォルダーを信頼していないときは、確かめてから起動する。そのブランチの worktree がすでにあれば、作らずに「<ブランチ> を開く」を出し、その worktree の Gasho のセッション（無ければ新しく起動したもの）を開く。git は、Gasho がセッションを起動できるフォルダーの中でだけ動かす。権限 `session.launch` と `session.input` を使う
 - 部品は easyui（easyui.site）のものを `src/web/ui/` に写し、Gasho の色に直した（framer-motion を同梱する）
 
 ## 足すときの置き場

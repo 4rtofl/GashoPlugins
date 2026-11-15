@@ -2,6 +2,7 @@
 // change. A change is one operation of the daemon part; when it is done, a toast says so (an Undo Toast when it can be
 // put back), and the item, the worktree's tabs and what the parts read themselves (useAfterChange) are read again.
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import type { WorktreeInfo } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind } from "../../types.ts";
 import { useWriteOp } from "../daemon.ts";
 import { useToast } from "../ui/toast.tsx";
@@ -28,6 +29,8 @@ export interface Change {
 
 export interface ItemScope {
   machine: string;
+  /** The worktree whose tab shows the item. */
+  worktree: WorktreeInfo;
   where: Where;
   item: GitHubItemDetail;
   now: number;
