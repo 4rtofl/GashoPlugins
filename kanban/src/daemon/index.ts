@@ -20,6 +20,7 @@ export default defineDaemonPlugin({
       exec: ctx.exec,
       github: (args, o) => ctx.github.read(args, o),
       fetchers: BOARD_FETCHERS,
+      storeDir: path.join(ctx.dataDir, "stores"),
       folders: ctx.folders,
       file: path.join(ctx.dataDir, "watched.json"),
       log: ctx.log,

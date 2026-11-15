@@ -3,11 +3,11 @@
 // it in a running Gasho like any change of the kanban. Not in src/cards.ts, which the tests run without Vite.
 import type { BoardPlugins } from "../cards.ts";
 
-const found = import.meta.glob<{ state?: unknown }>("../../plugins/*/index.ts", { eager: true });
+const found = import.meta.glob<{ state?: unknown; headings?: unknown }>("../../plugins/*/index.ts", { eager: true });
 
 export const BOARD_PLUGINS: BoardPlugins = new Map(
   Object.entries(found)
-    .flatMap(([file, mod]): [string, { state?: unknown }][] => {
+    .flatMap(([file, mod]): [string, { state?: unknown; headings?: unknown }][] => {
       const name = /\/plugins\/([^/]+)\/index\.ts$/.exec(file)?.[1];
       return name ? [[name, mod]] : [];
     })

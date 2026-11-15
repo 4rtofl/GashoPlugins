@@ -15,12 +15,14 @@ import {
   useNavigation,
   useNow,
   usePluginState,
+  relativeTime,
   useRequest,
   type MachineInfo,
   type PageProps,
 } from "@gasho/plugin-sdk";
 import {
   arrangeCards,
+  boardHeadings,
   COLUMN_WIDTH,
   KANBAN_COLUMNS,
   KANBAN_SORTS,
@@ -29,6 +31,7 @@ import {
   type KanbanSort,
   type KanbanSortKey,
   type PlacedCard,
+  type RepoHeadings,
 } from "../cards.ts";
 import type { Board } from "../types.ts";
 import { BOARD_PLUGINS } from "./board-plugins";
@@ -147,6 +150,7 @@ export function KanbanPage(_: PageProps) {
     return board ? [{ machine, board }] : [];
   });
   const cards = useMemo(() => kanbanCards(boards, BOARD_PLUGINS), [machines, sources]);
+  const headings = useMemo(() => boardHeadings(boards, BOARD_PLUGINS), [machines, sources]);
   const watched = boards.reduce((n, b) => n + b.board.watched.length, 0);
   const updatedAt = Math.max(0, ...boards.map((b) => b.board.updatedAt ?? 0)) || undefined;
   const stale = updatedAt !== undefined && now - updatedAt > STALE_MS;
@@ -234,6 +238,8 @@ export function KanbanPage(_: PageProps) {
               )}
             </div>
           </header>
+
+          <Headings rows={headings} now={now} />
 
           {errors.length > 0 && (
             <Alert tone="danger">
@@ -355,6 +361,46 @@ export function KanbanPage(_: PageProps) {
         </div>
       </CardActionsContext.Provider>
     </MotionConfig>
+  );
+}
+
+const HEADING =
+  "inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-black/[0.08] bg-black/[0.015] px-2.5 text-xs whitespace-nowrap text-neutral-600 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-neutral-400";
+const HEADING_ACTIVE = "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300";
+
+/**
+ * The headings the repositories' board plugins give above the board (the worktree that deployed to each Stack last),
+ * named by their working server and repository when there are several.
+ */
+function Headings({ rows, now }: { rows: RepoHeadings[]; now: number }) {
+  if (rows.every((r) => r.headings.length === 0 && !r.error)) return null;
+  const machines = new Set(rows.map((r) => r.machine.id)).size > 1;
+  const repos = new Set(rows.map((r) => r.repo)).size > 1;
+  return (
+    <div role="group" aria-label="カンバン用のプラグインの見出し" className="-mt-1 flex flex-wrap items-center gap-2">
+      {rows.flatMap((r) => {
+        const from = [machines && r.machine.name, repos && r.repo.split("/").pop()].filter(Boolean).join(" · ");
+        const key = `${r.machine.id}/${r.repo}`;
+        const source = from && <span className="shrink-0 text-neutral-500">{from}</span>;
+        if (r.error) {
+          return (
+            <span key={key} className={cn(HEADING, HEADING_ACTIVE)} title={r.error}>
+              {source}
+              <span className="truncate">見出しを出せませんでした（{r.plugin}）</span>
+            </span>
+          );
+        }
+        return r.headings.map((h, i) => (
+          <span key={`${key}/${i}`} className={cn(HEADING, h.active && HEADING_ACTIVE)} title={h.detail}>
+            {h.active && <span className="size-1.5 shrink-0 rounded-full bg-amber-500 motion-safe:animate-pulse" />}
+            {source}
+            <b className="shrink-0 font-medium text-neutral-900 dark:text-neutral-100">{h.label}</b>
+            {h.text && <span className="truncate">{h.text}</span>}
+            {h.at !== undefined && !h.active && <span className="shrink-0 text-neutral-500 tabular-nums">{relativeTime(h.at, now)}</span>}
+          </span>
+        ));
+      })}
+    </div>
   );
 }
 
