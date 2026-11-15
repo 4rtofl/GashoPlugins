@@ -1,4 +1,4 @@
-// The body, first in the conversation, with a button that edits it (an Undo Toast can put the old text back) and its
+// The body, at the top of the conversation, with a button that edits it (an Undo Toast can put the old text back) and its
 // reactions.
 import { FileText, Pencil } from "lucide-react";
 import { useState } from "react";
@@ -7,10 +7,10 @@ import { Button } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
 import { useItem } from "../context.tsx";
 import { useConversationMeta } from "../conversation-meta.ts";
-import type { ConversationPart } from "../parts.ts";
+import type { ConversationEntry, ConversationPart } from "../parts.ts";
 import { Reactions } from "../reactions.tsx";
 
-function useBody() {
+function useBody(): ConversationEntry[] {
   const { item, where, now, busy, run } = useItem();
   const meta = useConversationMeta().data;
   const [draft, setDraft] = useState<string>();
@@ -30,6 +30,7 @@ function useBody() {
     {
       key: "body",
       at: item.createdAt,
+      pin: "top",
       icon: FileText,
       title: (
         <>
