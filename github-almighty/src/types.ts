@@ -57,6 +57,8 @@ export interface GitHubComment {
 
 /** A review of a pull request. */
 export interface GitHubReview {
+  /** The node id: what the conversation finds its reactions by (ops/comments.ts). */
+  id?: string;
   author?: string;
   /** ISO 8601 */
   submittedAt: string;

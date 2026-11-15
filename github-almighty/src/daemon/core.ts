@@ -2,7 +2,7 @@
 // call brought them, gh with its failures turned into messages, and the reads of a worktree's items and of one item,
 // which the background reads use too.
 import path from "node:path";
-import { PluginError, type DaemonContext } from "@gasho/plugin-sdk/daemon";
+import { PluginError, type DaemonContext, type GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../types.ts";
 import { branchNumber, detailArgs, ghError, itemsQueryArgs, parseDetail, parseItems, type DetailPart } from "./gh.ts";
 import { Store } from "./store.ts";
@@ -69,6 +69,20 @@ export async function gh<T>(what: string, run: () => Promise<T>, ctx: Ctx): Prom
   }
 }
 
+/**
+ * The output of a GraphQL read, also when a part of it is something GitHub does not have (a number, a branch): gh
+ * fails then, with the rest of the answer on stdout.
+ */
+export async function readAllowingNotFound(ctx: Ctx, args: string[], options: GitHubReadOptions): Promise<string> {
+  try {
+    return (await ctx.github.read(args, options)).stdout;
+  } catch (e) {
+    const out = (e as { stdout?: unknown })?.stdout;
+    if (typeof out !== "string" || !out.includes('"NOT_FOUND"') || !out.includes('"data"')) throw e;
+    return out;
+  }
+}
+
 /** Numbers GitHub did not have, per owner/name#number: left out of the query for a while, as gh fails on them unkept. */
 const missingUntil = new Map<string, number>();
 const MISSING_FOR_MS = 10 * 60_000;
@@ -84,16 +98,7 @@ export async function readItems(ctx: Ctx, repo: string, branch: string | undefin
   const branchNamed = branchNumber(branch);
   const named = branchNamed !== undefined && !gone(branchNamed) ? branchNamed : undefined;
   const asked = added.filter((n) => !gone(n));
-  const args = itemsQueryArgs(repo, branch, [...(named ? [named] : []), ...asked]);
-  let stdout: string;
-  try {
-    stdout = (await ctx.github.read(args, { repo, maxAgeSeconds })).stdout;
-  } catch (e) {
-    // A number GitHub does not have makes gh fail, with the rest of the answer on stdout.
-    const out = (e as { stdout?: unknown })?.stdout;
-    if (typeof out !== "string" || !out.includes('"NOT_FOUND"') || !out.includes('"data"')) throw e;
-    stdout = out;
-  }
+  const stdout = await readAllowingNotFound(ctx, itemsQueryArgs(repo, branch, [...(named ? [named] : []), ...asked]), { repo, maxAgeSeconds });
   const items = parseItems(stdout, named, asked, now);
   if (named !== undefined && !items.named) missingUntil.set(`${repo}#${named}`, now + MISSING_FOR_MS);
   for (const n of items.missing) missingUntil.set(`${repo}#${n}`, now + MISSING_FOR_MS);

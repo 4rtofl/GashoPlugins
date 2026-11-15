@@ -5,6 +5,7 @@
   "description": "Gasho のプラグイン。プラグインごとのディレクトリが並ぶ",
   "workspaces": [
     "ayu-dark",
+    "git",
     "github",
     "github-almighty",
     "github-review",

@@ -1,4 +1,4 @@
-// The box for a new comment, at the end of the conversation.
+// The box for a new comment, right under the body.
 import { useState } from "react";
 import { Button } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
@@ -36,4 +36,4 @@ function NewComment() {
   );
 }
 
-export default { order: 1000, End: NewComment } satisfies ConversationPart;
+export default { order: 1, UnderBody: NewComment } satisfies ConversationPart;
