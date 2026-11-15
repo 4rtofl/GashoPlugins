@@ -1,11 +1,14 @@
-// The reviews of a pull request that have text of their own, with what they decided.
+// The reviews of a pull request that have text of their own, with what they decided and their reactions (read with the
+// comments', conversation-meta.ts).
 import { CircleAlert, CircleCheck, CircleSlash, Clock, MessageSquareText, type LucideIcon } from "lucide-react";
 import { Markdown, RelativeTime } from "@gasho/plugin-sdk";
 import type { GitHubReview } from "../../../types.ts";
 import { Badge, type BadgeTone } from "../../ui/badge.tsx";
 import type { TimelineTone } from "../../ui/timeline.tsx";
 import { useItem } from "../context.tsx";
+import { useConversationMeta } from "../conversation-meta.ts";
 import type { ConversationEntry, ConversationPart } from "../parts.ts";
+import { Reactions } from "../reactions.tsx";
 
 const STATE: Record<GitHubReview["state"], { label: string; badge: BadgeTone; tone: TimelineTone; icon: LucideIcon }> = {
   approved: { label: "承認", badge: "success", tone: "success", icon: CircleCheck },
@@ -17,8 +20,12 @@ const STATE: Record<GitHubReview["state"], { label: string; badge: BadgeTone; to
 
 function useReviews(): ConversationEntry[] {
   const { item, now } = useItem();
+  const meta = useConversationMeta().data;
+  const byId = new Map((meta?.reviews ?? []).map((m) => [m.id, m]));
   return (item.reviews ?? []).map((r, i) => {
     const s = STATE[r.state];
+    // A review not yet submitted is gh's login's own draft, which no one else sees yet.
+    const m = r.id && r.state !== "pending" ? byId.get(r.id) : undefined;
     return {
       key: `review${i}`,
       at: r.submittedAt,
@@ -33,7 +40,12 @@ function useReviews(): ConversationEntry[] {
         </span>
       ),
       time: <RelativeTime at={r.submittedAt} now={now} />,
-      body: r.body.trim() ? <Markdown text={r.body} /> : <p className="text-sm text-muted-foreground">（本文なし）</p>,
+      body: (
+        <>
+          {r.body.trim() ? <Markdown text={r.body} /> : <p className="text-sm text-muted-foreground">（本文なし）</p>}
+          {m && <Reactions subject={m.id} reactions={m.reactions} of={`レビュー（${r.author ?? "不明"}）`} />}
+        </>
+      ),
     };
   });
 }
