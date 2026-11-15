@@ -1,4 +1,4 @@
-// What github-almighty reads with gh and shows beside a worktree's sessions: the issue its branch is named after, the
+// What github-implement reads with gh and shows beside a worktree's sessions: the issue its branch is named after, the
 // pull requests of its branch, the ones added to it by hand, and one of them with its conversation. The daemon part
 // (src/daemon) makes them, the web part (src/web) shows them and asks the daemon part to change them on GitHub.
 // The parts of one item's read (src/daemon/detail) declare the fields they add to GitHubItemDetail where they are.

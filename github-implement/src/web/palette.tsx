@@ -1,4 +1,4 @@
-// ⌘K (Ctrl+K) on github-almighty's screens: a box that finds what the screen offers (its operations, the worktree's
+// ⌘K (Ctrl+K) on github-implement's screens: a box that finds what the screen offers (its operations, the worktree's
 // issues and pull requests) by words of its name, and runs one with Enter or a click. Gasho has nothing of its own on
 // ⌘K, and one of the plugin's screens shows at a time, so the screen that shows listens for it on the window.
 import { ExternalLink, ListPlus, RefreshCw, Search } from "lucide-react";

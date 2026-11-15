@@ -1,5 +1,5 @@
-// What github-almighty keeps per worktree on a working server (in its own folder, ctx.dataDir): the numbers added to it
-// by hand, and when Gasho last showed it. The worktrees shown recently are the ones read again in the background.
+// What github-implement keeps per worktree on a working server (in its own folder, ctx.dataDir): the numbers added to
+// it by hand, and when Gasho last showed it. The worktrees shown recently are the ones read again in the background.
 import fs from "node:fs/promises";
 import path from "node:path";
 

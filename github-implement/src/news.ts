@@ -1,4 +1,4 @@
-// What both parts of github-almighty share about an item's news: the latest comment, review and finished check its
+// What both parts of github-implement share about an item's news: the latest comment, review and finished check its
 // screen showed while its tab was open (the marks), and what came after them, which the item's worktree tab counts.
 import type { GitHubItemDetail } from "./types.ts";
 

@@ -1,5 +1,5 @@
 // EasyUI's Alert (easyui.site/components/alert): a message with a tone-aware icon and a slot for an action. Changed for
-// Gasho: the tones github-almighty uses, and no dismissal (an error stays until the read that fails is done again).
+// Gasho: the tones github-implement uses, and no dismissal (an error stays until the read that fails is done again).
 import { CircleAlert, Info, TriangleAlert, type LucideIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@gasho/plugin-sdk";

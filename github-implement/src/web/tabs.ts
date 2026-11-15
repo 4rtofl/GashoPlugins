@@ -1,4 +1,4 @@
-// The tabs github-almighty adds beside a worktree's sessions: one per issue and pull request of the worktree (the one
+// The tabs github-implement adds beside a worktree's sessions: one per issue and pull request of the worktree (the one
 // its branch is named after, the pull requests of its branch, the ones added by hand), then "GitHub", which lists them
 // and adds more. They are read again every "refreshSeconds" while they show.
 import { CircleCheck, CircleDot, CircleSlash, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, ListPlus, type LucideIcon } from "lucide-react";
@@ -40,7 +40,7 @@ function look(Icon: LucideIcon, color: string, label: string, tone: BadgeTone): 
   // Gasho draws the tabs, where the plugin's CSS (and so the color) applies only inside an element of the plugin's id
   // (Gasho's docs/plugins.md, of what a plugin draws outside its parts).
   const ColoredIcon = ({ className }: { className?: string }) =>
-    createElement("span", { "data-gasho-plugin": "github-almighty", style: { display: "contents" } }, createElement(Icon, { className: cn(className, color) }));
+    createElement("span", { "data-gasho-plugin": "github-implement", style: { display: "contents" } }, createElement(Icon, { className: cn(className, color) }));
   return { Icon, ColoredIcon, label, tone };
 }
 

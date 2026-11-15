@@ -55,7 +55,7 @@ export function keepSeconds(): number {
 export const maxAge = (params: Record<string, unknown>): number => (params.fresh === true ? 0 : keepSeconds());
 
 export function current(): Store {
-  if (!store) throw new PluginError("github-almighty の daemon の部分が、まだ動き始めていません。");
+  if (!store) throw new PluginError("github-implement の daemon の部分が、まだ動き始めていません。");
   return store;
 }
 

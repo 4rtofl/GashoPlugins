@@ -1,4 +1,4 @@
-// What github-almighty keeps on a working server (in its own folder, ctx.dataDir) of what each item's screen showed:
+// What github-implement keeps on a working server (in its own folder, ctx.dataDir) of what each item's screen showed:
 // its marks (src/news.ts), by owner/name#number, so that the item's worktree tab counts only what came after them.
 import fs from "node:fs/promises";
 import path from "node:path";
