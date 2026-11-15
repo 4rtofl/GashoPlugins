@@ -1,5 +1,5 @@
 {
-  "name": "gasho-plugin-github",
+  "name": "gasho-plugin-git",
   "private": true,
   "type": "module",
   "scripts": {

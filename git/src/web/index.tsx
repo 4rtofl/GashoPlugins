@@ -1,4 +1,4 @@
-// The web part of the GitHub plugin: "Issues" and "Pull requests" in a session's header (between its branch and its
+// The web part of the Git plugin: "Issues" and "Pull requests" in a session's header (between its branch and its
 // files, as before the plugin), their panels (the list, and one issue or pull request with its conversation), and the
 // GitHub tile of the home screen.
 import { CircleDot, GitPullRequest } from "lucide-react";

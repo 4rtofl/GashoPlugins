@@ -1,4 +1,4 @@
-// The daemon part of the GitHub plugin: it reads a session's repository's open issues and pull requests, and one of
+// The daemon part of the Git plugin: it reads a session's repository's open issues and pull requests, and one of
 // them, with the working server's gh. The web part names the session and, in a folder of several repositories, the
 // repository inside it; gasho-daemon turns these into the folder and its GitHub repository (ctx.session.repo), never
 // into a path the browser made up.
