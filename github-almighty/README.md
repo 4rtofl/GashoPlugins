@@ -2,7 +2,7 @@
 
 worktree の Issue（ブランチ名の番号）と Pull request（そのブランチのもの、手で足したもの）を、セッションと並んだタブで読み、GitHub を開かずに操作する。gh は gasho-daemon の `ctx.github` で動かす。プラグインの API 1.5 に対応した Gasho が要る。
 
-- タブの行に、Issue と Pull request が 1 件ずつと、一覧と足す欄のある「GitHub」が並ぶ
+- タブの行に、Issue と Pull request が 1 件ずつと、一覧と足す欄のある「GitHub」が並ぶ。Issue と Pull request のタブのアイコンは、GitHub と同じ形と色で状態（Open・Draft・マージ済み・閉じた・対応しないで閉じた）を出す
 - 1 件の画面は、題と状態、上の行（閉じる・開き直す・Draft の切り替え、担当、ラベル、Pull request のブランチ）と、タブに分かれる。タブは「会話」「コミット」「チェック」「ファイル」で、Issue は「会話」だけ
 - 上の行の「Project」に、入っている Project（GitHub Projects）と項目の値を出す。Project に足したり外したり、単一選択・日付・数・文字の値を変えたりできる（イテレーションは出すだけ）。gh に `project` の権限が要り、無いときは `gh auth refresh -s project` で足すよう画面に出る
 - 会話は、本文・コメント・レビューと、ラベル・担当を付けた・外した、閉じた・開き直した・マージしたを、時刻の順に 1 本の線に並べる

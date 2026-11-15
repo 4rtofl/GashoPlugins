@@ -10,9 +10,9 @@ import { AddBox } from "./home/add.tsx";
 import { NewIssueBox } from "./home/new-issue.tsx";
 import { NewPullBox } from "./home/new-pull.tsx";
 import { HomePalette } from "./palette.tsx";
-import { itemIcon, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
+import { itemLook, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
 import { Alert } from "./ui/alert.tsx";
-import { Badge, type BadgeTone } from "./ui/badge.tsx";
+import { Badge } from "./ui/badge.tsx";
 import { Button, buttonClass } from "./ui/button.tsx";
 import { Skeleton } from "./ui/skeleton.tsx";
 import { ToastProvider, useToast } from "./ui/toast.tsx";
@@ -163,16 +163,8 @@ function Home({ machine, worktree }: WorktreeViewProps) {
   );
 }
 
-/** An item's state, as GitHub colors it. */
-function state(i: ItemSummary): [string, BadgeTone] {
-  if (i.state === "merged") return ["Merged", "merged"];
-  if (i.state === "closed") return ["Closed", i.kind === "pulls" ? "danger" : "merged"];
-  return i.draft ? ["Draft", "neutral"] : ["Open", "success"];
-}
-
 function Row({ item, why, href, onOpen, onRemove, removing }: { item: ItemSummary; why: string; href: string; onOpen: () => void; onRemove?: () => void; removing: boolean }) {
-  const Icon = itemIcon(item);
-  const [label, tone] = state(item);
+  const { ColoredIcon, label, tone } = itemLook(item);
   return (
     <li className="flex items-center gap-2 px-3 py-2.5 hover:bg-surface-raised">
       <a
@@ -184,7 +176,7 @@ function Row({ item, why, href, onOpen, onRemove, removing }: { item: ItemSummar
         }}
         className="flex min-w-0 flex-1 gap-2.5"
       >
-        <Icon className={cn("mt-0.5 size-4 shrink-0", tone === "success" ? "text-emerald-600 dark:text-emerald-400" : tone === "merged" ? "text-violet-600 dark:text-violet-400" : tone === "danger" ? "text-red-600 dark:text-red-400" : "text-muted-foreground")} />
+        <ColoredIcon className="mt-0.5 size-4 shrink-0" />
         <span className="min-w-0 flex-1">
           <span className="block text-sm leading-snug break-words">{item.title}</span>
           <span className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">

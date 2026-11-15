@@ -7,9 +7,9 @@ import { useState } from "react";
 import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
 import { readOp } from "../daemon.ts";
-import { itemIcon, itemsTarget, NOT_PLANNED_ICON, useRefreshOptions } from "../tabs.ts";
+import { itemLook, itemsTarget, useRefreshOptions } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
-import { Badge, type BadgeTone } from "../ui/badge.tsx";
+import { Badge } from "../ui/badge.tsx";
 import { Button, buttonClass } from "../ui/button.tsx";
 import { INPUT } from "../ui/input.ts";
 import { Skeleton, SkeletonText } from "../ui/skeleton.tsx";
@@ -194,19 +194,7 @@ function Title() {
 }
 
 function StateBadge({ item }: { item: GitHubItemDetail }) {
-  const Icon = item.kind === "issues" && item.state === "closed" && item.stateReason === "not_planned" ? NOT_PLANNED_ICON : itemIcon(item);
-  const [label, tone]: [string, BadgeTone] =
-    item.state === "merged"
-      ? ["Merged", "merged"]
-      : item.state === "closed"
-        ? item.kind === "pulls"
-          ? ["Closed", "danger"]
-          : item.stateReason === "not_planned"
-            ? ["Closed（対応しない）", "neutral"]
-            : ["Closed", "merged"]
-        : item.draft
-          ? ["Draft", "neutral"]
-          : ["Open", "success"];
+  const { Icon, label, tone } = itemLook(item);
   return (
     <Badge tone={tone} icon={<Icon />}>
       {label}
