@@ -1,6 +1,6 @@
 // The page's rows from the lists of every working server: a pull request once, with where it is on each working server
-// that listed it (the clone of its repository there, and its worktree), so that one without a clone anywhere shows why
-// it cannot get a worktree, and one with a worktree anywhere opens there.
+// that listed it (the clone of its repository there, and its worktree), so that one with a worktree anywhere opens
+// there. One without a clone on any working server cannot get a worktree, and is left out.
 import type { Listing, PrRow, PrWorktree } from "./types.ts";
 
 export interface Spot<M> {
@@ -43,7 +43,10 @@ export function pageItems<M>(lists: { machine: M; listing: Listing }[]): PageIte
   const item = ({ place: _, ...pr }: PrRow): Item<M> => ({ pr, spots: spots.get(pr.url) ?? [] });
   const once = (prs: PrRow[]): Item<M>[] => {
     const seen = new Set<string>();
-    return prs.filter((p) => !seen.has(p.url) && Boolean(seen.add(p.url))).map(item);
+    return prs
+      .filter((p) => !seen.has(p.url) && Boolean(seen.add(p.url)))
+      .map(item)
+      .filter((i) => i.spots.length > 0);
   };
   const groups = new Map<string, { repo: string; watched: boolean; prs: PrRow[] }>();
   for (const { listing } of lists) {

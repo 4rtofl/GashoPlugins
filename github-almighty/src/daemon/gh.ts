@@ -101,7 +101,16 @@ export function branchNumber(branch: string | undefined): number | undefined {
 }
 
 export const SUMMARY = "__typename ... on Issue { number title state stateReason url } ... on PullRequest { number title state isDraft url }";
-const PULL_SUMMARY = "__typename number title state isDraft url";
+
+/**
+ * What tells that an item changed since it was read (itemVersions). GitHub moves updatedAt for a comment, a review, a
+ * push, a label, …, but not when a check ends or the base branch moves on, which change an open pull request's screen.
+ * The query still costs 1 point with them.
+ */
+const PULL_VERSION =
+  "updatedAt headRefOid baseRefOid mergeable commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 0) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }";
+const ITEM = `__typename ... on Issue { number title state stateReason url updatedAt } ... on PullRequest { number title state isDraft url ${PULL_VERSION} }`;
+const PULL = `__typename number title state isDraft url ${PULL_VERSION}`;
 
 /**
  * The gh arguments that read a worktree's issues and pull requests at once: the pull requests whose head is `branch`
@@ -109,8 +118,8 @@ const PULL_SUMMARY = "__typename number title state isDraft url";
  */
 export function itemsQueryArgs(repo: string, branch: string | undefined, numbers: number[]): string[] {
   const [owner, name] = repo.split("/") as [string, string];
-  const fields = [...new Set(numbers)].map((n) => `n${n}: issueOrPullRequest(number: ${n}) { ${SUMMARY} }`);
-  if (branch) fields.unshift(`pulls: pullRequests(headRefName: $branch, first: 10, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ${PULL_SUMMARY} } }`);
+  const fields = [...new Set(numbers)].map((n) => `n${n}: issueOrPullRequest(number: ${n}) { ${ITEM} }`);
+  if (branch) fields.unshift(`pulls: pullRequests(headRefName: $branch, first: 10, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { ${PULL} } }`);
   // A query needs a field: __typename when there is nothing else to read.
   const query = `query($owner: String!, $name: String!${branch ? ", $branch: String!" : ""}) { repository(owner: $owner, name: $name) { ${fields.join(" ") || "__typename"} } }`;
   return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, ...(branch ? ["-f", `branch=${branch}`] : [])];
@@ -152,6 +161,24 @@ export function parseItems(json: string, named: number | undefined, added: numbe
     missing: added.filter((n) => !of(n)),
     at,
   };
+}
+
+/** The version of each item in the output of itemsQueryArgs, by number: it changes when what the item's screen reads does. */
+export function itemVersions(json: string): Map<number, string> {
+  const data = (JSON.parse(json) as { data?: { repository?: Record<string, unknown> | null } }).data?.repository ?? {};
+  const pulls = ((data.pulls as { nodes?: unknown[] } | undefined)?.nodes ?? []) as unknown[];
+  const asked = Object.entries(data).flatMap(([key, v]) => (/^n\d+$/.test(key) ? [v] : []));
+  const versions = new Map<number, string>();
+  for (const raw of [...pulls, ...asked]) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const number = num(r.number);
+    const updatedAt = str(r.updatedAt);
+    if (number === undefined || !updatedAt) continue;
+    // A closed or merged pull request's base and checks moving on do not change it.
+    const open = r.__typename === "PullRequest" && str(r.state)?.toUpperCase() === "OPEN";
+    versions.set(number, open ? JSON.stringify([updatedAt, r.headRefOid, r.baseRefOid, r.mergeable, r.commits]) : updatedAt);
+  }
+  return versions;
 }
 
 // ---- one issue or pull request: `gh issue view` / `gh pr view --json …` ----

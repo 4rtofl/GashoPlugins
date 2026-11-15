@@ -1,12 +1,14 @@
 // A pull request's row, with what GitHub's list of pull requests shows (its state, title, labels, checks, number,
 // author, when it was opened, its review decision and its comments), the worktrees it has on the working servers, and
-// its buttons: "worktree を作る" (with the template to send) when it has none, "開く" and "片付ける" when it has one.
+// its buttons: "worktree を作る" (with the template to send) when it has none, "開く" (or, in the lower part of the page,
+// "新たにセッションを作成する") and "片付ける" when it has one.
 import {
   Check,
   ChevronDown,
   Dot,
   FolderGit2,
   FolderOpen,
+  SquarePlus,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -21,7 +23,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { cn } from "@gasho/plugin-sdk";
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
-import { createWorktree, openedText, openWorktree, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
+import { createWorktree, newSessionIn, openedText, openWorktree, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
 import { Badge, Button } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
@@ -63,7 +65,7 @@ const REVIEWS: Record<ReviewState, { text: string; className?: string }> = {
 
 const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? p;
 
-export function PrItemRow({ item, now, showRepo }: { item: Item; now: number; showRepo?: boolean }) {
+export function PrItemRow({ item, now, showRepo, fresh }: { item: Item; now: number; showRepo?: boolean; fresh?: boolean }) {
   const shared = useContext(RowContext);
   const { pr, spots } = item;
   const look = stateLook(pr);
@@ -71,11 +73,12 @@ export function PrItemRow({ item, now, showRepo }: { item: Item; now: number; sh
   const review = pr.review && REVIEWS[pr.review];
   const placed = spots.filter((s) => s.worktree);
   return (
-    <li className="flex gap-3 px-4 py-3 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+    // The buttons go below the title when the row is too narrow for both (a phone).
+    <li className="flex flex-wrap gap-3 px-4 py-3 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
       <span title={look.label} className="mt-0.5 inline-flex shrink-0">
         <look.Icon className={cn("size-4", look.className)} aria-label={look.label} />
       </span>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-56">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {showRepo && <span className="text-sm text-muted-foreground">{pr.repo}</span>}
           <a href={pr.url} target="_blank" rel="noreferrer" className="text-sm font-semibold break-words text-foreground hover:text-blue-600 hover:underline dark:hover:text-blue-400">
@@ -119,22 +122,21 @@ export function PrItemRow({ item, now, showRepo }: { item: Item; now: number; sh
             )}
           </p>
         ))}
-        {spots.length === 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">この repo の clone が、Claude Code が信頼しているフォルダーに無いので、worktree を作れません。</p>}
       </div>
-      <div className="flex shrink-0 items-start gap-3">
+      <div className="ml-auto flex shrink-0 items-start gap-3">
         {pr.comments > 0 && (
           <span title={`コメント ${pr.comments} 件`} className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
             <MessageSquare className="size-3.5" />
             {pr.comments}
           </span>
         )}
-        <RowActions item={item} />
+        <RowActions item={item} fresh={fresh} />
       </div>
     </li>
   );
 }
 
-function RowActions({ item }: { item: Item }) {
+function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
   const shared = useContext(RowContext);
   if (!shared) return null;
   const { tools, run } = shared;
@@ -147,7 +149,11 @@ function RowActions({ item }: { item: Item }) {
     const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
     return (
       <div className="flex gap-1.5">
-        <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(s, tools))} />
+        {fresh ? (
+          <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(s, tools))} />
+        ) : (
+          <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(s, tools))} />
+        )}
         {review.length > 0 && <SpotButton label="片付ける" icon={<Trash2 />} spots={review} disabled={off} onPick={(s) => run(pr.url, () => removeWorktree(item, s, tools))} />}
       </div>
     );

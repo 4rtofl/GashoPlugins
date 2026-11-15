@@ -80,9 +80,9 @@ export class Reviewer {
   /** Watches `paths` from now on: each a repository on GitHub that can be watched now, or one watched already. */
   async watch(paths: unknown): Promise<string[]> {
     await this.load();
-    if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) throw new ReviewError("見る repo の指定が正しくありません。");
+    if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) throw new ReviewError("対象リポジトリの指定が正しくありません。");
     const next = [...new Set(paths as string[])];
-    if (next.length > MAX_REPOS) throw new ReviewError(`見る repo は、1 台の working server に ${MAX_REPOS} 個までです。`);
+    if (next.length > MAX_REPOS) throw new ReviewError(`対象リポジトリは、1 台の working server に ${MAX_REPOS} 個までです。`);
     const added = next.filter((p) => !this.watched.includes(p));
     if (added.length > 0) {
       const offered = new Set((await this.repoOptions(30_000)).filter((o) => o.github).map((o) => o.path));

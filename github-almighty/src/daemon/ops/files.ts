@@ -3,7 +3,7 @@
 // not say how a file changed; 100 files a call, read when the tab of files shows, not in the background.
 import { createHash } from "node:crypto";
 import type { GitHubFile } from "../../types.ts";
-import { gh, maxAge } from "../core.ts";
+import { gh, itemRead } from "../core.ts";
 import { num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -46,9 +46,10 @@ export default {
     return gh(
       `read the files of #${number}`,
       async () => {
+        const read = itemRead(ctx, repo, number, p);
         const files: GitHubFile[] = [];
         for (let page = 1; page <= PAGES; page++) {
-          const got = parseFiles((await ctx.github.read(filesArgs(repo, number, page), { repo, maxAgeSeconds: maxAge(p) })).stdout);
+          const got = parseFiles((await read(filesArgs(repo, number, page))).stdout);
           files.push(...got);
           if (got.length < PER_PAGE) break;
         }

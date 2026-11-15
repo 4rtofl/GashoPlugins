@@ -6,7 +6,7 @@
 import { PluginError } from "@gasho/plugin-sdk/daemon";
 import type { GitHubKind } from "../../types.ts";
 import { marksOf, newsCount, newsOf, type ItemNews } from "../../news.ts";
-import { maxAge, readDetail, refreshSeconds } from "../core.ts";
+import { readDetail, refreshSeconds } from "../core.ts";
 import { kindArg, numberArg, objArg, repoArg } from "../gh.ts";
 import type { Op } from "../op.ts";
 import { seenKey, seenStore } from "../seen.ts";
@@ -28,7 +28,7 @@ export default {
       items.map(async ({ kind, number }) => {
         let item;
         try {
-          item = await readDetail(ctx, repo, kind, number, maxAge(p));
+          item = await readDetail(ctx, repo, kind, number, p);
         } catch (e) {
           // The item's screen says why; its tab just has no number.
           ctx.log(`could not read the news of ${repo}#${number}`, e);
