@@ -1,6 +1,7 @@
 // The "GitHub" tab of a worktree: its issues and pull requests (the one its branch is named after, the pull requests of
 // its branch, the ones added by hand), a box that makes the pull request of a branch without one, a box that adds one by
-// its number, its GitHub URL or words of its title (home/), and a form for a new issue.
+// its number, its GitHub URL or words of its title (home/), a form for a new issue, and the repository's open issues and
+// pull requests (list.tsx).
 import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
@@ -9,6 +10,7 @@ import { useWriteOp } from "./daemon.ts";
 import { AddBox } from "./home/add.tsx";
 import { NewIssueBox } from "./home/new-issue.tsx";
 import { NewPullBox } from "./home/new-pull.tsx";
+import { RepoItems } from "./list.tsx";
 import { HomePalette } from "./palette.tsx";
 import { itemIcon, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
 import { Alert } from "./ui/alert.tsx";
@@ -157,6 +159,17 @@ function Home({ machine, worktree }: WorktreeViewProps) {
           <AddBox machine={machine.id} repo={repo} has={new Set(items ? itemsInOrder(items).map((i) => i.number) : [])} busy={busy !== undefined} adding={busy === "add"} onAdd={add} />
           <NewIssueBox machine={machine.id} worktree={worktree} repo={repo} onCreated={r.reload} />
         </>
+      )}
+      {repo && daemon.ready && (
+        <div className="space-y-2 pt-2">
+          <h3 className="text-sm font-semibold">{repo} の Open な Issue と Pull request</h3>
+          <RepoItems
+            machine={machine.id}
+            repo={repo}
+            href={(i) => nav.worktreeHref("item", { kind: i.kind, number: String(i.number) })}
+            open={(i) => nav.openWorktreeView("item", { kind: i.kind, number: String(i.number) })}
+          />
+        </div>
       )}
       {r.at && <p className="text-xs text-muted-foreground">{new Date(r.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} に読み込み</p>}
     </div>
