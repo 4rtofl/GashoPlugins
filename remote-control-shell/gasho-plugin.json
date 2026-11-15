@@ -3,6 +3,7 @@
   "name": "Remote Control Shell",
   "version": "1.0.0",
   "description": "セッションのフォルダーでシェルのコマンドを実行し、出力をパネルで見る（出力は Claude の会話に入らない）",
+  "genre": "devtools",
   "api": "1.1",
   "web": { "js": "web.js", "css": "web.css" },
   "daemon": { "js": "daemon.js" },
