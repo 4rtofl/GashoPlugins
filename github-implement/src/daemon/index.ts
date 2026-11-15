@@ -1,4 +1,4 @@
-// The daemon part of github-almighty: a worktree's issues and pull requests, one of them in full, and the changes the
+// The daemon part of github-implement: a worktree's issues and pull requests, one of them in full, and the changes the
 // screen asks for, all with gh through gasho-daemon (ctx.github). Each operation is a file of ops/ and each part of the
 // read of one item a file of detail/ (Vite puts every file of the folder here), so that new ones are new files. The
 // worktrees Gasho showed in the last day are read again in the background, every "refreshSeconds" (a setting), so that

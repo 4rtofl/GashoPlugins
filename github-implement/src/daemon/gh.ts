@@ -1,4 +1,4 @@
-// What the operations of github-almighty share about gh: the checks of what comes from the browser, the one query
+// What the operations of github-implement share about gh: the checks of what comes from the browser, the one query
 // that reads a worktree's issues and pull requests, the read of one of them that the parts of detail/ add fields to,
 // and the message for a failure. gasho-daemon runs gh for every plugin (ctx.github), with the login of whoever runs it,
 // and answers a read from what it kept when the same arguments were read recently. Everything here only builds

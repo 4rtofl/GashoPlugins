@@ -1,5 +1,5 @@
 // EasyUI's Button (easyui.site/components/button): a spring tap and a loading spinner. Changed for Gasho: the colors on
-// Gasho's tokens, only the variants and sizes github-almighty uses, and buttonClass for links that look like buttons.
+// Gasho's tokens, only the variants and sizes github-implement uses, and buttonClass for links that look like buttons.
 import { motion, type HTMLMotionProps } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { forwardRef, type ReactNode } from "react";

@@ -1,4 +1,4 @@
-// The web part of github-almighty: tabs beside a worktree's sessions for its issues and pull requests (P15), the
+// The web part of github-implement: tabs beside a worktree's sessions for its issues and pull requests (P15), the
 // screens they open, and, on the settings screen, how much of GitHub's hourly limit the background reads take.
 import { definePlugin } from "@gasho/plugin-sdk";
 import { HomeView } from "./home";

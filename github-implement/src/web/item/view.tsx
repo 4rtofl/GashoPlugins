@@ -74,7 +74,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
 
       {!valid && <Alert tone="danger">番号が正しくありません。</Alert>}
       {!github && <Alert>この worktree のリポジトリは GitHub にありません。</Alert>}
-      {github && !daemon.ready && <Alert tone="warning">{daemon.reason ?? `${machine.name} で github-almighty の daemon の部分が動いていません。`}</Alert>}
+      {github && !daemon.ready && <Alert tone="warning">{daemon.reason ?? `${machine.name} で github-implement の daemon の部分が動いていません。`}</Alert>}
       {r.error && (
         <Alert
           tone="danger"

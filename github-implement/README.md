@@ -1,4 +1,4 @@
-# GitHub Almighty（github-almighty）
+# GitHub Implement（github-implement）
 
 worktree の Issue（ブランチ名の番号）と Pull request（そのブランチのもの、手で足したもの）を、セッションと並んだタブで読み、GitHub を開かずに操作する。gh は gasho-daemon の `ctx.github` で動かす。プラグインの API 1.5 に対応した Gasho が要る。
 

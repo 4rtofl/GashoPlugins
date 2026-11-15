@@ -23,7 +23,7 @@ const WIDTH = 320;
 /** About the height of a card with labels and the line of how gh's login is related to it. */
 const HEIGHT = 240;
 /** The name style.css colors the #numbers by. */
-const HIGHLIGHT = "github-almighty-ref";
+const HIGHLIGHT = "github-implement-ref";
 /** Text that is code, or that a person types: its #numbers are not GitHub's. */
 const NOT_PROSE = "code, pre, textarea, input";
 
