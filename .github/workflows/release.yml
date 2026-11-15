@@ -1,6 +1,7 @@
-# Checks the plugins (typecheck, tests, build) on every pull request and push to main. On main, it then releases each
-# plugin whose version in gasho-plugin.json has no release yet, and remakes catalog.json in the release "catalog",
-# which Gasho's plugins screen reads (scripts/release.ts; Gasho's docs/plugins.md, P10).
+# Checks the plugins (their gasho-plugin.json and its genre, typecheck, tests, build) on every pull request and push to
+# main. On main, it then releases each plugin whose version in gasho-plugin.json has no release yet, and remakes
+# catalog.json in the release "catalog", which Gasho's plugins screen reads (scripts/release.ts; Gasho's
+# docs/plugins.md, P10).
 name: Plugins
 
 on:
@@ -28,6 +29,8 @@ jobs:
           node-version: 24
           registry-url: https://npm.pkg.github.com
           scope: "@4rtoflow"
+      # Every plugin names a genre of genres.json (scripts/check.ts); it needs nothing installed.
+      - run: node scripts/check.ts
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,6 +3,7 @@
   "name": "Usage",
   "version": "1.0.0",
   "description": "入力欄の下に、セッションの Context Window の使用率をリングで出す。押すと、Context Window の使用量と、Claude.ai のプランの使用量の上限（週の上限、モデルごとの週の上限、5時間の上限）を出す",
+  "genre": "monitoring",
   "api": "1.4",
   "web": { "js": "web.js", "css": "web.css" },
   "daemon": { "js": "daemon.js" },

@@ -1,7 +1,9 @@
 // Releases the plugins whose version has no release yet, and remakes the catalog that Gasho's plugins screen reads
 // (Gasho's docs/plugins.md, P10). For each plugin (a workspace with a gasho-plugin.json), the release
 // <id>-v<version> holds <id>-<version>.tgz, the files of its dist/. The release "catalog" holds catalog.json, the
-// newest version of every plugin with the SHA-256 of its file. Releases of older versions stay.
+// newest version of every plugin with the SHA-256 of its file, and the genres of genres.json, which the plugins screen
+// lists the plugins by. Releases of older versions stay. Every plugin names one of the genres (checkPlugins, which
+// scripts/check.ts runs on every pull request).
 //
 // .github/workflows/release.yml runs it on main after `npm run build`, with gh logged in (GH_TOKEN). Run it by hand
 // with --dry-run to see what it would do; it then changes nothing.
@@ -16,9 +18,24 @@ export interface Manifest {
   name: string;
   version: string;
   description?: string;
+  /** The id of its genre, one of genres.json. */
+  genre?: string;
   api: string;
   permissions?: string[];
   daemon?: { js: string };
+}
+
+/** A manifest that passed checkPlugins: it names a genre of genres.json. */
+export type CheckedManifest = Manifest & { genre: string };
+
+/** A genre of genres.json. Gasho's plugins screen shows its name on the cards and lists the plugins by genre. */
+export interface Genre {
+  /** Like a plugin's id: 2-32 of a-z, 0-9 and "-", starting with a letter. */
+  id: string;
+  /** Its name on the plugins screen (up to 40 characters). */
+  name: string;
+  /** Which plugins it is for, for those who write one. */
+  description: string;
 }
 
 /** One plugin of catalog.json (Gasho's CatalogPlugin). */
@@ -27,6 +44,7 @@ export interface CatalogEntry {
   name: string;
   version: string;
   description?: string;
+  genre: string;
   api: string;
   permissions: string[];
   daemon: boolean;
@@ -39,20 +57,31 @@ export interface CatalogEntry {
 export interface Catalog {
   repo: string;
   updatedAt: string;
+  /** The genres in the order of genres.json, by id and name (Gasho's PluginGenre). */
+  genres: { id: string; name: string }[];
   plugins: CatalogEntry[];
 }
 
+/** Something not right in a file (from the root of the repository), for scripts/check.ts to point at. */
+export interface Problem {
+  file: string;
+  message: string;
+}
+
 export const CATALOG_RELEASE = "catalog";
+const ID_RE = /^[a-z][a-z0-9-]{1,31}$/;
+const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 export const releaseOf = (m: Manifest) => `${m.id}-v${m.version}`;
 export const fileOf = (m: Manifest) => `${m.id}-${m.version}.tgz`;
 
 /** The catalog's entry for a plugin's file. */
-export function entryOf(m: Manifest, file: { sha256: string; size: number }): CatalogEntry {
+export function entryOf(m: CheckedManifest, file: { sha256: string; size: number }): CatalogEntry {
   return {
     id: m.id,
     name: m.name,
     version: m.version,
     ...(m.description ? { description: m.description } : {}),
+    genre: m.genre,
     api: m.api,
     permissions: m.permissions ?? [],
     daemon: Boolean(m.daemon),
@@ -63,22 +92,81 @@ export function entryOf(m: Manifest, file: { sha256: string; size: number }): Ca
   };
 }
 
-/** Whether two catalogs list the same plugins (when they were made aside). */
+/** Whether two catalogs list the same genres and plugins (when they were made aside). */
 export function sameCatalog(a: Catalog | undefined, b: Catalog): boolean {
-  return a !== undefined && a.repo === b.repo && JSON.stringify(a.plugins) === JSON.stringify(b.plugins);
+  return (
+    a !== undefined &&
+    a.repo === b.repo &&
+    // A catalog made before genres has none.
+    JSON.stringify(a.genres ?? []) === JSON.stringify(b.genres) &&
+    JSON.stringify(a.plugins) === JSON.stringify(b.plugins)
+  );
 }
 
-/** The plugins of the workspace: each folder of `workspaces` that has a gasho-plugin.json named after it. */
-export function readPlugins(root: string): { folder: string; manifest: Manifest }[] {
-  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { workspaces?: string[] };
-  return (pkg.workspaces ?? []).flatMap((folder) => {
-    const file = path.join(root, folder, "gasho-plugin.json");
-    if (!fs.existsSync(file)) return [];
-    const manifest = JSON.parse(fs.readFileSync(file, "utf8")) as Manifest;
-    if (manifest.id !== folder) throw new Error(`${folder}/gasho-plugin.json: its id (${manifest.id}) is not the folder's name`);
-    if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(manifest.version)) throw new Error(`${folder}/gasho-plugin.json: version ${manifest.version} is not like 1.2.0`);
-    return [{ folder, manifest }];
+/** The genres of genres.json, in its order; throws when it is not right. */
+export function readGenres(root: string): Genre[] {
+  const raw = JSON.parse(fs.readFileSync(path.join(root, "genres.json"), "utf8")) as unknown;
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error("genres.json: list the genres in an array");
+  const seen = new Set<string>();
+  return raw.map((g: Partial<Genre> | null, i) => {
+    const where = `genres.json: genre ${i + 1}${typeof g?.id === "string" ? ` (${g.id})` : ""}`;
+    if (typeof g?.id !== "string" || !ID_RE.test(g.id)) throw new Error(`${where}: id must be 2-32 of a-z, 0-9 and -, starting with a letter`);
+    if (seen.has(g.id)) throw new Error(`${where}: the id is there twice`);
+    seen.add(g.id);
+    if (typeof g.name !== "string" || !g.name.trim() || g.name.length > 40) throw new Error(`${where}: name must be 1-40 characters`);
+    if (typeof g.description !== "string" || !g.description.trim()) throw new Error(`${where}: give a description of the plugins it is for`);
+    return { id: g.id, name: g.name, description: g.description };
   });
+}
+
+/**
+ * Checks the plugins of the workspace, each folder of `workspaces` that has a gasho-plugin.json: its id is the folder's
+ * name, its version is like 1.2.0, and it names a genre of genres.json. A folder with a gasho-plugin.json that is not a
+ * workspace is a problem too: it would be neither built nor checked. Gives the plugins and every problem found.
+ */
+export function checkPlugins(root: string): { plugins: { folder: string; manifest: CheckedManifest }[]; problems: Problem[] } {
+  let genres: Genre[];
+  try {
+    genres = readGenres(root);
+  } catch (e) {
+    return { plugins: [], problems: [{ file: "genres.json", message: e instanceof Error ? e.message.replace(/^genres\.json: /, "") : String(e) }] };
+  }
+  const ids = genres.map((g) => g.id);
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { workspaces?: string[] };
+  const workspaces = pkg.workspaces ?? [];
+  const problems: Problem[] = [];
+  const plugins = workspaces.flatMap((folder) => {
+    const file = `${folder}/gasho-plugin.json`;
+    if (!fs.existsSync(path.join(root, file))) return [];
+    let manifest: Manifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(path.join(root, file), "utf8")) as Manifest;
+    } catch (e) {
+      problems.push({ file, message: `it is not JSON (${e instanceof Error ? e.message : String(e)})` });
+      return [];
+    }
+    const before = problems.length;
+    const problem = (message: string) => problems.push({ file, message });
+    if (manifest.id !== folder) problem(`its id (${manifest.id}) is not the folder's name`);
+    if (typeof manifest.version !== "string" || !VERSION_RE.test(manifest.version)) problem(`version ${manifest.version} is not like 1.2.0`);
+    if (manifest.genre === undefined) problem(`it names no genre: give "genre", one of genres.json (${ids.join(", ")})`);
+    else if (typeof manifest.genre !== "string" || !ids.includes(manifest.genre)) problem(`genre ${JSON.stringify(manifest.genre)} is not in genres.json (${ids.join(", ")})`);
+    return problems.length === before ? [{ folder, manifest: manifest as CheckedManifest }] : [];
+  });
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules" || workspaces.includes(entry.name)) continue;
+    if (fs.existsSync(path.join(root, entry.name, "gasho-plugin.json"))) {
+      problems.push({ file: `${entry.name}/gasho-plugin.json`, message: `${entry.name} is not in the workspaces of package.json, so it is neither built nor released` });
+    }
+  }
+  return { plugins, problems };
+}
+
+/** The plugins of the workspace (checkPlugins); throws when any of them is not right. */
+export function readPlugins(root: string): { folder: string; manifest: CheckedManifest }[] {
+  const { plugins, problems } = checkPlugins(root);
+  if (problems.length > 0) throw new Error(problems.map((p) => `${p.file}: ${p.message}`).join("\n"));
+  return plugins;
 }
 
 const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
@@ -105,6 +193,7 @@ function main(): void {
       fs.rmSync(path.join(tmp, "catalog.json"));
     }
 
+    const genres = readGenres(root).map(({ id, name }) => ({ id, name }));
     const entries: CatalogEntry[] = [];
     for (const { folder, manifest: m } of readPlugins(root)) {
       if (releases.has(releaseOf(m))) {
@@ -142,7 +231,7 @@ function main(): void {
       console.log(`${m.id} ${m.version}: released as ${releaseOf(m)}`);
     }
 
-    const catalog: Catalog = { repo, updatedAt: new Date().toISOString(), plugins: entries.sort((a, b) => (a.id < b.id ? -1 : 1)) };
+    const catalog: Catalog = { repo, updatedAt: new Date().toISOString(), genres, plugins: entries.sort((a, b) => (a.id < b.id ? -1 : 1)) };
     if (sameCatalog(before, catalog)) {
       console.log("catalog.json: no change");
       return;
