@@ -4,10 +4,12 @@
 
 ## 置き場
 
-- `kanban/plugins/<名前>/index.ts` に1つ置く。中のファイルは分けてよい（`index.ts` から import する）。フォルダーの名前が、「見る repo」に出る名前になる
-- git に載るのは、この README、`types.ts`、`example/` だけ。ほかのフォルダーは `.gitignore` で外してあるので、PR を出さずに書き換えられる
-- カンバンに入るのは、カンバンをビルドした checkout にあるプラグインだけ。新しい worktree や、GitHub Actions でビルドしたものには、各自のプラグインは入らない
-- 選んだプラグインがビルドに無い repo（別の checkout でビルドしたカンバンで選んだものなど）のカードは、「自分の番」に置く
+- このフォルダーが置き場で、working server の `~/.local/share/gasho/plugin-data/kanban/plugins/` にある（`XDG_DATA_HOME` を変えていれば、その下の `gasho/plugin-data/kanban/plugins/`）。「見る repo」の画面に、working server ごとの置き場のパスが出る
+- `<名前>/index.ts` に1つ置く。中のファイルは分けてよい（`index.ts` から import する）。フォルダーの名前が、「見る repo」に出る名前になる
+- カンバンが動き始めるたび（カンバンを更新したときや、gasho-daemon を起動し直したとき）に、`AGENTS.md`、`CLAUDE.md`、`types.ts`、`place.ts`、`check.ts`、`package.json`、`tsconfig.json` を置き直す。書き換えても戻るので、これらのファイルは書き換えない
+- `example/` は見本で、フォルダーが無いときだけ置く。書き換えても消してもよい（消すと、次にカンバンが動き始めたときに置き直す）。各自のプラグインと `cards/` は、カンバンが書き換えない
+- ファイルを保存すると、カンバンが読み込み直し、開いているボードを描き直す。Gasho とカンバンを起動し直さなくてよい。`fetch` を書き換えたときは、そのプラグインを選んだ repo の `fetch` をすぐに呼び直す
+- 読み込めないプラグイン（構文の誤り、`state` が無い、import できないものを import している、など）は、ファイルと行と理由をボードの上に出す。直して保存すると消える。そのプラグインを選んだ repo のカードは「自分の番」に置く
 
 ## 書き方
 
@@ -28,6 +30,15 @@ export const state: State = (card) => {
 - 受け取るカード（`StateCard`）には、repo、worktree のフォルダーとブランチ、ブランチ名の Issue 番号、Pull request（番号、状態、Draft か）、Pull request の最終更新、その worktree の Claude Code の会話の状態が入る
 - ブラウザーで、ボードを描くたびにカードごとに呼ぶ。カードと、`fetch` が返した値（下の「カードに無い情報を読む」）だけを見て返し、通信やタイマーは使わない
 - 例外を投げたとき、知らない列を返したとき、`label` か `text` が空の指示を返したときは、カードを「自分の番」に置き、「列を決められませんでした（<名前>）」と出し、指示を出さない。何が起きたかは、カードを押すと開くメニューに出る
+
+### 書き方の決まり
+
+カンバンは、各ファイルから型を取り除いただけのものを動かす（Node.js の型の除去と同じ）。`fetch` は working server の Node.js で、`state` と `headings` はブラウザーで、同じコードを動かす。
+
+- 型だけを読む import は `import type` にする（`import { type X }` でもよい）。値を読む import には、拡張子 `.ts` を付ける（`./stacks.ts`）
+- import できるのは、この置き場の `.ts` のファイルだけ。`node:` のモジュールや npm のパッケージ、`import()` は使えない。ファイルどうしが互いに import する（輪になる）書き方もできない
+- `enum`、`namespace`、コンストラクターの引数に付けた `private` などの、型を取り除くだけでは動かない書き方は使えない（`tsconfig.json` の `erasableSyntaxOnly` で、`tsc` が見つける）
+- ファイルのいちばん外側で、ブラウザーや Node.js にしか無いもの（`document`、`process` など）を使わない
 
 ## カードに無い情報を読む
 
@@ -51,13 +62,13 @@ export const state: State<Info> = (card, info) => {
 ```
 
 - `fetch` は working server の gasho-daemon で、repo ごとに呼ぶ。受け取るのは、カンバンがその repo で読んだもの（`FetchRepo`：repo、primary checkout と worktree、自分の開いた Pull request と閉じた Pull request）と、次の3つ
-  - `github.read`：gh を動かす（SDK の `ctx.github.read`）。gh の引数を `gh` を付けずに渡し、repo は `--repo` で指す。`gh api graphql` では `{ repo }` を指定に足す
+  - `github.read`：gh を動かす（Gasho のプラグインの SDK の `ctx.github.read`）。gh の引数を `gh` を付けずに渡し、repo は `--repo` で指す。`gh api graphql` では `{ repo }` を指定に足す
   - `exec`：working server でコマンドを動かす（SDK の `ctx.exec`。シェルを通さない。既定で30秒で止める）。gh には使わず、`github.read` を使う
   - `store`：次に呼ぶときまで残しておく値の置き場。`store.get()` で前に `store.set(値)` で入れたものを読む（JSON にして 256KB まで）。repo ごと・プラグインごとに、working server のカンバンのフォルダー（`~/.local/share/gasho/plugin-data/kanban/stores/<名前>/`）のファイルに書くので、gasho-daemon を起動し直しても残る
 - 返す値は JSON にできるもので、JSON にして 256KB まで。そのままブラウザーに送られ、`state` に入る。`fetch` が値を返すまでと、`fetch` が無いときは、`state` には `undefined` が入る
-- 呼ぶのは、カンバンが repo を読み直す2回に1回（2分に1回）と、「今すぐ見直す」を押したとき、プラグインを選んだとき。カンバンが読み直すのは、どこかのブラウザーでカンバンを開いているあいだだけなので、閉じているあいだに始まって終わったこと（デプロイなど）は `fetch` から見えない。GitHub の GraphQL は1時間に5000点までで、カンバン自体も repo 1つで1時間に120点使うので、1回に使う点（gh の1回でたいてい1〜2点）を少なくする。GraphQL の残りが1000点を切ると、残りが戻る時刻まで呼ばない
+- 呼ぶのは、カンバンが repo を読み直す2回に1回（2分に1回）と、「今すぐ見直す」を押したとき、プラグインを選んだとき、`fetch` を書き換えて保存したとき。カンバンが読み直すのは、どこかのブラウザーでカンバンを開いているあいだだけなので、閉じているあいだに始まって終わったこと（デプロイなど）は `fetch` から見えない。GitHub の GraphQL は1時間に5000点までで、カンバン自体も repo 1つで1時間に120点使うので、1回に使う点（gh の1回でたいてい1〜2点）を少なくする。GraphQL の残りが1000点を切ると、残りが戻る時刻まで呼ばない
 - 例外を投げたときと、60秒で終わらないときは、前に返した値を `state` に渡したまま、カンバンの上に「カンバン用のプラグイン（<名前>）の fetch が失敗しました」と出す
-- gh は gasho-daemon がまとめて動かし、同じ引数の結果を30秒覚えて、ほかのプラグインの読み込みにも返す。`fetch` は gh を `github.read` だけで動かし、`node:` のモジュールを import しない（`index.ts` は、daemon.js と一緒に web.js のビルドにも入る）
+- gh は gasho-daemon がまとめて動かし、同じ引数の結果を30秒覚えて、ほかのプラグインの読み込みにも返す
 
 ## カードに印を付ける
 
@@ -76,6 +87,17 @@ export const state: State<Info> = (card, info) => {
 - デプロイ中の worktree のカードは「GitHub 待ち」に置いて「<Stack> デプロイ中」の印を、最後にデプロイした worktree のカードには Stack の名前の印を付ける。ボードの上には、Stack ごとに最後にデプロイした worktree と、デプロイを最後に見た時刻を出す
 - 同じ Stack に、あとから別の worktree がデプロイを始めたら、あとから始めたほうを記録する
 
-## 入れ替える
+## 確かめる
 
-`npm run build -w kanban` でビルドし直すと、`kanban/dist` を `--link` で入れた Gasho のカンバンが、Gasho を起動し直さずに新しいプラグインで描き直す。`fetch` は、gasho-daemon が daemon の部分を新しい版に入れ替えたあとの、最初の読み直しで呼ぶ。
+型の確認とテストには、TypeScript と Node.js の型が要る。置き場で一度 `npm install` してから流す（Node.js 24 以上）。
+
+| すること | コマンド |
+|---|---|
+| 型を確かめる | `npx tsc`（`npm run typecheck`） |
+| テストを流す（見本は [example/index.test.ts](example/index.test.ts)） | `node --test`（`npm test`） |
+| 実際のカードに `state` を当てた結果を一覧にする | `node check.ts [<名前>]`（`npm run check`） |
+
+- カンバンの「カードを書き出す」を押すと、見ている repo ごとに、カード（`state` が受け取る `StateCard`）と、repo（`fetch` と `headings` が受け取る `FetchRepo`）と、選んだプラグインの `fetch` が最後に返した値を、`cards/<OWNER>__<REPO>.json` に書き出す。押すたびに上書きする
+- `node check.ts <名前>` は、`cards/` のカードに `<名前>` の `state` を当て、列ごとに、カードと理由・印・指示を出す。見出しも出す。`<名前>` を省くと、書き出したときに repo ごとに選んでいたプラグインを当てる。`fetch` の結果は、書き出したときに選んでいたプラグインに当てるときだけ渡す（ほかのプラグインには `undefined` を渡す）
+- 列を決められないカード（ボードで「自分の番」に置き、「列を決められませんでした」と出すもの）は、最後に理由と一緒に出し、終了コードを 1 にする
+- 書き出したカードは、テストの材料にもできる（`JSON.parse(fs.readFileSync(...))` で読み、`state` に渡す）

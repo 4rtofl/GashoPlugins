@@ -5,11 +5,11 @@ import path from "node:path";
 import { test } from "node:test";
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
 import { arrangeCards, assignSessions, boardCards, boardHeadings, cardsOf, issueOf, kanbanCards, placeCard, type BoardPlugins, type SessionLike } from "../src/cards.ts";
-import * as example from "../plugins/example/index.ts";
-import type { Stacks } from "../plugins/example/stacks.ts";
-import type { FetchContext, FetchRepo, FetchStore, StateCard } from "../plugins/types.ts";
+import type { Fetch, FetchContext, FetchRepo, StateCard } from "../plugins/types.ts";
 import { ghError, parseClosed, parseGitHubUrl, parsePrs, parseWorktrees, type Exec, type GitHubRead } from "../src/daemon/git.ts";
-import { FETCH_EVERY_MS, READ_EVERY_MS, Reader, type BoardFetchers } from "../src/daemon/reader.ts";
+import { BoardFolder } from "../src/daemon/folder.ts";
+import { FETCH_EVERY_MS, READ_EVERY_MS, Reader } from "../src/daemon/reader.ts";
+import { linkPlugin } from "../src/board-code.ts";
 import type { OpenPr, RepoMaterial } from "../src/types.ts";
 
 const pr = (over: Partial<OpenPr> = {}): OpenPr => ({ number: 1, title: "t", url: "https://github.com/o/r/pull/1", headRefName: "feat/1-x", ...over });
@@ -61,12 +61,13 @@ test("sessions go to the deepest worktree that holds their folder, across the re
     ],
   );
   // An offline working server shows no cards.
-  assert.equal(kanbanCards([{ machine: { ...machine, connected: false }, board }], NONE).length, 0);
+  assert.equal(kanbanCards([{ machine: { ...machine, connected: false }, board, plugins: NONE }]).length, 0);
 });
 
 test("a card goes in the column its repository's board plugin gives, with its instructions, and in the first one when the plugin fails", () => {
   const m: RepoMaterial = { repo: "o/r", primary: { path: "/r/main" }, worktrees: [{ branch: "feat/2-a", path: "/r/wt-a" }], prs: [pr({ headRefName: "feat/2-a" })], closed: [], plugin: "mine" };
-  const plugins: BoardPlugins = new Map<string, { state?: unknown }>([
+  const plugins: BoardPlugins = new Map<string, { state?: unknown; error?: string }>([
+    ["broken", { error: "mine/lib.ts:3：TypeScript として読めません" }],
     ["mine", { state: (c: { pr?: { number: number } }) => ({ column: "review", reason: ` PR #${c.pr?.number} `, actions: [{ label: " レビューする ", text: `/review ${c.pr?.number}` }] }) }],
     ["blank", { state: () => ({ column: "agent", actions: [{ label: "送る", text: " " }] }) }],
     ["throws", { state: () => { throw new Error("boom"); } }],
@@ -89,8 +90,9 @@ test("a card goes in the column its repository's board plugin gives, with its in
   assert.match(placed("empty")[2] ?? "", /state を export していません/);
   // `state` gets what the plugin's `fetch` gave for the repository.
   assert.equal(cardsOf({ ...m, plugin: "fetched", fetched: { ci: "pending" } }, new Map(), plugins)[0]?.column, "github");
-  // A plugin chosen on a working server but not in this build, such as another person's.
-  assert.match(placeCard({ id: "x", repo: "o/r", label: "x", title: "", sessions: [] }, "gone", plugins).reason?.error ?? "", /kanban\/plugins\/gone\/ が、このビルドにありません/);
+  // A plugin that cannot be loaded says why; one no longer in the folder says so.
+  assert.deepEqual(placed("broken"), ["mine", "列を決められませんでした（broken）", "mine/lib.ts:3：TypeScript として読めません"]);
+  assert.match(placeCard({ id: "x", repo: "o/r", label: "x", title: "", sessions: [] }, "gone", plugins).reason?.error ?? "", /置き場に gone\/index.ts がありません/);
 
   // The marks `state` gives come on the card; marks that cannot be shown put the card in "mine".
   const card: StateCard = { id: "x", repo: "o/r", label: "x", title: "", sessions: [] };
@@ -113,14 +115,14 @@ test("the headings above the board come from the board plugins that have them, w
   ]);
   const board = { watched: [], repos: [repo("a", "stacks", { last: "wt" }), repo("b", "throws"), repo("c", "odd"), repo("d", "plain"), repo("e")], errors: [] };
   assert.deepEqual(
-    boardHeadings([{ machine, board }], plugins).map(({ repo: r, plugin, headings, error }) => [r, plugin, headings, error]),
+    boardHeadings([{ machine, board, plugins }]).map(({ repo: r, plugin, headings, error }) => [r, plugin, headings, error]),
     [
       ["o/a", "stacks", [{ label: "dev1", text: "wt of o/a", at: 5 }], undefined],
       ["o/b", "throws", [], "headings が失敗しました：boom"],
       ["o/c", "odd", [], "headings が返した見出しを使えません：それぞれに、空でない label が要ります。"],
     ],
   );
-  assert.deepEqual(boardHeadings([{ machine: { ...machine, connected: false }, board }], plugins), []);
+  assert.deepEqual(boardHeadings([{ machine: { ...machine, connected: false }, board, plugins }]), []);
 });
 
 test("a column's order: cards without the value stay below in either direction", () => {
@@ -247,7 +249,7 @@ test("a board plugin's fetch runs in every other reading with gh, its value come
   let now = 1_000_000;
   const server = fakeServer();
   let fails = false;
-  const fetchers: BoardFetchers = new Map([
+  const fetchers = new Map<string, Fetch>([
     [
       "ci",
       async (repo: FetchRepo, { github }: FetchContext) => {
@@ -257,7 +259,7 @@ test("a board plugin's fetch runs in every other reading with gh, its value come
       },
     ],
   ]);
-  const reader = new Reader({ exec: server.exec, github: server.github, fetchers, storeDir: dir, folders: () => ["/r/wt"], file: path.join(dir, "watched.json"), log: () => undefined, now: () => now });
+  const reader = new Reader({ exec: server.exec, github: server.github, fetcher: (n) => fetchers.get(n), storeDir: dir, folders: () => ["/r/wt"], file: path.join(dir, "watched.json"), log: () => undefined, now: () => now });
   const fetches = () => server.calls.filter((c) => c.startsWith("gh pr checks")).length;
   const reading = async (ms: number) => {
     now += ms;
@@ -318,11 +320,11 @@ test("a board plugin's fetch runs in every other reading with gh, its value come
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test("a board plugin's fetch runs commands and gets what it kept the time before, after gasho-daemon starts again too, and runs only while the board is asked for", async () => {
+test("a board plugin's fetch runs commands and gets what it kept the time before, after gasho-daemon starts again too, and runs only while the board is asked for or its code changed", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kanban-"));
   let now = 1_000_000;
   const server = fakeServer();
-  const fetchers: BoardFetchers = new Map([
+  const fetchers = new Map<string, Fetch>([
     [
       "count",
       async (_: FetchRepo, { exec, store }: FetchContext) => {
@@ -334,7 +336,7 @@ test("a board plugin's fetch runs commands and gets what it kept the time before
     ],
     ["other", async (_: FetchRepo, { store }: FetchContext) => store.get() ?? "none"],
   ]);
-  const start = () => new Reader({ exec: server.exec, github: server.github, fetchers, storeDir: path.join(dir, "stores"), folders: () => ["/r/wt"], file: path.join(dir, "watched.json"), log: () => undefined, now: () => now });
+  const start = () => new Reader({ exec: server.exec, github: server.github, fetcher: (n) => fetchers.get(n), storeDir: path.join(dir, "stores"), folders: () => ["/r/wt"], file: path.join(dir, "watched.json"), log: () => undefined, now: () => now });
   const reader = start();
   await reader.watch(["/r/main"], { "/r/main": "count" });
   await reader.settled();
@@ -344,18 +346,28 @@ test("a board plugin's fetch runs commands and gets what it kept the time before
   // While no browser asks for the board, nothing runs, however long.
   const calls = server.calls.length;
   now += 10 * FETCH_EVERY_MS;
+  // Its code changed meanwhile: it waits for the next reading too.
+  reader.pluginsChanged(new Set(["count"]));
   await reader.settled();
   assert.equal(server.calls.length, calls);
   reader.board();
   await reader.settled();
   assert.equal(reader.board().repos[0]?.fetched, 2);
+  // While the board shows, a plugin whose code changed (saved in its folder) runs its fetch at once, however recent;
+  // one that no repository chose reads nothing.
+  reader.pluginsChanged(new Set(["other"]));
+  await reader.settled();
+  assert.equal(reader.board().repos[0]?.fetched, 2);
+  reader.pluginsChanged(new Set(["count"]));
+  await reader.settled();
+  assert.equal(reader.board().repos[0]?.fetched, 3);
 
   // gasho-daemon started again: what it kept is in the file.
   const again = start();
   await again.load();
   again.board();
   await again.settled();
-  assert.equal(again.board().repos[0]?.fetched, 3);
+  assert.equal(again.board().repos[0]?.fetched, 4);
   // Another plugin does not get it.
   await again.watch(["/r/main"], { "/r/main": "other" });
   await again.settled();
@@ -363,49 +375,121 @@ test("a board plugin's fetch runs commands and gets what it kept the time before
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test("the sample finds the deploys with ps and lsof, puts the deploying card in GitHub 待ち, and keeps the worktree that deployed to each Stack last", async () => {
-  const repo: FetchRepo = { repo: "o/r", primary: { path: "/r/main", branch: "main" }, worktrees: [{ branch: "feat/5-x", path: "/r/wt" }], prs: [], closed: [] };
-  let ps = [
-    "  101 bash ./deploy.sh --stage dev1 -b",
-    "  102 /bin/zsh -c cd /r/wt && ./deploy.sh --stage dev1",
-    "  103 /bin/bash /r/main/infra/deploy.sh --stage=dev2",
-    "  104 vim deploy.sh --stage dev1",
-    "  105 bash ./deploy.sh -b -- --stage dev3",
-    "  106 bash /elsewhere/deploy.sh --stage dev4",
-    "  107 bash ./deploy.sh --stage dev5",
-  ].join("\n");
-  const exec: FetchContext["exec"] = async (command, args) => {
-    if (command === "ps") return { stdout: ps, stderr: "" };
-    assert.deepEqual([command, ...args], ["lsof", "-a", "-p", "101,107", "-d", "cwd", "-Fpn"]);
-    // 107 ended after ps: lsof fails, and still prints the others.
-    throw Object.assign(new Error("exit 1"), { code: 1, stdout: "p101\nfcwd\nn/r/wt/infra\n", stderr: "" });
-  };
-  let kept: unknown;
-  const store: FetchStore<Stacks> = { get: () => kept as Stacks | undefined, set: async (v) => void (kept = v) };
-  const github = { read: async () => assert.fail("no pull request: gh is not needed") };
-  const fetched = await example.fetch(repo, { github, exec, store });
-  assert.deepEqual(
-    Object.entries(fetched.stacks).map(([s, r]) => [s, r.path, r.running]),
-    [
-      ["dev1", "/r/wt", ["/r/wt"]],
-      ["dev2", "/r/main", ["/r/main"]],
-    ],
-  );
-  assert.deepEqual(kept, fetched.stacks);
-  const card: StateCard = { id: "o/r:/r/wt", repo: "o/r", label: "wt", path: "/r/wt", branch: "feat/5-x", title: "feat/5-x", sessions: [{ sessionId: "s", status: "busy" }] };
-  const deploying = example.state(card, fetched);
-  assert.deepEqual([deploying.column, deploying.reason, deploying.marks?.map((m) => [m.text, m.active])], ["github", "dev1 にデプロイしている", [["dev1 デプロイ中", true]]]);
+/** Waits until `ok` holds, for the folder's watcher. */
+async function until(ok: () => boolean, ms = 5000): Promise<void> {
+  for (const end = Date.now() + ms; !ok(); ) {
+    if (Date.now() > end) throw new Error("timed out");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
 
-  // The deploys are over: the worktree stays the one that deployed last, and the card goes back to its column.
-  ps = "";
-  const after = await example.fetch(repo, { github, exec, store });
-  const done = example.state(card, after);
-  assert.deepEqual([done.column, done.marks?.map((m) => [m.text, m.active ?? false])], ["agent", [["dev1", false]]]);
-  assert.deepEqual(
-    example.headings(repo, after).map((h) => [h.label, h.text, h.active ?? false, typeof h.at]),
-    [
-      ["dev1", "wt", false, "number"],
-      ["dev2", "main", false, "number"],
-    ],
-  );
+const TEMPLATE = path.join(import.meta.dirname, "../plugins");
+
+async function writeFiles(dir: string, files: Record<string, string>): Promise<void> {
+  for (const [file, text] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(path.join(dir, file)), { recursive: true });
+    await fs.writeFile(path.join(dir, file), text);
+  }
+}
+
+test("the board plugins' folder gets the kanban's files whenever it starts and the sample once, and keeps what each person wrote", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kanban-plugins-"));
+  await writeFiles(dir, { "AGENTS.md": "old guide", "mine/index.ts": "mine" });
+  const folder = (guide: string) => new BoardFolder({ dir, placed: { "AGENTS.md": guide, "types.ts": "types" }, sample: { "example/index.ts": "sample", "example/stacks.ts": "stacks" }, log: () => undefined });
+  await folder("guide").prepare();
+  const read = (f: string) => fs.readFile(path.join(dir, f), "utf8");
+  assert.deepEqual(await Promise.all(["AGENTS.md", "types.ts", "example/index.ts", "example/stacks.ts", "mine/index.ts"].map(read)), ["guide", "types", "sample", "stacks", "mine"]);
+  // The kanban updated: its files are new, the sample as each person changed it.
+  await fs.writeFile(path.join(dir, "example/index.ts"), "changed sample");
+  await fs.rm(path.join(dir, "example/stacks.ts"));
+  await folder("new guide").prepare();
+  assert.deepEqual(await Promise.all(["AGENTS.md", "example/index.ts", "mine/index.ts"].map(read)), ["new guide", "changed sample", "mine"]);
+  await assert.rejects(read("example/stacks.ts"));
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("a board plugin loads with the files it imports, runs its fetch here and its state from the same code, and a broken one says which file and why", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kanban-plugins-"));
+  const template = async (f: string) => fs.readFile(path.join(TEMPLATE, f), "utf8");
+  await writeFiles(dir, {
+    "types.ts": await template("types.ts"),
+    "example/index.ts": await template("example/index.ts"),
+    "example/stacks.ts": await template("example/stacks.ts"),
+    "mine/index.ts": [
+      'import type { Fetch, State } from "../types.ts";',
+      'import { columnOf, type Info } from "./lib.ts";',
+      "export const fetch: Fetch<Info> = async (repo) => ({ open: repo.prs.length });",
+      "export const state: State<Info> = (card, info) => ({ column: columnOf(info), reason: card.label });",
+    ].join("\n"),
+    "mine/lib.ts": 'export interface Info { open: number }\nexport const columnOf = (info: Info | undefined): "github" | "mine" => (info && info.open > 0 ? "github" : "mine");\n',
+    "syntax/index.ts": 'export const state = () => ({ column: "mine" });\nconst x: = 1;\n',
+    "enum/index.ts": 'export enum Column { Mine = "mine" }\nexport const state = () => ({ column: Column.Mine });\n',
+    "nostate/index.ts": "export const headings = () => [];\n",
+    "node/index.ts": 'import fs from "node:fs";\nexport const state = () => ({ column: fs ? "mine" : "done" });\n',
+    "missing/index.ts": 'import { a } from "./a.ts";\nexport const state = () => ({ column: a });\n',
+    "loop/index.ts": 'import { a } from "./a.ts";\nexport const state = () => ({ column: a });\n',
+    "loop/a.ts": 'import { b } from "./b.ts";\nexport const a = b;\n',
+    "loop/b.ts": 'import { a } from "./a.ts";\nexport const b = "mine";\nexport const c = a;\n',
+    "throws/index.ts": 'import { a } from "./lib.ts";\nexport const state = () => ({ column: a });\n',
+    "throws/lib.ts": 'export const a = "mine";\nthrow new Error("boom");\n',
+    "notes/readme.md": "not a plugin",
+  });
+  const folder = new BoardFolder({ dir, placed: {}, sample: {}, log: () => undefined });
+  const set = await folder.reload();
+  assert.deepEqual(set.names, ["enum", "example", "loop", "mine", "missing", "node", "nostate", "syntax", "throws"]);
+  assert.deepEqual(set.plugins.map((p) => [p.name, Object.keys(p.modules).sort()]), [
+    ["example", ["example/index.ts", "example/stacks.ts"]],
+    ["mine", ["mine/index.ts", "mine/lib.ts"]],
+  ]);
+  const problems = new Map(set.problems.map((p) => [p.plugin, `${p.file}:${p.line ?? ""} ${p.error}`]));
+  assert.match(problems.get("syntax") ?? "", /^syntax\/index.ts:2 TypeScript として読めません：/);
+  assert.match(problems.get("enum") ?? "", /^enum\/index.ts:1 型を取り除くだけでは動かない書き方です/);
+  assert.equal(problems.get("nostate"), "nostate/index.ts: state を export していません。カードの列を決める state(card, fetched) が要ります。");
+  assert.equal(problems.get("node"), "node/index.ts:1 node:fs は import できません。import できるのは、この置き場の .ts のファイルだけです。");
+  assert.equal(problems.get("missing"), "missing/index.ts:1 ./a.ts がありません。");
+  assert.equal(problems.get("loop"), "loop/index.ts: import が輪になっています：loop/index.ts → loop/a.ts → loop/b.ts → loop/a.ts");
+  assert.match(problems.get("throws") ?? "", /^throws\/lib.ts:2 読み込めません：boom$/);
+
+  // `fetch` runs in the daemon part, from the folder.
+  const repo: FetchRepo = { repo: "o/r", primary: { path: "/r/main" }, worktrees: [], prs: [pr()], closed: [] };
+  const ctx = { github: { read: async () => assert.fail("no gh") }, exec: async () => assert.fail("no commands"), store: { get: () => undefined, set: async () => undefined } } satisfies FetchContext;
+  assert.deepEqual(await folder.fetcher("mine")?.(repo, ctx), { open: 1 });
+  assert.equal(typeof folder.fetcher("example"), "function");
+  assert.equal(folder.fetcher("syntax"), undefined);
+  // The web part runs `state` from the same code, linked the same way (blob: URLs there).
+  const mine = set.plugins.find((p) => p.name === "mine");
+  assert.ok(mine);
+  const linked = linkPlugin(mine, (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+  const web = (await import(linked.entry)) as { state: (card: StateCard, info: unknown) => { column: string; reason?: string } };
+  assert.deepEqual(web.state({ id: "x", repo: "o/r", label: "wt", title: "", sessions: [] }, { open: 1 }), { column: "github", reason: "wt" });
+
+  // The same files give the same version; a change gives another.
+  assert.equal((await folder.reload()).version, set.version);
+  await fs.writeFile(path.join(dir, "syntax/index.ts"), 'export const state = () => ({ column: "mine" });\n');
+  const fixed = await folder.reload();
+  assert.notEqual(fixed.version, set.version);
+  assert.ok(fixed.plugins.some((p) => p.name === "syntax"));
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("saving a file of the board plugins' folder reads them again, and says which plugins changed", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kanban-plugins-"));
+  await writeFiles(dir, {
+    "a/index.ts": 'import { column } from "./lib.ts";\nexport const state = () => ({ column });\n',
+    "a/lib.ts": 'export const column = "mine";\n',
+    "b/index.ts": 'export const state = () => ({ column: "done" });\n',
+  });
+  const folder = new BoardFolder({ dir, placed: {}, sample: {}, log: () => undefined });
+  const changes: string[][] = [];
+  const first = await folder.start((_, changed) => changes.push([...changed].sort()));
+  assert.deepEqual(first.plugins.map((p) => p.name), ["a", "b"]);
+  await fs.writeFile(path.join(dir, "a/lib.ts"), 'export const column = "agent";\n');
+  await until(() => changes.length > 0);
+  assert.deepEqual(changes, [["a"]]);
+  // The cards written out are not read.
+  await writeFiles(dir, { "cards/o__r.json": "{}" });
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(changes.length, 1);
+  folder.stop();
+  await fs.rm(dir, { recursive: true, force: true });
 });
