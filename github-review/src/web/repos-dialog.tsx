@@ -76,7 +76,7 @@ export function ReposDialog({
     setSaving(true);
     setError(undefined);
     const results = await Promise.all(
-      changed.map(({ m, c }) => call<string[]>({ machine: m.id, method: "watch", params: { paths: c }, summary: `レビューの見る repo を ${c.length} 個にする` })),
+      changed.map(({ m, c }) => call<string[]>({ machine: m.id, method: "watch", params: { paths: c }, summary: `レビューの対象リポジトリを ${c.length} 個にする` })),
     );
     for (const { m } of changed) reload(m.id);
     setSaving(false);
@@ -94,9 +94,9 @@ export function ReposDialog({
         <Dialog.Content className={cn(DIALOG_PANEL, "flex w-[min(36rem,calc(100vw-2rem))] flex-col gap-4")}>
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
-              <Dialog.Title className="text-base font-semibold tracking-tight">見る repo</Dialog.Title>
+              <Dialog.Title className="text-base font-semibold tracking-tight">対象リポジトリ</Dialog.Title>
               <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-                選んだ repo の Pull request を、ページの下の段に出します。working server ごとに {MAX_REPOS} 個まで選べます。選べるのは、Claude Code が信頼しているフォルダーにある GitHub の repo です。
+                選んだリポジトリの Pull request を、ページの下の段に出します。working server ごとに {MAX_REPOS} 個まで選べます。選べるのは、Claude Code が信頼しているフォルダーにある GitHub のリポジトリです。
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -123,7 +123,7 @@ export function ReposDialog({
 
           {error && <p className="text-xs whitespace-pre-line text-red-400">{error}</p>}
           <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
-            <span className="text-xs text-muted-foreground tabular-nums">{chosen} 個の repo を見る</span>
+            <span className="text-xs text-muted-foreground tabular-nums">{chosen} 個のリポジトリを選択中</span>
             <div className="flex gap-2">
               <Dialog.Close asChild>
                 <Button size="sm">キャンセル</Button>
