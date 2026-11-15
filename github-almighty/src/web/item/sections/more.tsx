@@ -1,7 +1,8 @@
-// The rest of what GitHub's sidebar does to an item, in one row: lock and unlock the conversation, pin and unpin an
-// issue and move it to another repository, and open a pull request that reverts a merged one. An Undo Toast can put a
-// lock or a pin back. Moving gives the issue a new number in the other repository and reverting makes a new pull
-// request, so neither can be put back that way: each asks first, and then says where the issue or pull request is.
+// The rest of what GitHub's sidebar does to an item, after the buttons that change the state: lock and unlock the
+// conversation, pin and unpin an issue and move it to another repository, and open a pull request that reverts a
+// merged one. An Undo Toast can put a lock or a pin back. Moving gives the issue a new number in the other repository
+// and reverting makes a new pull request, so neither can be put back that way: each asks first, and then says where
+// the issue or pull request is.
 import { ArrowRight, ExternalLink, Lock, LockOpen, Pin, PinOff, RotateCcw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Popover, useNavigation, useRequest } from "@gasho/plugin-sdk";
@@ -314,16 +315,14 @@ function More() {
   // What moving and reverting made, shown until the screen closes.
   const [notice, setNotice] = useState<ReactNode>();
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <LockControl />
-        {item.kind === "issues" && <PinControl />}
-        {item.kind === "issues" && <TransferControl onMoved={setNotice} />}
-        {item.kind === "pulls" && item.state === "merged" && <RevertControl onMade={setNotice} />}
-      </div>
-      {notice}
-    </div>
+    <>
+      <LockControl />
+      {item.kind === "issues" && <PinControl />}
+      {item.kind === "issues" && <TransferControl onMoved={setNotice} />}
+      {item.kind === "pulls" && item.state === "merged" && <RevertControl onMade={setNotice} />}
+      {notice && <div className="basis-full text-left">{notice}</div>}
+    </>
   );
 }
 
-export default { order: 15, kinds: ["issues", "pulls"], View: More } satisfies ItemSection;
+export default { order: 15, kinds: ["issues", "pulls"], place: "actions", View: More } satisfies ItemSection;

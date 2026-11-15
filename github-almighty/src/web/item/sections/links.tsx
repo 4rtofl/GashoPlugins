@@ -11,6 +11,7 @@ import { Badge, type BadgeTone } from "../../ui/badge.tsx";
 import { useAfterChange, useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 import { Picker } from "../picker.tsx";
+import { Row } from "../row.tsx";
 
 const name = (l: { number: number; repo?: string }) => `${l.repo ?? ""}#${l.number}`;
 
@@ -42,15 +43,14 @@ function Links() {
   if (item.kind === "issues") {
     const pulls = r.data?.closedBy;
     return (
-      <div className="flex flex-wrap items-center gap-1.5 text-xs">
-        <span className="shrink-0 text-muted-foreground">閉じる Pull request</span>
+      <Row label="閉じる Pull request">
         {pulls?.map((p) => {
           const Icon = itemIcon({ kind: "pulls", state: p.state, ...(p.draft ? { draft: true } : {}) });
           return <LinkBadge key={name(p)} link={p} tone={p.state === "open" && p.draft ? "neutral" : PULL_TONE[p.state]} icon={<Icon />} />;
         })}
         {pulls?.length === 0 && <span className="text-muted-foreground">なし</span>}
         {r.error && <span className="text-red-500 dark:text-red-400">読めませんでした：{r.error}</span>}
-      </div>
+      </Row>
     );
   }
 
@@ -66,8 +66,7 @@ function Links() {
       undo: { op: "link-issue", params: { issue: n, linked: !linked }, summary: linked ? `${pr} が閉じる Issue から #${n} を外す` : `${pr} が閉じる Issue に #${n} を足し直す` },
     });
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="shrink-0 text-muted-foreground">閉じる Issue</span>
+    <Row label="閉じる Issue">
       {closes?.map((i) => {
         const { tone, Icon } = issueLook(i);
         const removable = editable && i.manual && !i.keyword && !i.repo;
@@ -104,8 +103,8 @@ function Links() {
             }))}
         />
       )}
-    </div>
+    </Row>
   );
 }
 
-export default { order: 37, kinds: ["issues", "pulls"], View: Links } satisfies ItemSection;
+export default { order: 37, kinds: ["issues", "pulls"], place: "row", View: Links } satisfies ItemSection;

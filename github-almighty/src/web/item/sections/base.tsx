@@ -1,22 +1,33 @@
-// A pull request's base: a picker that changes it to a branch found by name (an Undo Toast puts it back), how many
-// commits of the base its head does not have, with a button that merges them in (Update branch), and, when the parent
-// was merged or the base branch deleted, a button that moves the base to where the parent went.
+// A pull request's branches in one row: head → base, the size, the review decision, a picker that changes the base to
+// a branch found by name (an Undo Toast puts it back), how many commits of the base its head does not have, with a
+// button that merges them in (Update branch), and, when the parent was merged or the base branch deleted, a button that
+// moves the base to where the parent went.
 import { Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn, Popover, useRequest } from "@gasho/plugin-sdk";
+import type { GitHubItemDetail } from "../../../types.ts";
 import { readOp } from "../../daemon.ts";
 import { Alert } from "../../ui/alert.tsx";
+import { Badge, type BadgeTone } from "../../ui/badge.tsx";
 import { Button } from "../../ui/button.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
+import { Row } from "../row.tsx";
 import { useStack } from "../stack.ts";
 
-function Base() {
+const REVIEW: Record<NonNullable<GitHubItemDetail["review"]>, { label: string; tone: BadgeTone }> = {
+  approved: { label: "承認済み", tone: "success" },
+  changes_requested: { label: "修正の依頼あり", tone: "warning" },
+  review_required: { label: "レビュー待ち", tone: "neutral" },
+};
+
+function Branches() {
   const { item, where, busy, run } = useItem();
   const r = useStack();
   const s = r.data;
   const base = item.base;
   if (!base) return null;
+  const decision = item.review ? REVIEW[item.review] : undefined;
   const open = item.state === "open";
   const id = `#${where.number}`;
   const gone = s?.base.gone === true;
@@ -41,49 +52,63 @@ function Base() {
   );
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1.5 text-xs">
-        <span className="w-10 shrink-0 text-muted-foreground">base</span>
-        <span className={cn("font-mono break-all", gone && "text-muted-foreground line-through")}>{base}</span>
-        {open && <BasePicker current={base} head={item.head} first={s?.defaultBranch} disabled={busy !== undefined} onPick={change} />}
-        {behind > 0 && (
+    <Row label="ブランチ">
+      <span className="min-w-0 font-mono break-all">
+        {item.head && (
           <>
-            <span className="text-amber-700 dark:text-amber-400">base より {behind.toLocaleString()} commit 遅れています</span>
-            <Button
-              size="xs"
-              onClick={() =>
-                void run({
-                  id: "update-branch",
-                  op: "update-branch",
-                  params: {},
-                  summary: `${id} に base（${base}）を取り込む`,
-                  done: "base を取り込みました。worktree には git pull で入ります",
-                })
-              }
-              disabled={busy !== undefined}
-              isLoading={busy === "update-branch"}
-              loadingText="取り込んでいます…"
-              title="Update branch：GitHub で base をこの Pull request のブランチにマージする"
-            >
-              base を取り込む
-            </Button>
+            {item.head} <span className="text-muted-foreground">→</span>{" "}
           </>
         )}
-        {r.error && <span className="text-red-600 dark:text-red-400">（親と子・base との差を読めませんでした：{r.error}）</span>}
-      </div>
+        <span className={cn(gone && "text-muted-foreground line-through")}>{base}</span>
+      </span>
+      {open && <BasePicker current={base} head={item.head} first={s?.defaultBranch} disabled={busy !== undefined} onPick={change} />}
+      {item.additions !== undefined && item.deletions !== undefined && (
+        <span className="tabular-nums">
+          <span className="text-emerald-600 dark:text-emerald-400">+{item.additions.toLocaleString()}</span> <span className="text-red-600 dark:text-red-400">−{item.deletions.toLocaleString()}</span>
+        </span>
+      )}
+      {decision && (
+        <Badge tone={decision.tone} dot>
+          {decision.label}
+        </Badge>
+      )}
+      {behind > 0 && (
+        <>
+          <span className="text-amber-700 dark:text-amber-400">base より {behind.toLocaleString()} commit 遅れています</span>
+          <Button
+            size="xs"
+            onClick={() =>
+              void run({
+                id: "update-branch",
+                op: "update-branch",
+                params: {},
+                summary: `${id} に base（${base}）を取り込む`,
+                done: "base を取り込みました。worktree には git pull で入ります",
+              })
+            }
+            disabled={busy !== undefined}
+            isLoading={busy === "update-branch"}
+            loadingText="取り込んでいます…"
+            title="Update branch：GitHub で base をこの Pull request のブランチにマージする"
+          >
+            base を取り込む
+          </Button>
+        </>
+      )}
+      {r.error && <span className="text-red-600 dark:text-red-400">（親と子・base との差を読めませんでした：{r.error}）</span>}
       {gone && (
-        <Alert tone="warning" action={moveTo}>
+        <Alert tone="warning" action={moveTo} className="w-full">
           base のブランチ <span className="font-mono">{base}</span> はもうありません。
           {parent?.state === "merged" && `親の #${parent.number} はマージされています。`}
           {open && !into && "上の「base を変える」から選び直してください。"}
         </Alert>
       )}
       {!gone && into && parent?.state === "merged" && (
-        <Alert action={moveTo}>
+        <Alert action={moveTo} className="w-full">
           親の #{parent.number} はマージされています。マージ先の <span className="font-mono">{into}</span> を base にできます。
         </Alert>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -151,4 +176,4 @@ function BasePicker({ current, head, first, disabled, onPick }: { current: strin
   );
 }
 
-export default { order: 36, kinds: ["pulls"], View: Base } satisfies ItemSection;
+export default { order: 36, kinds: ["pulls"], place: "row", View: Branches } satisfies ItemSection;
