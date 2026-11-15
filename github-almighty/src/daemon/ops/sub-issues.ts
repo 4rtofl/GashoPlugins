@@ -1,7 +1,7 @@
 // An issue's parent and its sub-issues, which `gh issue view --json` has no fields for: { repo, number, fresh? } →
 // SubIssues. One GraphQL query (1 point), read when the issue's screen shows, not in the background. GitHub lets an
 // issue have 100 sub-issues, so the first 100 are all of them.
-import { gh, maxAge } from "../core.ts";
+import { gh, itemRead } from "../core.ts";
 import { num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -60,6 +60,6 @@ export default {
   async run(p, ctx) {
     const repo = repoArg(p.repo);
     const number = numberArg(p.number);
-    return gh(`read the sub-issues of #${number}`, async () => parseSubIssues((await ctx.github.read(subIssuesQueryArgs(repo, number), { repo, maxAgeSeconds: maxAge(p) })).stdout), ctx);
+    return gh(`read the sub-issues of #${number}`, async () => parseSubIssues((await itemRead(ctx, repo, number, p)(subIssuesQueryArgs(repo, number))).stdout), ctx);
   },
 } satisfies Op;

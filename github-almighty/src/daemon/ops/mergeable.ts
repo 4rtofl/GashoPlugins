@@ -1,8 +1,8 @@
 // Whether a pull request can be merged now, how, and what keeps it from it: { repo, number, fresh? } → PullMerge.
 // One GraphQL query (1 point) reads the repository's merge settings with the pull request, as `gh pr view --json` has
 // neither those nor which checks the base branch requires.
-import { PluginError, type DaemonContext } from "@gasho/plugin-sdk/daemon";
-import { gh, maxAge } from "../core.ts";
+import { PluginError, type GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
+import { gh, itemRead, type ItemRead } from "../core.ts";
 import { login, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -156,9 +156,8 @@ export function parseMergeable(json: string): PullMerge | undefined {
 /** GitHub works out whether a pull request merges cleanly after it is first asked: one more read, a moment later. */
 const UNKNOWN_RETRY_MS = 2500;
 
-async function read(ctx: Pick<DaemonContext, "github">, repo: string, number: number, maxAgeSeconds: number): Promise<PullMerge | undefined> {
-  const { stdout } = await ctx.github.read(mergeableArgs(repo, number), { repo, maxAgeSeconds });
-  return parseMergeable(stdout);
+async function readMerge(read: ItemRead, repo: string, number: number, options?: GitHubReadOptions): Promise<PullMerge | undefined> {
+  return parseMergeable((await read(mergeableArgs(repo, number), options)).stdout);
 }
 
 export default {
@@ -169,10 +168,11 @@ export default {
     return gh(
       `read whether #${number} can be merged`,
       async () => {
-        let merge = await read(ctx, repo, number, maxAge(p));
+        const read = itemRead(ctx, repo, number, p);
+        let merge = await readMerge(read, repo, number);
         if (merge?.blockers.some((b) => b.kind === "unknown")) {
           await new Promise((resolve) => setTimeout(resolve, UNKNOWN_RETRY_MS));
-          merge = await read(ctx, repo, number, 0);
+          merge = await readMerge(read, repo, number, { maxAgeSeconds: 0 });
         }
         if (!merge) throw new PluginError("この番号の Pull request は見つかりません。");
         return merge;
