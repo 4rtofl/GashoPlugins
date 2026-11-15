@@ -206,9 +206,14 @@ export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
   // worktree was made is fetched, or the commits before it would be taken for the reviewer's.
   const oid = pr.head && /^[0-9a-f]{40}$/.test(pr.head) ? pr.head : undefined;
   const have = (o: string) => succeeds(git(exec, wt.path, ["cat-file", "-e", `${o}^{commit}`]));
-  if (oid && !(await have(oid))) await succeeds(git(exec, wt.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], { write: true, timeoutMs: 30_000 }));
+  const unfetched = oid && !(await have(oid))
+    ? await git(exec, wt.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], { write: true, timeoutMs: 30_000 }).then(() => undefined, gitWords)
+    : undefined;
   const head = oid && (await have(oid)) ? [oid] : [];
   const ahead = Number((await git(exec, wt.path, ["rev-list", "--count", "HEAD", "--not", "--remotes", ...head])).trim());
+  if (ahead > 0 && unfetched) {
+    throw new ReviewError(`Pull request #${pr.number} の head を取ってこられなかったので、${wt.path} の ${ahead} 個の commit が push 済みかを確かめられません。片付けません：${unfetched}`);
+  }
   if (ahead > 0) throw new ReviewError(`${wt.path} に、push していない commit が ${ahead} 個あるので、片付けません。`);
   await step("worktree を消すことが", git(exec, clone.path, ["worktree", "remove", wt.path], { write: true }));
   if (wt.branch) await step(`worktree は消しましたが、ローカルのブランチ ${wt.branch} を消すことが`, git(exec, clone.path, ["branch", "-D", wt.branch], { write: true }));

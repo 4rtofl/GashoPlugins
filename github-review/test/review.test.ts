@@ -133,6 +133,9 @@ test("remove: not while something would be lost; then the worktree and its local
   const old = await s.sha("refs/pull/7/head");
   const next = await git(origin, "commit-tree", await s.sha(`${old}^{tree}`), "-p", old, "-m", "more from the fork");
   await git(origin, "update-ref", "refs/pull/7/head", next);
+  await git(s.primary, "remote", "set-url", "origin", path.join(s.root, "nowhere.git"));
+  await assert.rejects(removeWorktree(exec, await s.clone(), { ...fork, head: next }), (e: unknown) => e instanceof ReviewError && /head を取ってこられなかった/.test(e.message));
+  await git(s.primary, "remote", "set-url", "origin", origin);
   assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...fork, head: next }), { path: forkDest });
 
   // Only review worktrees are removed: a worktree of the branch made by hand only opens.
