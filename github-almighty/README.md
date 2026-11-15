@@ -7,6 +7,7 @@ worktree の Issue（ブランチ名の番号）と Pull request（そのブラ�
 - 上の行の「Project」に、入っている Project（GitHub Projects）と項目の値を出す。Project に足したり外したり、単一選択・日付・数・文字の値を変えたりできる（イテレーションは出すだけ）。gh に `project` の権限が要り、無いときは `gh auth refresh -s project` で足すよう画面に出る
 - 会話は、本文・コメント・レビューと、ラベル・担当を付けた・外した、閉じた・開き直した・マージしたを、時刻の順に 1 本の線に並べる
 - 読み込み中は Skeleton、読めなかったときは Alert、操作の結果は Toast で出す。担当やラベルを外す・閉じるなど、元に戻せる操作は、Toast の「元に戻す」で取り消せる
+- 本文・コメント・レビューに、GitHub と同じ 8 種類のリアクションを付け外しできる。絵文字にポインターを置くと、付けた人を 10 人まで名前で出す
 - ここ 24 時間に開いた worktree を、設定 `refreshSeconds`（既定 60 秒、0 で止める）の間隔で裏でも読み直す。設定画面に、間隔ごとに GitHub の上限の半分に収まる worktree の数と、working server ごとのいまの点数を半円のゲージで出す
 - 裏の読み直しで増えたコメント・レビュー・終わったチェックの数を、Issue・Pull request のタブに出す（タブを開くと消える）。⌘K（Ctrl+K）で、いまの画面の操作と worktree の Issue・Pull request を探して実行できる。本文とコメントの #番号 にポインターを置くと、その題と状態が出る
 - 部品は easyui（easyui.site）のものを `src/web/ui/` に写し、Gasho の色に直した（framer-motion を同梱する）
