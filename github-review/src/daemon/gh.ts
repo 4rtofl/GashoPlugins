@@ -1,0 +1,191 @@
+// GitHub for github-review: one GraphQL query (gh api graphql, about 1 point of the hourly 5000) reads the page of a
+// working server: the open pull requests I am asked to review, those of the watched repositories, and those that have
+// a review worktree. The search words go into variables of the query, never into the query itself; GitHub's search
+// takes them as its list of pull requests does (author:, label:, …). Everything here only builds arguments and reads
+// output, so that it can be tested without gh.
+import type { CheckState, PrRow, PrState, ReviewState } from "../types.ts";
+
+/** Pull requests read per search. */
+export const SEARCH_LIMIT = 50;
+/** GitHub's search takes a query of up to 256 characters: the watched repositories go into as many searches as need be. */
+const QUERY_MAX = 256;
+
+const PR_FIELDS =
+  "number title url state isDraft createdAt headRefName headRefOid isCrossRepository repository { nameWithOwner } author { login } " +
+  "labels(first: 10) { nodes { name color } } reviewDecision totalCommentsCount statusCheckRollup { state }";
+const SEARCH_NODES = `issueCount nodes { ... on PullRequest { ${PR_FIELDS} } }`;
+
+/** GitHub sorts a search by best match: the list of pull requests puts the newest first. */
+const sorted = (words: string): string => (/(^|\s)sort:/.test(words) ? words : `${words} sort:created-desc`.trim());
+
+/** The search of the pull requests I am asked to review, in all of GitHub. */
+export const requestedQuery = (words: string): string => sorted(`is:pr review-requested:@me archived:false ${words}`.trim());
+
+/** The searches of the watched repositories' pull requests: as few as fit GitHub's limit on a query. */
+export function watchedQueries(repos: readonly string[], words: string): string[] {
+  const out: string[] = [];
+  let cur: string[] = [];
+  const query = (rs: string[]) => sorted(`is:pr ${rs.map((r) => `repo:${r}`).join(" ")} ${words}`.trim());
+  for (const r of repos) {
+    if (cur.length > 0 && query([...cur, r]).length > QUERY_MAX) {
+      out.push(query(cur));
+      cur = [];
+    }
+    cur.push(r);
+  }
+  if (cur.length > 0) out.push(query(cur));
+  return out;
+}
+
+/** The pull requests read by number: those with a review worktree. */
+export interface Lookup {
+  repo: string;
+  numbers: number[];
+}
+
+/** The gh arguments of the page's query. */
+export function listArgs(p: { requested: string; watched: string[]; lookups: Lookup[] }): string[] {
+  const decls: string[] = [];
+  const fields: string[] = [];
+  const vars: string[] = [];
+  const search = (alias: string, q: string) => {
+    decls.push(`$${alias}: String!`);
+    fields.push(`${alias}: search(query: $${alias}, type: ISSUE, first: ${SEARCH_LIMIT}) { ${SEARCH_NODES} }`);
+    vars.push("-f", `${alias}=${q}`);
+  };
+  search("req", p.requested);
+  p.watched.forEach((q, i) => search(`w${i}`, q));
+  p.lookups.forEach((l, i) => {
+    const [owner, name] = l.repo.split("/") as [string, string];
+    decls.push(`$o${i}: String!`, `$n${i}: String!`);
+    // The numbers go into the query itself (aliases p<number>), which only ever holds digits.
+    const prs = [...new Set(l.numbers)].map((n) => `p${n}: pullRequest(number: ${Math.trunc(n)}) { ${PR_FIELDS} }`);
+    fields.push(`l${i}: repository(owner: $o${i}, name: $n${i}) { ${prs.join(" ")} }`);
+    vars.push("-f", `o${i}=${owner}`, "-f", `n${i}=${name}`);
+  });
+  return ["api", "graphql", "-f", `query=query(${decls.join(", ")}) { ${fields.join(" ")} }`, ...vars];
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+const STATES: Record<string, PrState> = { OPEN: "open", CLOSED: "closed", MERGED: "merged" };
+const CHECKS: Record<string, CheckState> = { SUCCESS: "success", FAILURE: "failure", ERROR: "failure", PENDING: "pending", EXPECTED: "pending" };
+const REVIEWS: Record<string, ReviewState> = { APPROVED: "approved", CHANGES_REQUESTED: "changes_requested", REVIEW_REQUIRED: "review_required" };
+
+/** A pull request as the query reads it, with its head; undefined for anything else (an issue, a missing one). */
+export function parsePr(raw: unknown): (PrRow & { head?: string }) | undefined {
+  if (!isRecord(raw)) return undefined;
+  const repo = str((raw.repository as { nameWithOwner?: unknown } | null)?.nameWithOwner);
+  const url = str(raw.url);
+  const state = STATES[str(raw.state) ?? ""];
+  if (typeof raw.number !== "number" || typeof raw.title !== "string" || !repo || !url?.startsWith("https://github.com/") || !state || typeof raw.headRefName !== "string") {
+    return undefined;
+  }
+  const labels = (Array.isArray((raw.labels as { nodes?: unknown } | null)?.nodes) ? ((raw.labels as { nodes: unknown[] }).nodes as unknown[]) : []).flatMap((l) => {
+    const name = str((l as { name?: unknown } | null)?.name);
+    const color = str((l as { color?: unknown } | null)?.color);
+    return name ? [{ name, ...(color && /^[0-9a-f]{6}$/i.test(color) ? { color } : {}) }] : [];
+  });
+  const checks = CHECKS[str((raw.statusCheckRollup as { state?: unknown } | null)?.state) ?? ""];
+  const review = REVIEWS[str(raw.reviewDecision) ?? ""];
+  const author = str((raw.author as { login?: unknown } | null)?.login);
+  const head = str(raw.headRefOid);
+  return {
+    repo,
+    number: raw.number,
+    title: raw.title,
+    url,
+    state,
+    ...(raw.isDraft === true ? { draft: true } : {}),
+    ...(author ? { author } : {}),
+    ...(typeof raw.createdAt === "string" ? { createdAt: raw.createdAt } : {}),
+    labels,
+    ...(checks ? { checks } : {}),
+    ...(review ? { review } : {}),
+    comments: typeof raw.totalCommentsCount === "number" ? raw.totalCommentsCount : 0,
+    branch: raw.headRefName,
+    ...(raw.isCrossRepository === true ? { fork: true } : {}),
+    ...(head ? { head } : {}),
+  };
+}
+
+export type ParsedPr = NonNullable<ReturnType<typeof parsePr>>;
+
+export interface ListAnswer {
+  requested: { prs: ParsedPr[]; more: number };
+  watched: { prs: ParsedPr[]; more: number }[];
+  /** By lookup, the pull requests found. */
+  lookups: ParsedPr[][];
+  /** GitHub's words for what it could not answer (the rest is answered). */
+  errors: string[];
+}
+
+function searchResult(v: unknown): { prs: ParsedPr[]; more: number } | undefined {
+  if (!isRecord(v)) return undefined;
+  const nodes = Array.isArray(v.nodes) ? v.nodes : [];
+  const prs = nodes.flatMap((n) => {
+    const pr = parsePr(n);
+    return pr ? [pr] : [];
+  });
+  return { prs, more: Math.max(0, (typeof v.issueCount === "number" ? v.issueCount : 0) - nodes.length) };
+}
+
+/**
+ * The answer of listArgs' query. GitHub answers what it can and lists the rest in `errors` (a review-<number> folder
+ * whose number is no pull request, say); gh then fails, with the answer on its output.
+ */
+export function parseList(json: string, p: { watched: number; lookups: Lookup[] }): ListAnswer {
+  const body = JSON.parse(json) as { data?: Record<string, unknown> | null; errors?: unknown };
+  const data = body.data ?? {};
+  const errors = (Array.isArray(body.errors) ? body.errors : []).flatMap((e) => {
+    const m = str((e as { message?: unknown } | null)?.message);
+    return m ? [m.slice(0, 300)] : [];
+  });
+  return {
+    requested: searchResult(data.req) ?? { prs: [], more: 0 },
+    watched: Array.from({ length: p.watched }, (_, i) => searchResult(data[`w${i}`]) ?? { prs: [], more: 0 }),
+    lookups: p.lookups.map((l, i) => {
+      const repo = data[`l${i}`];
+      if (!isRecord(repo)) return [];
+      return [...new Set(l.numbers)].flatMap((n) => {
+        const pr = parsePr(repo[`p${n}`]);
+        return pr ? [pr] : [];
+      });
+    }),
+    errors: [...new Set(errors)],
+  };
+}
+
+/** Why a `gh` call failed, for the person looking at the page. */
+export function ghError(e: unknown): string {
+  const err = (e ?? {}) as { code?: unknown; stderr?: unknown; message?: unknown; killed?: unknown };
+  if (err.code === "ENOENT") {
+    return "この working server に GitHub CLI（gh）がありません。gh を入れて、gh auth login でログインしてください。";
+  }
+  if (err.killed === true) return "GitHub からの応答が遅く、読み込めませんでした。";
+  const text = [err.stderr, err.message].filter((t): t is string => typeof t === "string").join("\n");
+  if (/gh auth login|not logged in|authentication/i.test(text)) {
+    return "この working server の GitHub CLI（gh）がログインしていません。working server で gh auth login を実行してください。";
+  }
+  if (/Could not resolve to a PullRequest/i.test(text)) return "この番号の Pull request は見つかりません。";
+  if (/Could not resolve to a Repository|HTTP 404|not found/i.test(text)) {
+    return "GitHub でこのリポジトリを読めませんでした。gh でログインしているアカウントに権限がないか、リポジトリがありません。";
+  }
+  const first = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith("Command failed"));
+  return `GitHub から読み込めませんでした：${(first ?? "原因が分かりません").slice(0, 200)}`;
+}
+
+/** The query that reads one pull request's head before its worktree is made or removed. */
+export function headArgs(repo: string, number: number): string[] {
+  const [owner, name] = repo.split("/") as [string, string];
+  const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { pullRequest(number: ${Math.trunc(number)}) { ${PR_FIELDS} } } }`;
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`];
+}
+
+export function parseHead(json: string): ParsedPr | undefined {
+  return parsePr((JSON.parse(json) as { data?: { repository?: { pullRequest?: unknown } | null } | null }).data?.repository?.pullRequest);
+}

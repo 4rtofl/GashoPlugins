@@ -1,0 +1,28 @@
+{
+  "id": "github-review",
+  "name": "GitHub Review",
+  "version": "1.0.0",
+  "description": "レビューを頼まれた Pull request と、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
+  "genre": "workflow",
+  "api": "1.3",
+  "permissions": ["session.input", "session.launch"],
+  "web": { "js": "web.js", "css": "web.css" },
+  "daemon": { "js": "daemon.js" },
+  "methods": {
+    "options": { "kind": "read", "timeoutSeconds": 60 },
+    "list": { "kind": "read", "timeoutSeconds": 60 },
+    "watch": { "kind": "write", "timeoutSeconds": 60 },
+    "create": { "kind": "write", "timeoutSeconds": 120 },
+    "remove": { "kind": "write", "timeoutSeconds": 60 }
+  },
+  "settings": {
+    "templates": {
+      "type": "string",
+      "scope": "server",
+      "maxLength": 10000,
+      "default": "[{\"name\":\"レビューする\",\"body\":\"{url} の Pull request #{number}「{title}」をレビューしてください。ブランチは {branch} です。\"}]",
+      "label": "worktree を作ったセッションに送る指示のテンプレート（JSON）",
+      "description": "下の欄で足す・直す・消す。worktree を作るときに選ぶ。本文の {number}・{title}・{branch}・{url} は Pull request の値に置き換わる"
+    }
+  }
+}
