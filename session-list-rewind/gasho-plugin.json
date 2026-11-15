@@ -1,0 +1,9 @@
+{
+  "id": "session-list-rewind",
+  "name": "Session List Rewind",
+  "version": "1.0.0",
+  "description": "サイドバーに、worktree の行の代わりに、リポジトリごとのカテゴリに分けたセッションを並べる。カテゴリは畳め、カテゴリもセッションもドラッグで並べ替えられる。セッション画面の上のセッションのタブは隠す",
+  "genre": "appearance",
+  "api": "1.7",
+  "web": { "js": "web.js" }
+}

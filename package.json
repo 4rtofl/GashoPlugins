@@ -9,6 +9,7 @@
     "kanban",
     "pondering",
     "remote-control-shell",
+    "session-list-rewind",
     "usage"
   ],
   "scripts": {
