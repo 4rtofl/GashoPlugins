@@ -1,4 +1,4 @@
-// What the GitHub plugin reads with gh and shows: a repository's open issues or pull requests, and one of them with its
+// What the Git plugin reads with gh and shows: a repository's open issues or pull requests, and one of them with its
 // conversation. The daemon part (src/daemon) makes them, the web part (src/web) shows them.
 import type { GitHubRepo } from "@gasho/plugin-sdk";
 

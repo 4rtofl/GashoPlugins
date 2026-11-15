@@ -1,4 +1,4 @@
-// The panels of the GitHub plugin (moved here from Gasho's views/github-list.tsx and github-item.tsx): the open issues
+// The panels of the Git plugin (moved here from Gasho's views/github-list.tsx and github-item.tsx): the open issues
 // or pull requests of the session's repository, and one of them read in Gasho, with its conversation (comments and
 // reviews) and, for a pull request, its branches, size, checks and changed files. An item opens in place of the list
 // and goes back to it. Both read again whenever they are opened, as before (staleSeconds: 0).
