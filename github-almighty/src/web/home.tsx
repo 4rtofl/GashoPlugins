@@ -9,6 +9,7 @@ import { useWriteOp } from "./daemon.ts";
 import { AddBox } from "./home/add.tsx";
 import { NewIssueBox } from "./home/new-issue.tsx";
 import { NewPullBox } from "./home/new-pull.tsx";
+import { HomePalette } from "./palette.tsx";
 import { itemIcon, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
 import { Alert } from "./ui/alert.tsx";
 import { Badge, type BadgeTone } from "./ui/badge.tsx";
@@ -64,6 +65,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 px-4 py-5 md:px-6">
+      <HomePalette machine={machine.id} worktree={worktree} />
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold">Issue と Pull request</h2>

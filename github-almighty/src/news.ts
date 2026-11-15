@@ -1,0 +1,62 @@
+// What both parts of github-almighty share about an item's news: the latest comment, review and finished check its
+// screen showed while its tab was open (the marks), and what came after them, which the item's worktree tab counts.
+import type { GitHubItemDetail } from "./types.ts";
+
+/** The latest comment, review and finished check of an item that its screen showed (ISO 8601 each); absent: none. */
+export interface SeenMarks {
+  comment?: string;
+  review?: string;
+  check?: string;
+}
+
+/** What came after the marks. */
+export interface ItemNews {
+  comments: number;
+  reviews: number;
+  checks: number;
+}
+
+type Read = Pick<GitHubItemDetail, "comments" | "reviews" | "checksFinishedAt">;
+
+const KEYS = ["comment", "review", "check"] as const;
+
+// Marks come from a browser and from a file too.
+const time = (s: unknown): number => (typeof s === "string" ? Date.parse(s) : NaN);
+
+function latest(times: (string | undefined)[]): string | undefined {
+  let best: string | undefined;
+  for (const t of times) if (!Number.isNaN(time(t)) && (best === undefined || time(t) > time(best))) best = t;
+  return best;
+}
+
+export function marksOf(item: Read): SeenMarks {
+  const marks: SeenMarks = {
+    comment: latest((item.comments ?? []).map((c) => c.createdAt)),
+    review: latest((item.reviews ?? []).map((r) => r.submittedAt)),
+    check: latest(item.checksFinishedAt ?? []),
+  };
+  for (const k of KEYS) if (marks[k] === undefined) delete marks[k];
+  return marks;
+}
+
+/** The later of each mark: what a screen showed once stays seen, though a screen with an older read tells it after. */
+export function laterMarks(a: SeenMarks, b: SeenMarks): SeenMarks {
+  const marks: SeenMarks = {};
+  for (const k of KEYS) {
+    const m = latest([a[k], b[k]]);
+    if (m !== undefined) marks[k] = m;
+  }
+  return marks;
+}
+
+/** What the item has after the marks. A mark that is absent was none: then everything of its kind is new. */
+export function newsOf(item: Read, seen: SeenMarks): ItemNews {
+  const after = (mark: string | undefined) => (t: string) => !Number.isNaN(time(t)) && (mark === undefined || time(t) > time(mark));
+  return {
+    comments: (item.comments ?? []).map((c) => c.createdAt).filter(after(seen.comment)).length,
+    reviews: (item.reviews ?? []).map((r) => r.submittedAt).filter(after(seen.review)).length,
+    checks: (item.checksFinishedAt ?? []).filter(after(seen.check)).length,
+  };
+}
+
+export const newsCount = (n: ItemNews): number => n.comments + n.reviews + n.checks;
