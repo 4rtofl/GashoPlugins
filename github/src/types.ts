@@ -1,91 +1,186 @@
-// What the GitHub plugin reads with gh and shows: a repository's open issues or pull requests, and one of them with its
-// conversation. The daemon part (src/daemon) makes them, the web part (src/web) shows them.
+// What the GitHub plugin reads with gh and shows: a repository's Actions runs (and one run's jobs and steps), its
+// Projects (and one project as a board), and its Packages (and one package's versions). The daemon part (src/daemon)
+// makes them, the web part (src/web) shows them. Everything is read only.
 import type { GitHubRepo } from "@gasho/plugin-sdk";
 
 export type { GitHubRepo };
 
-/** Which list of a GitHub repository: its issues or its pull requests. */
-export type GitHubListKind = "issues" | "pulls";
-
-/** An open issue or pull request of the GitHub repository a session works in. */
-export interface GitHubItem {
-  number: number;
-  title: string;
-  url: string;
-  author?: string;
-  /** ISO 8601 */
-  createdAt: string;
-  updatedAt: string;
-  labels: { name: string; color?: string }[];
-  /** Pull requests: a draft, its branch and the branch it goes into, and the review's state. */
-  draft?: boolean;
-  head?: string;
-  base?: string;
-  review?: "approved" | "changes_requested" | "review_required";
+/** What gh's login lacks for a read, so that the screen can say how to add it. */
+export interface MissingScope {
+  scope: "read:project" | "read:packages";
+  /** The command that adds it (run on the working server). */
+  command: string;
 }
 
-/** The open issues or pull requests of a repository, newest first, as gasho-daemon read them with `gh`. */
-export interface GitHubList {
+// ---- Actions ----
+
+/** Where a run, a job or a step stands, in a few words. */
+export type RunState = "success" | "failure" | "cancelled" | "skipped" | "neutral" | "in_progress" | "queued" | "waiting";
+
+export interface Workflow {
+  id: number;
+  name: string;
+  /** .github/workflows/ci.yml */
+  path: string;
+  /** Disabled workflows are listed too (their old runs stay). */
+  active: boolean;
+}
+
+export interface Run {
+  id: number;
+  /** The workflow's run number (#25). */
+  number?: number;
+  workflow: string;
+  workflowId?: number;
+  title: string;
+  branch?: string;
+  event: string;
+  state: RunState;
+  attempt?: number;
+  /** ISO 8601 */
+  createdAt: string;
+  startedAt?: string;
+  /** When it last changed: for a finished run, when it finished. */
+  updatedAt?: string;
+  url: string;
+}
+
+export interface Runs {
   repo: GitHubRepo;
-  kind: GitHubListKind;
-  items: GitHubItem[];
-  /** More are open than were sent. */
+  workflows: Workflow[];
+  runs: Run[];
+  /** More runs match than were sent. */
   truncated: boolean;
 }
 
-/** A comment on an issue or pull request. Bodies are GitHub Markdown. */
-export interface GitHubComment {
-  author?: string;
-  /** ISO 8601 */
-  createdAt: string;
-  body: string;
-  url?: string;
-  /** Hidden on GitHub (spam, off-topic, …); its body is not sent. */
-  minimized?: boolean;
-}
-
-/** A review of a pull request. */
-export interface GitHubReview {
-  author?: string;
-  /** ISO 8601 */
-  submittedAt: string;
-  state: "approved" | "changes_requested" | "commented" | "dismissed" | "pending";
-  body: string;
-}
-
-/** A check or status of a pull request's latest commit (CI). */
-export interface GitHubCheck {
+export interface Step {
+  number: number;
   name: string;
-  state: "success" | "failure" | "pending" | "skipped" | "neutral" | "cancelled";
+  state: RunState;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface Job {
+  id: number;
+  name: string;
+  state: RunState;
+  startedAt?: string;
+  completedAt?: string;
+  url?: string;
+  steps: Step[];
+  /** A failed job: the end of its log (of the step that failed, when that can be told), without timestamps or colors. */
+  log?: string[];
+  /** Why the log could not be read. */
+  logError?: string;
+}
+
+export interface RunDetail extends Run {
+  jobs: Job[];
+}
+
+// ---- Projects ----
+
+export interface ProjectRef {
+  number: number;
+  title: string;
+  url: string;
+  closed: boolean;
+  shortDescription?: string;
+  updatedAt?: string;
+  items: number;
+}
+
+export interface Projects {
+  repo: GitHubRepo;
+  /** The projects linked to the repository. */
+  linked: ProjectRef[];
+  /** The other projects of the repository's owner. */
+  owner: ProjectRef[];
+  ownerLogin: string;
+  /** gh's login has no read:project: nothing could be read. */
+  missing?: MissingScope;
+}
+
+/** A single select field: what the board can make columns of. */
+export interface BoardField {
+  id: string;
+  name: string;
+  options: { id: string; name: string; color?: string }[];
+}
+
+export interface BoardItem {
+  id: string;
+  type: "issue" | "pull" | "draft" | "redacted";
+  title: string;
+  number?: number;
+  url?: string;
+  /** owner/name, when it is not the session's repository. */
+  repo?: string;
+  state?: "open" | "closed" | "merged" | "draft" | "not_planned";
+  assignees: string[];
+  /** The option chosen in each single select field (field id → option id). */
+  values: Record<string, string>;
+}
+
+export interface Board {
+  repo: GitHubRepo;
+  number: number;
+  title: string;
+  url: string;
+  closed: boolean;
+  shortDescription?: string;
+  fields: BoardField[];
+  /** The field the project's first board view makes its columns of (else "Status", else the first). */
+  defaultField?: string;
+  /** In the project's order; archived ones are left out. */
+  items: BoardItem[];
+  /** The project holds more items than were read. */
+  truncated: boolean;
+  missing?: MissingScope;
+}
+
+// ---- Packages ----
+
+export type PackageType = "npm" | "maven" | "rubygems" | "docker" | "nuget" | "container";
+
+export interface Package {
+  type: PackageType;
+  name: string;
+  visibility: string;
+  /** Absent for a user's packages (GitHub does not say). */
+  versions?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  url: string;
+}
+
+export interface Packages {
+  repo: GitHubRepo;
+  packages: Package[];
+  /** gh's login has no read:packages. */
+  missing?: MissingScope;
+  /** Kinds that could not be read, and why. */
+  errors?: string[];
+}
+
+export interface PackageVersion {
+  id: number;
+  /** The version (npm, maven, …) or the image's digest (container). */
+  name: string;
+  /** Containers: its tags. */
+  tags?: string[];
+  createdAt?: string;
   url?: string;
 }
 
-/** A file a pull request changes. */
-export interface GitHubFile {
-  path: string;
-  additions: number;
-  deletions: number;
-}
-
-/** One issue or pull request with its text and conversation, as gasho-daemon read it with `gh`. */
-export interface GitHubItemDetail extends GitHubItem {
-  kind: GitHubListKind;
-  state: "open" | "closed" | "merged";
-  /** Issues closed: whether as done or as not planned. */
-  stateReason?: "completed" | "not_planned";
-  closedAt?: string;
-  mergedAt?: string;
-  assignees: string[];
-  body: string;
-  /** Oldest first; when there are many, the latest ones (`commentsLeftOut` says how many older ones were left out). */
-  comments: GitHubComment[];
-  commentsLeftOut?: number;
-  /** Pull requests only. */
-  reviews?: GitHubReview[];
-  additions?: number;
-  deletions?: number;
-  changedFiles?: number;
-  files?: GitHubFile[];
-  commits?: number;
-  checks?: GitHubCheck[];
+export interface PackageDetail {
+  repo: GitHubRepo;
+  package: Package;
+  /** Newest first. */
+  versions: PackageVersion[];
+  truncated: boolean;
+  /** How to install the newest version (none for kinds whose command cannot be made from the name). */
+  install?: string;
+  missing?: MissingScope;
 }

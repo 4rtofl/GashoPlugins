@@ -19,8 +19,9 @@ export default {
       const state = STATE[str(r?.state)?.toUpperCase() ?? ""];
       const body = str(r?.body) ?? "";
       if (!submittedAt || !state || (state === "commented" && !body.trim())) return [];
+      const id = str(r?.id);
       const author = login(r?.author);
-      return [{ ...(author ? { author } : {}), submittedAt, state, body: clip(body) }];
+      return [{ ...(id ? { id } : {}), ...(author ? { author } : {}), submittedAt, state, body: clip(body) }];
     });
   },
 } satisfies DetailPart;

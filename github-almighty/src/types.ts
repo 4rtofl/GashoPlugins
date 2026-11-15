@@ -17,6 +17,8 @@ export interface ItemSummary {
   state: "open" | "closed" | "merged";
   /** Pull requests: still a draft. */
   draft?: boolean;
+  /** Issues closed: whether as done or as not planned. */
+  stateReason?: "completed" | "not_planned";
   url: string;
 }
 
@@ -55,6 +57,8 @@ export interface GitHubComment {
 
 /** A review of a pull request. */
 export interface GitHubReview {
+  /** The node id: what the conversation finds its reactions by (ops/comments.ts). */
+  id?: string;
   author?: string;
   /** ISO 8601 */
   submittedAt: string;

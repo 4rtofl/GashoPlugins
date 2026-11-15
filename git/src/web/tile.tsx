@@ -1,4 +1,4 @@
-// The GitHub tile of the home screen (moved here from Gasho's views/home.tsx): the open issues and pull requests of each
+// The GitHub tile of the home screen, from the Git plugin (moved here from Gasho's views/home.tsx): the open issues and pull requests of each
 // repository the sessions started from Gasho work in, read with gh on the working server. Each count opens the
 // session's panel with the list.
 import { CircleDot, FolderGit2, GitPullRequest } from "lucide-react";

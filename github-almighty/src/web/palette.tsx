@@ -1,16 +1,16 @@
 // ⌘K (Ctrl+K) on github-almighty's screens: a box that finds what the screen offers (its operations, the worktree's
 // issues and pull requests) by words of its name, and runs one with Enter or a click. Gasho has nothing of its own on
 // ⌘K, and one of the plugin's screens shows at a time, so the screen that shows listens for it on the window.
-import { ExternalLink, ListPlus, RefreshCw, Search, type LucideIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { ExternalLink, ListPlus, RefreshCw, Search } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ComponentType, type KeyboardEvent } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { GitHubKind, WorktreeItems } from "../types.ts";
-import { itemIcon, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
+import { itemLook, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
 
 export interface PaletteCommand {
   id: string;
   label: string;
-  icon?: LucideIcon;
+  icon?: ComponentType<{ className?: string }>;
   /** Shown at the right, and found by too: "Pull request", "タブ". */
   hint?: string;
   /** More words it is found by (its English name, …). */
@@ -167,7 +167,7 @@ export function useWorktreeCommands(machine: string, worktree: WorktreeInfo, cur
         (i): PaletteCommand => ({
           id: `open-${i.kind}-${i.number}`,
           label: `#${i.number} ${i.title}`,
-          icon: itemIcon(i),
+          icon: itemLook(i).ColoredIcon,
           hint: i.kind === "pulls" ? "Pull request" : "Issue",
           run: () => nav.openWorktreeView("item", { kind: i.kind, number: String(i.number) }),
         }),

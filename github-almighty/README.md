@@ -2,11 +2,12 @@
 
 worktree の Issue（ブランチ名の番号）と Pull request（そのブランチのもの、手で足したもの）を、セッションと並んだタブで読み、GitHub を開かずに操作する。gh は gasho-daemon の `ctx.github` で動かす。プラグインの API 1.5 に対応した Gasho が要る。
 
-- タブの行に、Issue と Pull request が 1 件ずつと、一覧と足す欄のある「GitHub」が並ぶ
+- タブの行に、Issue と Pull request が 1 件ずつと、一覧と足す欄のある「GitHub」が並ぶ。Issue と Pull request のタブのアイコンは、GitHub と同じ形と色で状態（Open・Draft・マージ済み・閉じた・対応しないで閉じた）を出す
 - 1 件の画面は、題と状態、上の行（閉じる・開き直す・Draft の切り替え、担当、ラベル、Pull request のブランチ）と、タブに分かれる。タブは「会話」「コミット」「チェック」「ファイル」で、Issue は「会話」だけ
 - 上の行の「Project」に、入っている Project（GitHub Projects）と項目の値を出す。Project に足したり外したり、単一選択・日付・数・文字の値を変えたりできる（イテレーションは出すだけ）。gh に `project` の権限が要り、無いときは `gh auth refresh -s project` で足すよう画面に出る
-- 会話は、本文・コメント・レビューと、ラベル・担当を付けた・外した、閉じた・開き直した・マージしたを、時刻の順に 1 本の線に並べる
+- 会話は、本文をいちばん上に、その下にコメント欄を置き、コメント・レビューと、ラベル・担当を付けた・外した、閉じた・開き直した・マージしたを、新しい順に並べる（GitHub の新しい Pull request の画面と同じ）。省いた古いコメントの件数は、いちばん下に出す
 - 読み込み中は Skeleton、読めなかったときは Alert、操作の結果は Toast で出す。担当やラベルを外す・閉じるなど、元に戻せる操作は、Toast の「元に戻す」で取り消せる
+- 本文・コメント・レビューに、GitHub と同じ 8 種類のリアクションを付け外しできる。絵文字にポインターを置くと、付けた人を 10 人まで名前で出す
 - ここ 24 時間に開いた worktree を、設定 `refreshSeconds`（既定 60 秒、0 で止める）の間隔で裏でも読み直す。設定画面に、間隔ごとに GitHub の上限の半分に収まる worktree の数と、working server ごとのいまの点数を半円のゲージで出す
 - 裏の読み直しで増えたコメント・レビュー・終わったチェックの数を、Issue・Pull request のタブに出す（タブを開くと消える）。⌘K（Ctrl+K）で、いまの画面の操作と worktree の Issue・Pull request を探して実行できる。本文とコメントの #番号 はリンクの色で出し、押すと GitHub で開く。ポインターを置くと、GitHub と同じカード（リポジトリと作られた日、題と番号、状態、本文の書き出し、ラベル、自分が担当・作成・コメントしたか）が出る
 - 部品は easyui（easyui.site）のものを `src/web/ui/` に写し、Gasho の色に直した（framer-motion を同梱する）
@@ -21,7 +22,7 @@ worktree の Issue（ブランチ名の番号）と Pull request（そのブラ�
 | 1 件の読み取り（`gh issue view` / `gh pr view --json`）に足す項目 | `src/daemon/detail/<名前>.ts` | `{ fields: { issues?, pulls? }, read(raw, item) }`。足す型は同じファイルで `declare module "../../types.ts"` に書く（`detail/commits.ts` が見本） |
 | 1 件の画面のタブ | `src/web/item/tabs/<名前>.tsx` | `ItemTab`（`src/web/item/parts.ts`） |
 | 題とタブのあいだの行 | `src/web/item/sections/<名前>.tsx` | `ItemSection` |
-| 会話の項目、会話の下に出すもの | `src/web/item/conversation/<名前>.tsx` | `ConversationPart`。`useEntries` は項目を返すフックで、`End` は線の下に出す部品 |
+| 会話の項目、本文の下に出すもの | `src/web/item/conversation/<名前>.tsx` | `ConversationPart`。`useEntries` は項目を返すフックで、`UnderBody` は本文の下（項目の上）に出す部品。項目の `pin` で、時刻によらずいちばん上か下に置ける |
 | 1 件の画面の ⌘K の操作 | `src/web/item/commands/<名前>.tsx` | `ItemCommands`（`src/web/item/palette.tsx`）。`useCommands` は、いま走らせられる操作を返すフック |
 | テスト | `test/<操作>.test.ts` | |
 

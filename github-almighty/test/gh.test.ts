@@ -44,7 +44,8 @@ test("the answer becomes the worktree's items, and numbers GitHub does not have 
             { __typename: "PullRequest", number: 35, title: "elsewhere", state: "OPEN", url: "javascript:alert(1)" },
           ],
         },
-        n30: { __typename: "Issue", number: 30, title: "タブの仕組み", state: "CLOSED", url: "https://github.com/4rtoflow/Gasho/issues/30" },
+        // The tab of an issue closed as not planned looks apart from one closed as done.
+        n30: { __typename: "Issue", number: 30, title: "タブの仕組み", state: "CLOSED", stateReason: "NOT_PLANNED", url: "https://github.com/4rtoflow/Gasho/issues/30" },
         n24: { __typename: "PullRequest", number: 24, title: "サイドバー", state: "MERGED", isDraft: false, url: "https://github.com/4rtoflow/Gasho/pull/24" },
         n99: null,
       },
@@ -52,7 +53,7 @@ test("the answer becomes the worktree's items, and numbers GitHub does not have 
     errors: [{ type: "NOT_FOUND", path: ["repository", "n99"] }],
   });
   assert.deepEqual(parseItems(json, 30, [24, 99], 1000), {
-    named: { kind: "issues", number: 30, title: "タブの仕組み", state: "closed", url: "https://github.com/4rtoflow/Gasho/issues/30" },
+    named: { kind: "issues", number: 30, title: "タブの仕組み", state: "closed", stateReason: "not_planned", url: "https://github.com/4rtoflow/Gasho/issues/30" },
     pulls: [{ kind: "pulls", number: 36, title: "タブを足す", state: "open", draft: true, url: "https://github.com/4rtoflow/Gasho/pull/36" }],
     added: [{ kind: "pulls", number: 24, title: "サイドバー", state: "merged", url: "https://github.com/4rtoflow/Gasho/pull/24" }],
     missing: [99],
