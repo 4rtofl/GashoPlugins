@@ -36,7 +36,8 @@ function useComments(): ConversationEntry[] {
     const authors = [...new Set(hidden.map((c) => c.author ?? "不明"))].join("、");
     entries.push({
       key: `bots-${first.url ?? first.createdAt}`,
-      at: first.createdAt,
+      // Where the run starts when read newest first.
+      at: (hidden.at(-1) ?? first).createdAt,
       icon: Bot,
       title: (
         <>
@@ -174,18 +175,16 @@ function useComments(): ConversationEntry[] {
   endHidden();
   const first = comments[0];
   if (item.commentsLeftOut && first) {
-    // Just before the oldest comment shown.
-    const at = new Date(new Date(first.createdAt).getTime() - 1).toISOString();
-    entries.unshift({ key: "left-out", at, icon: History, title: `古いコメント ${item.commentsLeftOut} 件は省いています。GitHub で読めます。` });
+    entries.push({ key: "left-out", at: first.createdAt, pin: "bottom", icon: History, title: `古いコメント ${item.commentsLeftOut} 件は省いています。GitHub で読めます。` });
   }
   return entries;
 }
 
-/** Below the timeline when the comments' ids and reactions could not be read: the comments themselves are still there. */
+/** Under the body when the comments' ids and reactions could not be read: the comments themselves are still there. */
 function MetaError() {
   const meta = useConversationMeta();
   if (!meta.error) return null;
   return <Alert tone="warning">リアクションと、コメントの編集・削除・bot を隠すのに使う情報を読めませんでした：{meta.error}</Alert>;
 }
 
-export default { order: 20, useEntries: useComments, End: MetaError } satisfies ConversationPart;
+export default { order: 20, useEntries: useComments, UnderBody: MetaError } satisfies ConversationPart;

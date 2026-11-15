@@ -1,4 +1,4 @@
-// ⌘K: another tab of the screen (コミット, チェック, …), and the box for a new comment at the end of the conversation.
+// ⌘K: another tab of the screen (コミット, チェック, …), and the box for a new comment under the body.
 import { MessageSquarePlus } from "lucide-react";
 import { usePluginState } from "@gasho/plugin-sdk";
 import type { PaletteCommand } from "../../palette.tsx";

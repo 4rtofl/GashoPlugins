@@ -57,11 +57,11 @@ function useEventEntries(): ConversationEntry[] {
   return (r.data ?? []).map((e, i) => ({ key: `event${i}`, at: e.at, ...look(e, item.kind), time: <RelativeTime at={e.at} now={now} /> }));
 }
 
-/** Below the timeline when the changes could not be read: the rest of the conversation is still there. */
+/** Under the body when the changes could not be read: the rest of the conversation is still there. */
 function EventsError() {
   const r = useEvents();
   if (!r.error) return null;
   return <Alert tone="warning">ラベル・担当・閉じた・開き直したの記録を読めませんでした：{r.error}</Alert>;
 }
 
-export default { order: 10, useEntries: useEventEntries, End: EventsError } satisfies ConversationPart;
+export default { order: 10, useEntries: useEventEntries, UnderBody: EventsError } satisfies ConversationPart;

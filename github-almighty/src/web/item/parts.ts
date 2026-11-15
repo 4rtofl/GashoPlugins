@@ -31,18 +31,20 @@ export interface ItemSection {
 
 /** An entry of the conversation's timeline, and when it happened. */
 export interface ConversationEntry extends TimelineEntry {
-  /** ISO 8601: the entries are shown oldest first. */
+  /** ISO 8601: the entries are shown newest first. */
   at: string;
+  /** Shown here whatever `at` says: "top" above the parts under the body (the body), "bottom" below every entry. */
+  pin?: "top" | "bottom";
 }
 
 /** What the conversation shows: a file of conversation/. */
 export interface ConversationPart {
-  /** Among entries of the same moment, and among the parts below the timeline: smaller first. */
+  /** Among entries of the same moment, and among the parts under the body: smaller first. */
   order: number;
   /** A React hook: the part's entries (it may read more with useRequest). */
   useEntries?: () => ConversationEntry[];
-  /** Below the timeline, such as the box for a new comment. */
-  End?: ComponentType;
+  /** Under the body, above the other entries, such as the box for a new comment. */
+  UnderBody?: ComponentType;
 }
 
 /** The default exports of a folder's files, smaller `order` first. */
