@@ -90,7 +90,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
       )}
       {!item && r.loading && <DetailSkeleton />}
       {item && where && (
-        <ItemProvider value={{ machine: machine.id, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision }}>
+        <ItemProvider value={{ machine: machine.id, machineInfo: machine, worktree, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision }}>
           <Detail />
           <ItemPalette worktree={worktree} />
         </ItemProvider>
