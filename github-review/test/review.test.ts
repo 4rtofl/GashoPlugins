@@ -126,6 +126,15 @@ test("remove: not while something would be lost; then the worktree and its local
   await assert.rejects(fs.lstat(dest));
   assert.equal(await git(s.primary, "branch", "--list", "feat/5-a"), "");
 
+  // A fork's pull request that got a commit after its worktree was made: the new head is fetched, and the commits before it count as pushed.
+  const fork = { number: 7, branch: "main", fork: true };
+  const { path: forkDest } = await createWorktree(exec, await s.clone(), fork);
+  const origin = path.join(s.root, "origin.git");
+  const old = await s.sha("refs/pull/7/head");
+  const next = await git(origin, "commit-tree", await s.sha(`${old}^{tree}`), "-p", old, "-m", "more from the fork");
+  await git(origin, "update-ref", "refs/pull/7/head", next);
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...fork, head: next }), { path: forkDest });
+
   // Only review worktrees are removed: a worktree of the branch made by hand only opens.
   await git(s.primary, "worktree", "add", path.join(s.root, "r", "issue-6"), "-b", "feat/6-b", "origin/feat/6-b");
   assert.deepEqual(prWorktree(await s.clone(), { number: 6, branch: "feat/6-b" }), { path: path.join(s.root, "r", "issue-6"), branch: "feat/6-b", review: false });

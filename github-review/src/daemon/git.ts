@@ -202,8 +202,12 @@ export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
   if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（review-${pr.number}）はありません。`);
   const changes = (await git(exec, wt.path, ["status", "--porcelain"])).split("\n").filter(Boolean).length;
   if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
-  // The pull request's head counts as pushed: its branch may be gone from origin once merged.
-  const head = pr.head && /^[0-9a-f]{40}$/.test(pr.head) && (await succeeds(git(exec, wt.path, ["cat-file", "-e", `${pr.head}^{commit}`]))) ? [pr.head] : [];
+  // The pull request's head counts as pushed: its branch may be gone from origin once merged. A head pushed after the
+  // worktree was made is fetched, or the commits before it would be taken for the reviewer's.
+  const oid = pr.head && /^[0-9a-f]{40}$/.test(pr.head) ? pr.head : undefined;
+  const have = (o: string) => succeeds(git(exec, wt.path, ["cat-file", "-e", `${o}^{commit}`]));
+  if (oid && !(await have(oid))) await succeeds(git(exec, wt.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], { write: true, timeoutMs: 30_000 }));
+  const head = oid && (await have(oid)) ? [oid] : [];
   const ahead = Number((await git(exec, wt.path, ["rev-list", "--count", "HEAD", "--not", "--remotes", ...head])).trim());
   if (ahead > 0) throw new ReviewError(`${wt.path} に、push していない commit が ${ahead} 個あるので、片付けません。`);
   await step("worktree を消すことが", git(exec, clone.path, ["worktree", "remove", wt.path], { write: true }));
