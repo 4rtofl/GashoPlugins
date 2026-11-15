@@ -7,6 +7,7 @@ import { itemIcon } from "../../tabs.ts";
 import { Breadcrumb, type BreadcrumbItem } from "../../ui/breadcrumb.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
+import { Row } from "../row.tsx";
 import { useStack, type StackPull } from "../stack.ts";
 
 type Pull = Pick<StackPull, "number" | "title" | "state" | "draft">;
@@ -51,11 +52,10 @@ function Stack() {
   if (s.children.length > 0) items.push(s.children.map((p) => crumb(p)));
 
   return (
-    <div className="flex items-start gap-1.5 text-xs">
-      <span className="w-10 shrink-0 pt-1.5 text-muted-foreground">親と子</span>
+    <Row label="親と子">
       <Breadcrumb label={`#${item.number} の親と子の Pull request`} items={items} className="-ml-2 min-w-0 flex-1" />
-    </div>
+    </Row>
   );
 }
 
-export default { order: 33, kinds: ["pulls"], View: Stack } satisfies ItemSection;
+export default { order: 33, kinds: ["pulls"], place: "row", View: Stack } satisfies ItemSection;

@@ -14,6 +14,7 @@ import { Skeleton } from "../../ui/skeleton.tsx";
 import { useAfterChange, useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 import { Picker } from "../picker.tsx";
+import { Row } from "../row.tsx";
 
 /** GitHub's colors of a single select's options. */
 const COLORS: Record<string, string> = { GRAY: "#8c959f", BLUE: "#218bff", GREEN: "#2da44e", YELLOW: "#d4a72c", ORANGE: "#e16f24", RED: "#fa4549", PINK: "#e85aad", PURPLE: "#a475f9" };
@@ -48,9 +49,8 @@ function Projects() {
       undo: { op: "project", params: { action: "remove", projectId: p.id, contentId }, summary: `#${where.number} を Project「${p.title}」から外す` },
     });
   return (
-    <div className="flex items-start gap-1.5 text-xs">
-      <span className="w-10 shrink-0 py-1.5 text-muted-foreground">Project</span>
-      <div className="min-w-0 flex-1 space-y-1.5">
+    <Row label="Project">
+      <div className="w-full min-w-0 space-y-1.5">
         {read?.items.map((i) => (
           <ProjectBox key={i.id} entry={i} contentId={read.contentId} />
         ))}
@@ -82,7 +82,7 @@ function Projects() {
           )}
         </div>
       </div>
-    </div>
+    </Row>
   );
 }
 
@@ -267,4 +267,4 @@ function ValueBox({ field, onSave }: { field: ProjectField; onSave: (to: Project
   );
 }
 
-export default { order: 35, kinds: ["issues", "pulls"], View: Projects } satisfies ItemSection;
+export default { order: 35, kinds: ["issues", "pulls"], place: "row", View: Projects } satisfies ItemSection;

@@ -21,11 +21,16 @@ export interface ItemTab {
   View: ComponentType;
 }
 
-/** A row between the title and the tabs: a file of sections/. */
+/** A part between the title and the tabs: a file of sections/. */
 export interface ItemSection {
-  /** Smaller higher. */
+  /** Smaller higher (among the actions, further left). */
   order: number;
   kinds: GitHubKind[];
+  /**
+   * "actions": buttons at the end of the line of the state. "row": Rows (row.tsx) of the list under that line, whose
+   * labels share a column. Neither: a block of its own under the list.
+   */
+  place?: "actions" | "row";
   View: ComponentType;
 }
 
