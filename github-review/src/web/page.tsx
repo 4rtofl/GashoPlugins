@@ -164,14 +164,14 @@ export function ReviewPage(_: PageProps) {
       ))}
       <Page
         title="レビュー"
-        description="レビューを頼まれた Pull request と、見る repo の Pull request。worktree を作ると、その中でセッションを起動して開きます。"
+        description="レビューを頼まれた Pull request と、対象リポジトリの Pull request。worktree を作ると、その中でセッションを起動して開きます。"
         actions={
           <div className="flex flex-wrap gap-2">
             <Button size="sm" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
-              見る repo
+              対象リポジトリ
             </Button>
-            <Button size="sm" leftIcon={<RefreshCw />} isLoading={refreshing} loadingText="読み直し中…" disabled={ready.length === 0} onClick={() => setFreshAsk((n) => n + 1)}>
-              読み直す
+            <Button size="sm" leftIcon={<RefreshCw />} isLoading={refreshing} loadingText="更新中…" disabled={ready.length === 0} onClick={() => setFreshAsk((n) => n + 1)}>
+              更新
             </Button>
           </div>
         }
@@ -183,7 +183,6 @@ export function ReviewPage(_: PageProps) {
                 e.preventDefault();
                 search();
               }}
-              className="space-y-1.5"
             >
               <div className="flex gap-2">
                 <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm transition-colors focus-within:border-border-hover">
@@ -198,11 +197,8 @@ export function ReviewPage(_: PageProps) {
                     spellCheck={false}
                   />
                 </label>
-                <Button type="submit" size="md" className="h-9">
-                  探す
-                </Button>
+                <Button type="submit" size="md" className="h-9 w-9 px-0" leftIcon={<Search />} aria-label="検索" title="検索" />
               </div>
-              <p className="text-[11px] text-muted-foreground">GitHub の Pull request の一覧と同じ書き方（is:・author:・label: など）で、上と下の段を絞り込みます。</p>
             </form>
 
             {ready.length === 0 && (
@@ -239,12 +235,12 @@ export function ReviewPage(_: PageProps) {
               )}
             </Section>
 
-            <Section title="見る repo の Pull request" count={page.groups.reduce((n, g) => n + g.items.length, 0)} more={page.watchedMore} loading={pending && page.groups.length === 0}>
+            <Section title="対象リポジトリの Pull request" count={page.groups.reduce((n, g) => n + g.items.length, 0)} more={page.watchedMore} loading={pending && page.groups.length === 0}>
               {watched === 0 && page.groups.length === 0 && !pending ? (
                 <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border px-4 py-5">
-                  <p className="text-sm text-muted-foreground">見る repo を選ぶと、その repo の Pull request をここに出します。</p>
+                  <p className="text-sm text-muted-foreground">対象リポジトリを選ぶと、そのリポジトリの Pull request をここに出します。</p>
                   <Button size="sm" variant="primary" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
-                    見る repo を選ぶ
+                    対象リポジトリを選ぶ
                   </Button>
                 </div>
               ) : (
@@ -253,9 +249,9 @@ export function ReviewPage(_: PageProps) {
                     <div key={g.repo} className="space-y-1.5">
                       <h3 className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
                         {g.repo}
-                        {!g.watched && <span className="font-normal text-muted-foreground">見る repo ではありませんが、レビュー用の worktree があります</span>}
+                        {!g.watched && <span className="font-normal text-muted-foreground">対象リポジトリではありませんが、レビュー用の worktree があります</span>}
                       </h3>
-                      {g.items.length === 0 ? <Empty>検索の語に合う Pull request はありません。</Empty> : <Rows items={g.items} now={now} />}
+                      {g.items.length === 0 ? <Empty>検索の語に合う Pull request はありません。</Empty> : <Rows items={g.items} now={now} fresh />}
                     </div>
                   ))}
                 </div>
@@ -311,11 +307,12 @@ function Section({ title, count, more, loading, children }: { title: string; cou
   );
 }
 
-function Rows({ items, now, showRepo }: { items: Item[]; now: number; showRepo?: boolean }) {
+/** `fresh`: a worktree there gets a new session ("新たにセッションを作成する") instead of opening the one used last. */
+function Rows({ items, now, showRepo, fresh }: { items: Item[]; now: number; showRepo?: boolean; fresh?: boolean }) {
   return (
     <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
       {items.map((item) => (
-        <PrItemRow key={item.pr.url} item={item} now={now} showRepo={showRepo} />
+        <PrItemRow key={item.pr.url} item={item} now={now} showRepo={showRepo} fresh={fresh} />
       ))}
     </ul>
   );

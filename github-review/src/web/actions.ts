@@ -1,6 +1,6 @@
 // What the buttons of a pull request's row do: make its review worktree on a working server, start a session there,
-// send the chosen template and open the session; open the worktree it has (its Gasho session, or one started there);
-// and remove its review worktree. The daemon part does the git; the page asks the person before trusting a folder and
+// send the chosen template and open the session; open the worktree it has (its Gasho session, or one started there), or
+// start a new session there and open it; and remove its review worktree. The daemon part does the git; the page asks the person before trusting a folder and
 // before removing.
 import { relativeTime, type MachineInfo, type Navigation, type SessionInfo, type useCall, type useLaunchSession, type useSendInput } from "@gasho/plugin-sdk";
 import type { Item as AnyItem, Spot as AnySpot } from "../items.ts";
@@ -109,6 +109,15 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
 /** Opens the worktree a pull request has on a working server. */
 export async function openWorktree(spot: Spot, t: Tools): Promise<void> {
   if (spot.worktree) await openIn(spot.machine, spot.worktree.path, t);
+}
+
+/** Starts a new session in the worktree a pull request has on a working server (not the one used last), and opens it. */
+export async function newSessionIn(spot: Spot, t: Tools): Promise<void> {
+  if (!spot.worktree) return;
+  const sessionId = await start(spot.machine, spot.worktree.path, t);
+  if (!sessionId) return;
+  t.actions.notify(undefined);
+  t.nav.openSession(spot.machine.id, sessionId);
 }
 
 /** Removes a pull request's review worktree and its local branch, once the person agrees. */

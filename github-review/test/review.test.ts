@@ -213,7 +213,7 @@ test("template: the placeholders become the pull request's, once; a setting that
   assert.deepEqual(parseTemplates('{"name":"A","body":"x"}'), []);
 });
 
-test("page: a pull request listed by several working servers shows once, with where it is on each", () => {
+test("page: a pull request listed by several working servers shows once, with where it is on each; one without a clone anywhere is left out", () => {
   const row = (number: number, over: Partial<PrRow> = {}): PrRow => ({
     repo: "o/r",
     number,
@@ -227,7 +227,7 @@ test("page: a pull request listed by several working servers shows once, with wh
   });
   const a: Listing = {
     watched: ["/a/r"],
-    requested: [row(1, { place: { primary: "/a/r" } })],
+    requested: [row(1, { place: { primary: "/a/r" } }), row(4, { repo: "x/y" })],
     repos: [{ repo: "o/r", watched: true, prs: [row(1, { place: { primary: "/a/r" } }), row(2)] }],
     errors: [],
   };
@@ -248,7 +248,7 @@ test("page: a pull request listed by several working servers shows once, with wh
   );
   assert.deepEqual(
     page.groups.map((g) => [g.repo, g.watched, g.items.map((i) => [i.pr.number, i.spots.length])]),
-    [["o/r", true, [[1, 2], [2, 0], [3, 1]]]],
+    [["o/r", true, [[1, 2], [3, 1]]]],
   );
   assert.equal("place" in (page.requested[0]?.pr ?? {}), false);
   assert.equal(page.requestedMore, 4);

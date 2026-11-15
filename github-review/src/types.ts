@@ -61,7 +61,7 @@ export interface PrRow {
 export interface RepoPrs {
   /** OWNER/REPO */
   repo: string;
-  /** Watched ("見る repo"); otherwise it is here for the review worktrees of its pull requests. */
+  /** Watched ("対象リポジトリ"); otherwise it is here for the review worktrees of its pull requests. */
   watched: boolean;
   prs: PrRow[];
 }
