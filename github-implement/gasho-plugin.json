@@ -1,10 +1,11 @@
 {
   "id": "github-implement",
   "name": "GitHub Implement",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "worktree の Issue と Pull request を、セッションと並んだタブで読み、assign・コメント・本文の変更などの操作をする（working server の gh を使う）",
   "genre": "integration",
-  "api": "1.5",
+  "api": "1.10",
+  "permissions": ["worktree.remove"],
   "web": {
     "js": "web.js",
     "css": "web.css"
