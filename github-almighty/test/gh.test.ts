@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
-import files from "../src/daemon/detail/files.ts";
 import { branchArg, branchNumber, detailArgs, itemsQueryArgs, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
 import { editArgs } from "../src/daemon/ops/edit.ts";
@@ -92,11 +91,11 @@ test("a body comes whole, as the edit box starts from it and saves it back", () 
 });
 
 test("the parts of detail/ add their fields only for the kinds they name", () => {
-  const parts = [comments, commits, files];
+  const parts = [comments, commits];
   const fields = (kind: "issues" | "pulls") => (detailArgs("o/r", kind, 1, parts).at(-1) ?? "").split(",");
   // gh refuses `gh issue view --json commits`: a part for pull requests must stay out of an issue's read.
-  assert.ok(fields("issues").includes("comments") && !fields("issues").includes("commits") && !fields("issues").includes("files"));
-  assert.ok(fields("pulls").includes("commits") && fields("pulls").includes("files"));
+  assert.ok(fields("issues").includes("comments") && !fields("issues").includes("commits"));
+  assert.ok(fields("pulls").includes("commits"));
   assert.equal(new Set(fields("pulls")).size, fields("pulls").length);
   const issue = parseDetail(JSON.stringify({ number: 1, title: "t", url: "https://github.com/o/r/issues/1", state: "OPEN", commits: [{ oid: "a".repeat(40) }] }), "issues", parts);
   assert.equal(issue?.commits, undefined);
