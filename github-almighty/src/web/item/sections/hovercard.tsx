@@ -7,8 +7,8 @@ import { useRequest } from "@gasho/plugin-sdk";
 import type { ItemSummary } from "../../../types.ts";
 import { readOp } from "../../daemon.ts";
 import { refAt } from "../../refs.ts";
-import { itemIcon } from "../../tabs.ts";
-import { Badge, type BadgeTone } from "../../ui/badge.tsx";
+import { itemLook } from "../../tabs.ts";
+import { Badge } from "../../ui/badge.tsx";
 import { SkeletonText } from "../../ui/skeleton.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
@@ -54,31 +54,23 @@ function hoveredAt(scope: HTMLElement, x: number, y: number): Hovered | undefine
   return rect ? { number: ref.number, rect } : undefined;
 }
 
-/** An item's state, as GitHub colors it. */
-function look(i: ItemSummary): [string, BadgeTone] {
-  if (i.state === "merged") return ["Merged", "merged"];
-  if (i.state === "closed") return ["Closed", i.kind === "pulls" ? "danger" : "merged"];
-  return i.draft ? ["Draft", "neutral"] : ["Open", "success"];
-}
-
 function Card({ machine, repo, at }: { machine: string; repo: string; at: Hovered }) {
   const r = useRequest<ItemSummary | null>(readOp(machine, "summary", { repo, number: at.number }), { staleSeconds: 300 });
   const s = r.data;
-  const Icon = s ? itemIcon(s) : undefined;
-  const [state, tone] = s ? look(s) : [];
+  const look = s ? itemLook(s) : undefined;
   // Below the #number, or above it when the window's bottom is near; within the window's width.
   const left = Math.max(8, Math.min(at.rect.left, window.innerWidth - WIDTH - 8));
   const place = at.rect.bottom + 110 < window.innerHeight ? { top: at.rect.bottom + 6 } : { bottom: window.innerHeight - at.rect.top + 6 };
   return (
     <div role="tooltip" style={{ left, width: WIDTH, ...place }} className="pointer-events-none fixed z-[90] rounded-lg border border-border bg-surface p-3 text-xs shadow-lg">
-      {s && Icon ? (
+      {s && look ? (
         <div className="flex gap-2.5">
-          <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <look.ColoredIcon className="mt-0.5 size-4 shrink-0" />
           <div className="min-w-0 flex-1 space-y-1.5">
             <p className="text-sm leading-snug font-medium break-words text-foreground">{s.title}</p>
             <p className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
-              <Badge tone={tone} className="h-5 px-2">
-                {state}
+              <Badge tone={look.tone} className="h-5 px-2">
+                {look.label}
               </Badge>
               <span className="tabular-nums">#{s.number}</span> · {s.kind === "pulls" ? "Pull request" : "Issue"}
             </p>

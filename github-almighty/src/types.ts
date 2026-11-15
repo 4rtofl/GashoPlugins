@@ -17,6 +17,8 @@ export interface ItemSummary {
   state: "open" | "closed" | "merged";
   /** Pull requests: still a draft. */
   draft?: boolean;
+  /** Issues closed: whether as done or as not planned. */
+  stateReason?: "completed" | "not_planned";
   url: string;
 }
 

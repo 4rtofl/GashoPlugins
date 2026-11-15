@@ -5,7 +5,7 @@ import { cn, useRequest } from "@gasho/plugin-sdk";
 import type { ItemSummary } from "../../types.ts";
 import { readOp } from "../daemon.ts";
 import { numberFrom } from "../number.ts";
-import { itemIcon } from "../tabs.ts";
+import { itemLook } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
 import { Button } from "../ui/button.tsx";
 
@@ -84,7 +84,7 @@ export function AddBox({ machine, repo, has, busy, adding, onAdd }: { machine: s
           {results?.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">題に「{words}」がある Issue や Pull request はありません。</p>}
           <ul id={list} role="listbox" aria-label={`題に「${words}」がある Issue と Pull request`} className="divide-y divide-border">
             {results?.map((i) => {
-              const Icon = itemIcon(i);
+              const { ColoredIcon } = itemLook(i);
               const there = has.has(i.number);
               return (
                 <li
@@ -97,7 +97,7 @@ export function AddBox({ machine, repo, has, busy, adding, onAdd }: { machine: s
                   onClick={() => !there && !busy && void add(i.number)}
                   className={cn("flex items-center gap-2 px-3 py-2 text-sm", there ? "text-muted-foreground" : "cursor-pointer", i === choice && "bg-surface-raised")}
                 >
-                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  <ColoredIcon className="size-4 shrink-0" />
                   <span className="shrink-0 text-xs text-muted-foreground tabular-nums">#{i.number}</span>
                   <span className="min-w-0 flex-1 truncate">{i.title}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{there ? "足してあります" : i.kind === "pulls" ? "Pull request" : "Issue"}</span>

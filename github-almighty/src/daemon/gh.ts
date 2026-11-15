@@ -100,7 +100,7 @@ export function branchNumber(branch: string | undefined): number | undefined {
   return Number.isInteger(n) && n >= 1 && n <= 1e9 ? n : undefined;
 }
 
-export const SUMMARY = "__typename ... on Issue { number title state url } ... on PullRequest { number title state isDraft url }";
+export const SUMMARY = "__typename ... on Issue { number title state stateReason url } ... on PullRequest { number title state isDraft url }";
 const PULL_SUMMARY = "__typename number title state isDraft url";
 
 /**
@@ -125,12 +125,15 @@ export function summary(raw: unknown): ItemSummary | undefined {
   if (number === undefined || title === undefined || !url?.startsWith("https://github.com/")) return undefined;
   const kind: GitHubKind = r.__typename === "PullRequest" ? "pulls" : "issues";
   const state = str(r.state)?.toUpperCase();
+  const reason = str(r.stateReason)?.toUpperCase();
   return {
     kind,
     number,
     title,
     state: state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : "open",
     ...(kind === "pulls" && r.isDraft === true ? { draft: true } : {}),
+    ...(kind === "issues" && state === "CLOSED" && reason === "NOT_PLANNED" ? { stateReason: "not_planned" as const } : {}),
+    ...(kind === "issues" && state === "CLOSED" && reason === "COMPLETED" ? { stateReason: "completed" as const } : {}),
     url,
   };
 }
