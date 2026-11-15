@@ -8,16 +8,19 @@ export interface TextRef {
   number: number;
 }
 
-/** The #number that the place `offset` of `text` is in or at the edge of. */
-export function refAt(text: string, offset: number): TextRef | undefined {
+/** Every #number of `text`, in order. */
+export function refsIn(text: string): TextRef[] {
+  const refs: TextRef[] = [];
   for (const m of text.matchAll(/#(\d{1,9})(?![\w])/g)) {
     const start = m.index;
-    const end = start + m[0].length;
-    if (offset < start) return undefined;
-    if (offset > end) continue;
-    if (start > 0 && /[\w/&#@.-]/.test(text[start - 1] ?? "")) return undefined;
+    if (start > 0 && /[\w/&#@.-]/.test(text[start - 1] ?? "")) continue;
     const number = Number(m[1]);
-    return number >= 1 ? { start, end, number } : undefined;
+    if (number >= 1) refs.push({ start, end: start + m[0].length, number });
   }
-  return undefined;
+  return refs;
+}
+
+/** The #number that the place `offset` of `text` is in or at the edge of. */
+export function refAt(text: string, offset: number): TextRef | undefined {
+  return refsIn(text).find((r) => offset >= r.start && offset <= r.end);
 }

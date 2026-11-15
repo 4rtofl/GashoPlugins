@@ -7,9 +7,8 @@ import { useState } from "react";
 import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
 import { readOp } from "../daemon.ts";
-import { itemLook, itemsTarget, useRefreshOptions } from "../tabs.ts";
+import { itemsTarget, useRefreshOptions } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
-import { Badge } from "../ui/badge.tsx";
 import { Button, buttonClass } from "../ui/button.tsx";
 import { INPUT } from "../ui/input.ts";
 import { Skeleton, SkeletonText } from "../ui/skeleton.tsx";
@@ -18,6 +17,7 @@ import { ToastProvider } from "../ui/toast.tsx";
 import { ItemProvider, useChanges, useItem, type Where } from "./context.tsx";
 import { ItemPalette } from "./palette.tsx";
 import { partsOf, type ItemSection, type ItemTab } from "./parts.ts";
+import { StateBadge } from "./state-badge.tsx";
 
 const TABS = partsOf(import.meta.glob<{ default: ItemTab }>("./tabs/*.tsx", { eager: true }));
 const SECTIONS = partsOf(import.meta.glob<{ default: ItemSection }>("./sections/*.tsx", { eager: true }));
@@ -190,14 +190,5 @@ function Title() {
         </Button>
       </div>
     </div>
-  );
-}
-
-function StateBadge({ item }: { item: GitHubItemDetail }) {
-  const { Icon, label, tone } = itemLook(item);
-  return (
-    <Badge tone={tone} icon={<Icon />}>
-      {label}
-    </Badge>
   );
 }

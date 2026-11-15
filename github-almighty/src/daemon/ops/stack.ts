@@ -2,7 +2,7 @@
 // { repo, number, head, base, fresh? } → PullStack. The screen gives the head and base it read (GitHubItemDetail), so
 // that it is one GraphQL query (1 point), read when a pull request's screen shows, not in the background.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import { gh, maxAge } from "../core.ts";
+import { gh, maxAge, readAllowingNotFound } from "../core.ts";
 import { branchArg, num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -136,18 +136,8 @@ export default {
     if (!head || !base) throw new PluginError("Pull request のブランチの指定が正しくありません。");
     return gh(
       `read the stack of #${number}`,
-      async () => {
-        let stdout: string;
-        try {
-          stdout = (await ctx.github.read(stackQueryArgs(repo, number, head, base), { repo, maxAgeSeconds: maxAge(p) })).stdout;
-        } catch (e) {
-          // A head GitHub cannot compare (deleted, or in a fork) fails the query, with the rest of the answer on stdout.
-          const out = (e as { stdout?: unknown })?.stdout;
-          if (typeof out !== "string" || !out.includes('"NOT_FOUND"') || !out.includes('"data"')) throw e;
-          stdout = out;
-        }
-        return parseStack(stdout, number, base);
-      },
+      // A head GitHub cannot compare (deleted, or in a fork) is NOT_FOUND.
+      async () => parseStack(await readAllowingNotFound(ctx, stackQueryArgs(repo, number, head, base), { repo, maxAgeSeconds: maxAge(p) }), number, base),
       ctx,
     );
   },
