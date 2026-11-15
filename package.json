@@ -6,6 +6,7 @@
   "workspaces": [
     "ayu-dark",
     "git",
+    "github",
     "github-almighty",
     "kanban",
     "pondering",

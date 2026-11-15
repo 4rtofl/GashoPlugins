@@ -1,0 +1,172 @@
+﻿2026-11-14T19:31:03.2787180Z Current runner version: '2.338.2'
+2026-11-14T19:31:05.1202084Z ##[group]Run npm ci
+2026-11-14T19:31:05.1203050Z [36;1mnpm ci[0m
+2026-11-14T19:31:05.1259598Z shell: /usr/bin/bash -e {0}
+2026-11-14T19:31:05.1260581Z env:
+2026-11-14T19:31:05.1261530Z   NPM_CONFIG_USERCONFIG: /home/runner/work/_temp/.npmrc
+2026-11-14T19:31:05.1270691Z   NODE_AUTH_TOKEN: ***
+2026-11-14T19:31:05.1271598Z ##[endgroup]
+2026-11-14T19:31:05.5848239Z npm warn Unknown user config "always-auth". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+2026-11-14T19:31:08.3516477Z 
+2026-11-14T19:31:08.3517703Z added 127 packages, and audited 140 packages in 3s
+2026-11-14T19:31:08.3519025Z 
+2026-11-14T19:31:08.3519582Z 11 packages are looking for funding
+2026-11-14T19:31:08.3520055Z   run `npm fund` for details
+2026-11-14T19:31:08.3523674Z 
+2026-11-14T19:31:08.3523911Z found 0 vulnerabilities
+2026-11-14T19:31:08.4011791Z ##[group]Run npm run typecheck
+2026-11-14T19:31:08.4012106Z [36;1mnpm run typecheck[0m
+2026-11-14T19:31:08.4060110Z shell: /usr/bin/bash -e {0}
+2026-11-14T19:31:08.4060378Z env:
+2026-11-14T19:31:08.4060647Z   NPM_CONFIG_USERCONFIG: /home/runner/work/_temp/.npmrc
+2026-11-14T19:31:08.4060981Z   NODE_AUTH_TOKEN: XXXXX-XXXXX-XXXXX-XXXXX
+2026-11-14T19:31:08.4061244Z ##[endgroup]
+2026-11-14T19:31:08.4798987Z npm warn Unknown user config "always-auth". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+2026-11-14T19:31:08.4898521Z 
+2026-11-14T19:31:08.4898957Z > typecheck
+2026-11-14T19:31:08.4899520Z > npm run typecheck --workspaces && tsc -p scripts
+2026-11-14T19:31:08.4899765Z 
+2026-11-14T19:31:08.5618808Z npm warn Unknown user config "always-auth". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+2026-11-14T19:31:08.5874301Z 
+2026-11-14T19:31:08.5874690Z > typecheck
+2026-11-14T19:31:08.5875121Z > tsc -p tsconfig.json
+2026-11-14T19:31:08.5875310Z 
+2026-11-14T19:31:08.8133668Z 
+2026-11-14T19:31:08.8134167Z > typecheck
+2026-11-14T19:31:08.8134554Z > tsc -p tsconfig.json
+2026-11-14T19:31:08.8134755Z 
+2026-11-14T19:31:09.0587168Z 
+2026-11-14T19:31:09.0587811Z > typecheck
+2026-11-14T19:31:09.0588148Z > tsc -p tsconfig.json
+2026-11-14T19:31:09.0588304Z 
+2026-11-14T19:31:09.4457298Z 
+2026-11-14T19:31:09.4457833Z > typecheck
+2026-11-14T19:31:09.4458565Z > tsc -p tsconfig.json
+2026-11-14T19:31:09.4458941Z 
+2026-11-14T19:31:09.5932548Z 
+2026-11-14T19:31:09.5933480Z > typecheck
+2026-11-14T19:31:09.5934374Z > tsc -p tsconfig.json
+2026-11-14T19:31:09.5934628Z 
+2026-11-14T19:31:09.8089730Z 
+2026-11-14T19:31:09.8090544Z > typecheck
+2026-11-14T19:31:09.8090912Z > tsc -p tsconfig.json
+2026-11-14T19:31:09.8091108Z 
+2026-11-14T19:31:10.0646964Z ##[group]Run npm test
+2026-11-14T19:31:10.0647183Z [36;1mnpm test[0m
+2026-11-14T19:31:10.0691214Z shell: /usr/bin/bash -e {0}
+2026-11-14T19:31:10.0691437Z env:
+2026-11-14T19:31:10.0691649Z   NPM_CONFIG_USERCONFIG: /home/runner/work/_temp/.npmrc
+2026-11-14T19:31:10.0691935Z   NODE_AUTH_TOKEN: XXXXX-XXXXX-XXXXX-XXXXX
+2026-11-14T19:31:10.0692155Z ##[endgroup]
+2026-11-14T19:31:10.1437408Z npm warn Unknown user config "always-auth". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+2026-11-14T19:31:10.1589429Z 
+2026-11-14T19:31:10.1589771Z > test
+2026-11-14T19:31:10.1590322Z > node --test --disable-warning=ExperimentalWarning "*/test/*.test.ts"
+2026-11-14T19:31:10.1590589Z 
+2026-11-14T19:31:10.3253692Z ✔ a branch is named after the issue in its number (0.988461ms)
+2026-11-14T19:31:10.3285706Z ✔ one query reads the branch's pull requests and every number asked for, each once (0.455302ms)
+2026-11-14T19:31:10.3328912Z ✔ the answer becomes the worktree's items, and numbers GitHub does not have are told apart (1.182101ms)
+2026-11-14T19:31:10.3330343Z ✔ what the browser sends never becomes a flag of gh (1.132537ms)
+2026-11-14T19:31:10.3341901Z ✔ a number is taken from 17, #17, or a URL of the same repository only (0.37417ms)
+2026-11-14T19:31:10.3377863Z ✔ a body comes whole, as the edit box starts from it and saves it back (1.083954ms)
+2026-11-14T19:31:10.3410098Z ✖ 動作確認用: わざと落ちる (1.760207ms)
+2026-11-14T19:31:10.3449701Z ✔ gh's issue and pull request lists are read, and anything odd is left out (2.157413ms)
+2026-11-14T19:31:10.3470266Z ✔ a failed gh call is explained (0.636003ms)
+2026-11-14T19:31:10.3481216Z ✔ one pull request is read with its reviews, changes and checks (1.10806ms)
+2026-11-14T19:31:10.3482542Z ✔ one issue is read; a closed one says how, long text is cut, and only the latest comments are kept (3.196184ms)
+2026-11-14T19:31:10.3483597Z ✔ checks are summed up by their result (0.174482ms)
+2026-11-14T19:31:10.4865547Z ✔ cards: a worktree without a pull request, a pull request without a worktree, and the primary checkout only when needed (2.717792ms)
+2026-11-14T19:31:10.4873048Z ✔ sessions go to the deepest worktree that holds their folder, across the repositories of a working server (0.875081ms)
+2026-11-14T19:31:10.4900187Z ✔ a card goes in the column its repository's board plugin gives, with its instructions, and in the first one when the plugin fails (0.760679ms)
+2026-11-14T19:31:10.4929757Z ✔ a column's order: cards without the value stay below in either direction (0.304036ms)
+2026-11-14T19:31:10.4958494Z ✔ git's worktree list, GitHub remotes and gh's pull requests are read, and anything odd is left out (0.85421ms)
+2026-11-14T19:31:10.5071693Z ✔ the watched repositories are kept in the plugin's folder, read at most once a minute, and keep their cards when gh fails (28.252777ms)
+2026-11-14T19:31:10.5290956Z ✔ a board plugin's fetch runs in every other reading with gh, its value comes with the board, and it waits while few GraphQL points are left (16.754353ms)
+2026-11-14T19:31:10.5462390Z ✔ the time is written as Claude Code's spinner writes it (1.123724ms)
+2026-11-14T19:31:10.5504234Z ✔ tokens are cut, never rounded up, and keep no .0 (0.242704ms)
+2026-11-14T19:31:10.5505241Z ✔ a tool is written as its call, an MCP server's tool with its server (0.273439ms)
+2026-11-14T19:31:10.5506108Z ✔ the phrases are six languages' words, none empty and none twice (1.197525ms)
+2026-11-14T19:31:10.5509083Z ✔ a seed always gets the same phrase, and the seeds of many works reach every language and most phrases (86.473264ms)
+2026-11-14T19:31:10.5510038Z ✔ colors and bold become styles, and a reset ends them (2.175679ms)
+2026-11-14T19:31:10.5511439Z ✔ 256 colors and 24-bit colors, also in their colon form (0.524546ms)
+2026-11-14T19:31:10.5512323Z ✔ a carriage return goes back to the start of the line, and what follows overwrites it (0.332688ms)
+2026-11-14T19:31:10.5513207Z ✔ other escape sequences and control characters are left out (0.196714ms)
+2026-11-14T19:31:10.5514177Z ✔ an escape sequence cut off at the end waits for the rest (5.208394ms)
+2026-11-14T19:31:10.5514963Z ✔ lines: a newline at the very end adds no line, an empty line stays (0.289173ms)
+2026-11-14T19:31:10.7026106Z ✔ a command's output, from both streams, and its exit code are recorded (54.67226ms)
+2026-11-14T19:31:11.3842164Z ✔ cd carries over to the next command, only from the command started last; chdir and a gone folder lead back (686.27328ms)
+2026-11-14T19:31:12.1548194Z ✔ SIGINT stops a command, and SIGKILL one that ignores SIGINT (770.378408ms)
+2026-11-14T19:31:12.1903610Z ✔ output beyond the limit is dropped from its start, at a line's start (35.781867ms)
+2026-11-14T19:31:12.8269511Z ✔ watch waits for a change, and answers as soon as output comes (636.18415ms)
+2026-11-14T19:31:12.9043399Z ✔ records, their output and the working folder outlast the plugin's process; stop ends what runs (77.193028ms)
+2026-11-14T19:31:12.9401162Z ✔ gasho-daemon's own variables do not reach a command (36.199558ms)
+2026-11-14T19:31:13.0182531Z ✔ a folder runs four commands at once at most, and a shell that is not there is recorded as such (73.345575ms)
+2026-11-14T19:31:15.0236670Z ✔ the shell: as set, or the person's SHELL when it speaks sh's language, else bash, else sh (2.124714ms)
+2026-11-14T19:31:15.0237701Z ✔ a command gets what sessions get from gasho-daemon, and nothing else of it (0.543094ms)
+2026-11-14T19:31:15.0238906Z ✔ the script runs the command as written, keeps its exit status, and writes down where it ended (21.723164ms)
+2026-11-14T19:31:15.0240506Z ✔ output is kept from its end, dropped at a line's start, and read in stretches (0.550795ms)
+2026-11-14T19:31:15.0241484Z ✔ the panel reads the end of each command first, follows running ones, and leaves out ended ones it has whole (1.863502ms)
+2026-11-14T19:31:15.0242630Z ✔ an answer continues the windows, replaces one past a gap, and forgets records that went (1.025747ms)
+2026-11-14T19:31:15.0243671Z ✔ pieces join a window before it, after it and over it; one apart takes its place (0.341572ms)
+2026-11-14T19:31:15.0244651Z ✔ times, folders and the operations log's summary are written as the panel shows them (0.455523ms)
+2026-11-14T19:31:15.0245564Z ✔ a plugin's release, file and catalog entry are named after its version (4.566271ms)
+2026-11-14T19:31:15.0246350Z ✔ the catalog is uploaded again only when its plugins change (0.252358ms)
+2026-11-14T19:31:15.0247083Z ✔ the plugins are the workspaces with a gasho-plugin.json named after them (1.851784ms)
+2026-11-14T19:31:15.0247646Z ✔ the ring is as the text around it below 70%, amber from 70%, and red from 90% (0.817996ms)
+2026-11-14T19:31:15.0248094Z ✔ tokens are written with commas (38.491557ms)
+2026-11-14T19:31:15.0248604Z ✔ the status line's limits come from the session that replied last on the working server (0.36724ms)
+2026-11-14T19:31:15.0249847Z ✔ the popover shows get_usage's limits, with the 5-hour one first and the models' last (1.005036ms)
+2026-11-14T19:31:15.0251041Z ✔ without get_usage's limits, the popover shows the status line's; without either, nothing; without a plan, none (0.221802ms)
+2026-11-14T19:31:15.0252249Z ✔ a reset is written as a time today, with the date and the day of the week after, and as done once it has passed (0.57381ms)
+2026-11-14T19:31:15.0252949Z ✔ limitsOf reads the weekly limits, the models' and the 5-hour one from get_usage's answer (1.475481ms)
+2026-11-14T19:31:15.0253566Z ✔ limitsOf tells an account without a Claude.ai plan from an answer it cannot read (0.707009ms)
+2026-11-14T19:31:15.0254129Z ✔ limitsOf passes over what is not its answer, and says when there is none (1.124145ms)
+2026-11-14T19:31:15.0255145Z ✔ the requests are what Claude Code's stream-json takes, and the shell gets them from the environment (0.351888ms)
+2026-11-14T19:31:15.0255913Z ✔ readLimits starts one Claude Code for calls that come together, and keeps the answer for a while (11.301403ms)
+2026-11-14T19:31:15.0256794Z ✔ readLimits says why Claude Code could not be asked (1.225607ms)
+2026-11-14T19:31:15.0257368Z ℹ tests 61
+2026-11-14T19:31:15.0257547Z ℹ suites 0
+2026-11-14T19:31:15.0257713Z ℹ pass 60
+2026-11-14T19:31:15.0257881Z ℹ fail 1
+2026-11-14T19:31:15.0258057Z ℹ cancelled 0
+2026-11-14T19:31:15.0258239Z ℹ skipped 0
+2026-11-14T19:31:15.0258410Z ℹ todo 0
+2026-11-14T19:31:15.0258608Z ℹ duration_ms 4837.383942
+2026-11-14T19:31:15.0259138Z 
+2026-11-14T19:31:15.0259237Z ✖ failing tests:
+2026-11-14T19:31:15.0259344Z 
+2026-11-14T19:31:15.0259567Z test at github-almighty/test/動作確認用.test.ts:4:1
+2026-11-14T19:31:15.0259890Z ✖ 動作確認用: わざと落ちる (1.760207ms)
+2026-11-14T19:31:15.0260211Z   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+2026-11-14T19:31:15.0260527Z   
+2026-11-14T19:31:15.0260681Z   1 !== 2
+2026-11-14T19:31:15.0260853Z   
+2026-11-14T19:31:15.0261418Z       at TestContext.<anonymous> (file:///home/runner/work/GashoPlugins/GashoPlugins/github-almighty/test/%E5%8B%95%E4%BD%9C%E7%A2%BA%E8%AA%8D%E7%94%A8.test.ts:4:36)
+2026-11-14T19:31:15.0262049Z       at Test.runInAsyncScope (node:async_hooks:227:14)
+2026-11-14T19:31:15.0262359Z       at Test.run (node:internal/test_runner/test:1402:25)
+2026-11-14T19:31:15.0262670Z       at Test.start (node:internal/test_runner/test:1262:17)
+2026-11-14T19:31:15.0263049Z       at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+2026-11-14T19:31:15.0263377Z     generatedMessage: true,
+2026-11-14T19:31:15.0263585Z     code: 'ERR_ASSERTION',
+2026-11-14T19:31:15.0263768Z     actual: 1,
+2026-11-14T19:31:15.0263936Z     expected: 2,
+2026-11-14T19:31:15.0264120Z     operator: 'strictEqual',
+2026-11-14T19:31:15.0264310Z     diff: 'simple'
+2026-11-14T19:31:15.0264479Z   }
+2026-11-14T19:31:15.0384850Z ##[error]Process completed with exit code 1.
+2026-11-14T19:31:15.0513277Z Post job cleanup.
+2026-11-14T19:31:15.1211348Z [command]/usr/bin/git version
+2026-11-14T19:31:15.1251057Z git version 2.56.1
+2026-11-14T19:31:15.1282320Z Temporarily overriding HOME='/home/runner/work/_temp/76469b16-7da8-42b9-8e21-da1e2fdd740c' before making global git config changes
+2026-11-14T19:31:15.1283337Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-14T19:31:15.1286470Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/GashoPlugins/GashoPlugins
+2026-11-14T19:31:15.1322974Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-14T19:31:15.1354380Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-14T19:31:15.1624417Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-14T19:31:15.1658461Z http.https://github.com/.extraheader
+2026-11-14T19:31:15.1700233Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-14T19:31:15.1766193Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-14T19:31:15.1982380Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-14T19:31:15.2013027Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-14T19:31:15.2383939Z Cleaning up orphan processes
+2026-11-14T19:31:15.2710573Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

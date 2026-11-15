@@ -1,0 +1,18 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "version": "2.0.0",
+  "description": "セッションのリポジトリの Actions の実行、Projects のボード、Packages の版を読む（working server の gh を使う）",
+  "genre": "integration",
+  "api": "1.3",
+  "web": { "js": "web.js", "css": "web.css" },
+  "daemon": { "js": "daemon.js" },
+  "methods": {
+    "runs": { "kind": "read", "timeoutSeconds": 30 },
+    "run": { "kind": "read", "timeoutSeconds": 60 },
+    "projects": { "kind": "read", "timeoutSeconds": 30 },
+    "project": { "kind": "read", "timeoutSeconds": 60 },
+    "packages": { "kind": "read", "timeoutSeconds": 60 },
+    "package": { "kind": "read", "timeoutSeconds": 30 }
+  }
+}
