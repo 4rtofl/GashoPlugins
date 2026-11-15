@@ -4,6 +4,7 @@ worktree の Issue（ブランチ名の番号）と Pull request（そのブラ�
 
 - タブの行に、Issue と Pull request が 1 件ずつと、一覧と足す欄のある「GitHub」が並ぶ
 - 1 件の画面は、題と状態、上の行（閉じる・開き直す・Draft の切り替え、担当、ラベル、Pull request のブランチ）と、タブに分かれる。タブは「会話」「コミット」「チェック」「ファイル」で、Issue は「会話」だけ
+- 上の行の「Project」に、入っている Project（GitHub Projects）と項目の値を出す。Project に足したり外したり、単一選択・日付・数・文字の値を変えたりできる（イテレーションは出すだけ）。gh に `project` の権限が要り、無いときは `gh auth refresh -s project` で足すよう画面に出る
 - 会話は、本文・コメント・レビューと、ラベル・担当を付けた・外した、閉じた・開き直した・マージしたを、時刻の順に 1 本の線に並べる
 - 読み込み中は Skeleton、読めなかったときは Alert、操作の結果は Toast で出す。担当やラベルを外す・閉じるなど、元に戻せる操作は、Toast の「元に戻す」で取り消せる
 - ここ 24 時間に開いた worktree を、設定 `refreshSeconds`（既定 60 秒、0 で止める）の間隔で裏でも読み直す。設定画面に、間隔ごとに GitHub の上限の半分に収まる worktree の数と、working server ごとのいまの点数を半円のゲージで出す
