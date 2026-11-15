@@ -1,10 +1,14 @@
-// The gh calls of github-almighty, and what their output becomes. gasho-daemon runs gh for every plugin (ctx.github),
-// with the login of whoever runs it, and answers a read from what it kept when the same arguments were read recently.
-// Everything here only builds arguments and reads output, so that it can be tested without gh.
+// What the operations of github-almighty share about gh: the checks of what comes from the browser, the one query
+// that reads a worktree's issues and pull requests, the read of one of them that the parts of detail/ add fields to,
+// and the message for a failure. gasho-daemon runs gh for every plugin (ctx.github), with the login of whoever runs it,
+// and answers a read from what it kept when the same arguments were read recently. Everything here only builds
+// arguments and reads output, so that it can be tested without gh.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import type { GitHubCheck, GitHubComment, GitHubFile, GitHubItemDetail, GitHubKind, GitHubReview, ItemSummary, RepoMeta, WorktreeItems } from "../types.ts";
+import type { GitHubItemDetail, GitHubKind, ItemSummary, WorktreeItems } from "../types.ts";
 
 // ---- what comes from the browser ----
+
+export const objArg = (params: unknown): Record<string, unknown> => (typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {});
 
 /** owner/name of a GitHub repository; never something gh would take as a flag. */
 export function repoArg(v: unknown): string {
@@ -34,6 +38,12 @@ export function branchArg(v: unknown): string | undefined {
   return v;
 }
 
+/** The worktree's top folder: used only as the key of what is kept for it, never as a path to read. */
+export function worktreeArg(v: unknown): string {
+  if (typeof v !== "string" || !v.startsWith("/") || v.length > 1000) throw new PluginError("worktree の指定が正しくありません。");
+  return v;
+}
+
 /** Text for a title, a body or a comment. */
 export function textArg(v: unknown, what: string, max: number): string {
   if (typeof v !== "string") throw new PluginError(`${what}が正しくありません。`);
@@ -57,6 +67,29 @@ export function labelsArg(v: unknown): string[] {
   }
   return v as string[];
 }
+
+// ---- reading gh's output ----
+
+export const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+export const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+export const login = (v: unknown): string | undefined => str((v as { login?: unknown } | null | undefined)?.login);
+/** Links shown in browsers: https only. */
+export const httpsUrl = (v: unknown): string | undefined => {
+  const s = str(v);
+  return s?.startsWith("https://") ? s : undefined;
+};
+/** A label's color as GitHub gives it (6 hex digits), or undefined. */
+export const labelColor = (v: unknown): string | undefined => {
+  const s = str(v);
+  return s && /^[0-9a-f]{6}$/i.test(s) ? s : undefined;
+};
+
+/** Text sent per comment or review. A body is never cut: the edit box starts from it, and saving a cut one would overwrite the rest on GitHub. */
+const TEXT_MAX = 60_000;
+export const clip = (s: string): string => (s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX)}\n\n…（長いので、ここから先は GitHub で読んでください）` : s);
+
+/** gh's command for an issue or a pull request. */
+export const cmd = (kind: GitHubKind): "issue" | "pr" => (kind === "issues" ? "issue" : "pr");
 
 // ---- a worktree's issues and pull requests: one GraphQL query (1 point of the hourly 5000) ----
 
@@ -82,9 +115,6 @@ export function itemsQueryArgs(repo: string, branch: string | undefined, numbers
   const query = `query($owner: String!, $name: String!${branch ? ", $branch: String!" : ""}) { repository(owner: $owner, name: $name) { ${fields.join(" ") || "__typename"} } }`;
   return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, ...(branch ? ["-f", `branch=${branch}`] : [])];
 }
-
-const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
 function summary(raw: unknown): ItemSummary | undefined {
   const r = (raw ?? {}) as Record<string, unknown>;
@@ -121,68 +151,36 @@ export function parseItems(json: string, named: number | undefined, added: numbe
   };
 }
 
-// ---- one issue or pull request ----
+// ---- one issue or pull request: `gh issue view` / `gh pr view --json …` ----
 
-const ISSUE_DETAIL_FIELDS = "number,title,url,state,stateReason,author,createdAt,updatedAt,closedAt,labels,assignees,body,comments";
-const PULL_DETAIL_FIELDS =
-  "number,title,url,state,author,createdAt,updatedAt,closedAt,mergedAt,labels,assignees,body,comments,reviews,isDraft," +
-  "headRefName,baseRefName,reviewDecision,additions,deletions,changedFiles,files,commits,statusCheckRollup";
-/** Text sent per comment or review, comments per item, and files per pull request. A body is never cut: the edit box starts from it, and saving a cut one would overwrite the rest on GitHub. */
-const TEXT_MAX = 60_000;
-const COMMENTS_MAX = 200;
-const FILES_MAX = 300;
-
-export function detailArgs(repo: string, kind: GitHubKind, number: number): string[] {
-  return [kind === "issues" ? "issue" : "pr", "view", String(number), "--repo", repo, "--json", kind === "issues" ? ISSUE_DETAIL_FIELDS : PULL_DETAIL_FIELDS];
+/**
+ * A part of the read of one issue or pull request: a file in detail/. It asks gh for more fields and puts what they
+ * hold into the item; the fields it adds to GitHubItemDetail are declared there too (declare module "../../types.ts").
+ */
+export interface DetailPart {
+  /** The fields of `--json` it reads, per kind; a part without fields for a kind does not run for it. */
+  fields: Partial<Record<GitHubKind, string[]>>;
+  read(raw: Record<string, unknown>, item: GitHubItemDetail): void;
 }
 
-const login = (v: unknown): string | undefined => str((v as { login?: unknown } | null | undefined)?.login);
-/** Links shown in browsers: https only. */
-const httpsUrl = (v: unknown): string | undefined => {
-  const s = str(v);
-  return s?.startsWith("https://") ? s : undefined;
+const CORE_FIELDS: Record<GitHubKind, string[]> = {
+  issues: ["number", "title", "url", "state", "stateReason", "author", "createdAt", "updatedAt", "closedAt", "labels", "assignees", "body"],
+  pulls: ["number", "title", "url", "state", "author", "createdAt", "updatedAt", "closedAt", "mergedAt", "labels", "assignees", "body", "isDraft", "headRefName", "baseRefName", "reviewDecision", "additions", "deletions", "changedFiles"],
 };
-const clip = (s: string): string => (s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX)}\n\n…（長いので、ここから先は GitHub で読んでください）` : s);
+
+export function detailArgs(repo: string, kind: GitHubKind, number: number, parts: DetailPart[]): string[] {
+  const fields = new Set([...CORE_FIELDS[kind], ...parts.flatMap((p) => p.fields[kind] ?? [])]);
+  return [cmd(kind), "view", String(number), "--repo", repo, "--json", [...fields].join(",")];
+}
 
 const REVIEW: Record<string, GitHubItemDetail["review"]> = {
   APPROVED: "approved",
   CHANGES_REQUESTED: "changes_requested",
   REVIEW_REQUIRED: "review_required",
 };
-const REVIEW_STATE: Record<string, GitHubReview["state"]> = {
-  APPROVED: "approved",
-  CHANGES_REQUESTED: "changes_requested",
-  COMMENTED: "commented",
-  DISMISSED: "dismissed",
-  PENDING: "pending",
-};
 
-/** A check run's or commit status's result, in a few words. */
-export function checkState(c: { status?: unknown; conclusion?: unknown; state?: unknown }): GitHubCheck["state"] {
-  const state = str(c.state)?.toUpperCase();
-  if (state) {
-    if (state === "SUCCESS") return "success";
-    if (state === "FAILURE" || state === "ERROR") return "failure";
-    return "pending";
-  }
-  if (str(c.status)?.toUpperCase() !== "COMPLETED") return "pending";
-  switch (str(c.conclusion)?.toUpperCase()) {
-    case "SUCCESS":
-      return "success";
-    case "SKIPPED":
-      return "skipped";
-    case "CANCELLED":
-      return "cancelled";
-    case "NEUTRAL":
-    case "STALE":
-      return "neutral";
-    default:
-      return "failure";
-  }
-}
-
-/** `gh issue view` / `gh pr view --json …` output as an item; undefined when it is not one. */
-export function parseDetail(json: string, kind: GitHubKind): GitHubItemDetail | undefined {
+/** The output of detailArgs as an item; undefined when it is not one. */
+export function parseDetail(json: string, kind: GitHubKind, parts: DetailPart[]): GitHubItemDetail | undefined {
   const raw = JSON.parse(json) as Record<string, unknown> | null;
   const number = num(raw?.number);
   const title = str(raw?.title);
@@ -190,22 +188,10 @@ export function parseDetail(json: string, kind: GitHubKind): GitHubItemDetail | 
   if (!raw || number === undefined || title === undefined || !url?.startsWith("https://github.com/")) return undefined;
   const state = str(raw.state)?.toUpperCase();
   const reason = str(raw.stateReason)?.toUpperCase();
-  const labels = (Array.isArray(raw.labels) ? raw.labels : []).flatMap((l) =>
-    typeof l?.name === "string" ? [{ name: l.name as string, ...(typeof l.color === "string" && /^[0-9a-f]{6}$/i.test(l.color) ? { color: l.color as string } : {}) }] : [],
-  );
-  const comments = (Array.isArray(raw.comments) ? raw.comments : []).flatMap((c): GitHubComment[] => {
-    const createdAt = str(c?.createdAt);
-    if (!createdAt) return [];
-    const minimized = c?.isMinimized === true;
-    return [
-      {
-        ...(login(c?.author) ? { author: login(c?.author) } : {}),
-        createdAt,
-        body: minimized ? "" : clip(str(c?.body) ?? ""),
-        ...(httpsUrl(c?.url) ? { url: httpsUrl(c?.url) } : {}),
-        ...(minimized ? { minimized: true } : {}),
-      },
-    ];
+  const labels = (Array.isArray(raw.labels) ? raw.labels : []).flatMap((l) => {
+    const name = str(l?.name);
+    const color = labelColor(l?.color);
+    return name ? [{ name, ...(color ? { color } : {}) }] : [];
   });
   const item: GitHubItemDetail = {
     kind,
@@ -223,87 +209,21 @@ export function parseDetail(json: string, kind: GitHubKind): GitHubItemDetail | 
     ...(str(raw.mergedAt) ? { mergedAt: str(raw.mergedAt) } : {}),
     assignees: (Array.isArray(raw.assignees) ? raw.assignees : []).flatMap((a) => (login(a) ? [login(a) as string] : [])),
     body: str(raw.body) ?? "",
-    comments: comments.slice(-COMMENTS_MAX),
-    ...(comments.length > COMMENTS_MAX ? { commentsLeftOut: comments.length - COMMENTS_MAX } : {}),
   };
-  if (kind !== "pulls") return item;
-  if (raw.isDraft === true) item.draft = true;
-  if (str(raw.headRefName)) item.head = str(raw.headRefName);
-  if (str(raw.baseRefName)) item.base = str(raw.baseRefName);
-  const review = REVIEW[str(raw.reviewDecision) ?? ""];
-  if (review) item.review = review;
-  // Reviews that only hold comments on lines of the code have no text of their own; those are left out.
-  item.reviews = (Array.isArray(raw.reviews) ? raw.reviews : []).flatMap((r): GitHubReview[] => {
-    const submittedAt = str(r?.submittedAt);
-    const s = REVIEW_STATE[str(r?.state)?.toUpperCase() ?? ""];
-    const body = str(r?.body) ?? "";
-    if (!submittedAt || !s || (s === "commented" && !body.trim())) return [];
-    return [{ ...(login(r?.author) ? { author: login(r?.author) } : {}), submittedAt, state: s, body: clip(body) }];
-  });
-  const files = (Array.isArray(raw.files) ? raw.files : []).flatMap((f): GitHubFile[] =>
-    str(f?.path) ? [{ path: str(f.path) as string, additions: num(f.additions) ?? 0, deletions: num(f.deletions) ?? 0 }] : [],
-  );
-  item.files = files.slice(0, FILES_MAX);
-  for (const key of ["additions", "deletions", "changedFiles"] as const) {
-    const n = num(raw[key]);
-    if (n !== undefined) item[key] = n;
+  if (kind === "pulls") {
+    if (raw.isDraft === true) item.draft = true;
+    if (str(raw.headRefName)) item.head = str(raw.headRefName);
+    if (str(raw.baseRefName)) item.base = str(raw.baseRefName);
+    const review = REVIEW[str(raw.reviewDecision) ?? ""];
+    if (review) item.review = review;
+    for (const key of ["additions", "deletions", "changedFiles"] as const) {
+      const n = num(raw[key]);
+      if (n !== undefined) item[key] = n;
+    }
   }
-  if (Array.isArray(raw.commits)) item.commits = raw.commits.length;
-  item.checks = (Array.isArray(raw.statusCheckRollup) ? raw.statusCheckRollup : []).flatMap((c): GitHubCheck[] => {
-    const name = str(c?.name) ?? str(c?.context);
-    if (!name) return [];
-    const workflow = str(c?.workflowName);
-    const link = httpsUrl(c?.detailsUrl) ?? httpsUrl(c?.targetUrl);
-    return [{ name: workflow && workflow !== name ? `${workflow} / ${name}` : name, state: checkState(c ?? {}), ...(link ? { url: link } : {}) }];
-  });
+  for (const part of parts) if (part.fields[kind]) part.read(raw, item);
   return item;
 }
-
-// ---- a repository's labels and assignable people ----
-
-export const labelsArgs = (repo: string): string[] => ["label", "list", "--repo", repo, "--limit", "200", "--json", "name,color"];
-export const assignableArgs = (repo: string): string[] => ["api", `repos/${repo}/assignees?per_page=100`];
-export const meArgs = ["api", "user"];
-
-export function parseMeta(labelsJson: string, assignableJson: string, meJson: string | undefined): RepoMeta {
-  const labels = (JSON.parse(labelsJson) as unknown[]).flatMap((l) => {
-    const r = (l ?? {}) as Record<string, unknown>;
-    const name = str(r.name);
-    const color = str(r.color);
-    return name ? [{ name, ...(color && /^[0-9a-f]{6}$/i.test(color) ? { color } : {}) }] : [];
-  });
-  const assignable = (JSON.parse(assignableJson) as unknown[]).flatMap((u) => (login(u) ? [login(u) as string] : []));
-  const me = meJson ? login(JSON.parse(meJson)) : undefined;
-  return { labels, assignable, ...(me ? { me } : {}) };
-}
-
-// ---- changing GitHub ----
-// Values go after "=" (--body=…), so that a text starting with "-" is never taken as a flag.
-
-const cmd = (kind: GitHubKind) => (kind === "issues" ? "issue" : "pr");
-
-export function editArgs(repo: string, kind: GitHubKind, number: number, change: { title?: string; body?: string; addAssignees?: string[]; removeAssignees?: string[]; addLabels?: string[]; removeLabels?: string[] }): string[] {
-  const args = [cmd(kind), "edit", String(number), "--repo", repo];
-  if (change.title !== undefined) args.push(`--title=${change.title}`);
-  if (change.body !== undefined) args.push(`--body=${change.body}`);
-  for (const a of change.addAssignees ?? []) args.push(`--add-assignee=${a}`);
-  for (const a of change.removeAssignees ?? []) args.push(`--remove-assignee=${a}`);
-  for (const l of change.addLabels ?? []) args.push(`--add-label=${l}`);
-  for (const l of change.removeLabels ?? []) args.push(`--remove-label=${l}`);
-  return args;
-}
-
-export const commentArgs = (repo: string, kind: GitHubKind, number: number, body: string): string[] => [cmd(kind), "comment", String(number), "--repo", repo, `--body=${body}`];
-
-/** Close or reopen; an issue closes as done (completed) or as not planned. */
-export function stateArgs(repo: string, kind: GitHubKind, number: number, action: "close" | "reopen", reason?: "completed" | "not_planned"): string[] {
-  const args = [cmd(kind), action, String(number), "--repo", repo];
-  if (action === "close" && kind === "issues" && reason) args.push(`--reason=${reason === "not_planned" ? "not planned" : "completed"}`);
-  return args;
-}
-
-/** Marks a pull request ready for review, or (undo) turns it back into a draft. */
-export const readyArgs = (repo: string, number: number, ready: boolean): string[] => ["pr", "ready", String(number), "--repo", repo, ...(ready ? [] : ["--undo"])];
 
 // ---- errors ----
 

@@ -6,5 +6,8 @@
     "build": "gasho-plugin build",
     "dev": "gasho-plugin build --watch",
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "framer-motion": "^14.12.0"
   }
 }

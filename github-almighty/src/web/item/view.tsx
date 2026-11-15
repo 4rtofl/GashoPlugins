@@ -1,0 +1,213 @@
+// The tab of one issue or pull request of a worktree: its title and state, the rows of sections/ (state changes,
+// assignees, labels, a pull request's branches), and the tabs of tabs/ (the conversation, and for a pull request its
+// commits, checks and files). After a change, gasho-daemon drops what it kept of the repository, so reading again shows
+// GitHub as it is now.
+import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
+import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
+import { readOp } from "../daemon.ts";
+import { itemIcon, itemsTarget, NOT_PLANNED_ICON, useRefreshOptions } from "../tabs.ts";
+import { Alert } from "../ui/alert.tsx";
+import { Badge, type BadgeTone } from "../ui/badge.tsx";
+import { Button, buttonClass } from "../ui/button.tsx";
+import { INPUT } from "../ui/input.ts";
+import { Skeleton, SkeletonText } from "../ui/skeleton.tsx";
+import { AnimatedTabs } from "../ui/tabs.tsx";
+import { ToastProvider } from "../ui/toast.tsx";
+import { ItemProvider, useChanges, useItem, type Where } from "./context.tsx";
+import { partsOf, type ItemSection, type ItemTab } from "./parts.ts";
+
+const TABS = partsOf(import.meta.glob<{ default: ItemTab }>("./tabs/*.tsx", { eager: true }));
+const SECTIONS = partsOf(import.meta.glob<{ default: ItemSection }>("./sections/*.tsx", { eager: true }));
+
+const NAME: Record<GitHubKind, string> = { issues: "Issue", pulls: "Pull request" };
+
+export function ItemView(props: WorktreeViewProps) {
+  return (
+    <ToastProvider>
+      <ItemScreen {...props} />
+    </ToastProvider>
+  );
+}
+
+function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
+  const kind: GitHubKind = params.kind === "pulls" ? "pulls" : "issues";
+  const number = Number(params.number);
+  const valid = Number.isInteger(number) && number >= 1 && number <= 1e9;
+  const daemon = useDaemonReady(machine.id);
+  const github = worktree.github;
+  const repo = github ? `${github.owner}/${github.name}` : undefined;
+  const clock = useNow(60_000);
+  const options = useRefreshOptions();
+  const where: Where | undefined = repo && valid ? { repo, kind, number } : undefined;
+  const r = useRequest<GitHubItemDetail>(daemon.ready && where ? readOp(machine.id, "item", { ...where }) : undefined, options);
+  // The worktree's tabs show the title and the state: they are read again after a change too.
+  const tabs = useRequest<WorktreeItems>(itemsTarget(machine.id, worktree, daemon.ready), options);
+  const changes = useChanges(machine.id, where, () => {
+    r.reload();
+    tabs.reload();
+  });
+  // Not before the read: what GitHub changed since the clock last ticked would read as "in 1 minute".
+  const now = Math.max(clock, r.at ?? 0);
+  const item = r.data;
+  const url = item?.url ?? (github && valid ? `${github.url}/${kind === "issues" ? "issues" : "pull"}/${number}` : undefined);
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-4 px-4 py-5 md:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {NAME[kind]} #{valid ? number : "?"} · {repo ?? "GitHub のリポジトリがありません"}
+        </span>
+        <div className="flex items-center gap-1.5">
+          {url && (
+            <a href={url} target="_blank" rel="noreferrer" className={buttonClass("ghost", "xs")}>
+              GitHub <ExternalLink />
+            </a>
+          )}
+          <Button variant="ghost" size="icon" onClick={r.reload} disabled={r.loading || !where || !daemon.ready} aria-label="再読み込み" title="再読み込み">
+            <RefreshCw className={cn(r.loading && "animate-spin")} />
+          </Button>
+        </div>
+      </div>
+
+      {!valid && <Alert tone="danger">番号が正しくありません。</Alert>}
+      {!github && <Alert>この worktree のリポジトリは GitHub にありません。</Alert>}
+      {github && !daemon.ready && <Alert tone="warning">{daemon.reason ?? `${machine.name} で github-almighty の daemon の部分が動いていません。`}</Alert>}
+      {r.error && (
+        <Alert
+          tone="danger"
+          action={
+            <Button size="xs" onClick={r.reload} isLoading={r.loading}>
+              読み直す
+            </Button>
+          }
+        >
+          {r.error}
+        </Alert>
+      )}
+      {!item && r.loading && <DetailSkeleton />}
+      {item && where && (
+        <ItemProvider value={{ machine: machine.id, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision }}>
+          <Detail />
+        </ItemProvider>
+      )}
+      {r.at && <p className="text-xs text-muted-foreground">{new Date(r.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} に読み込み</p>}
+    </div>
+  );
+}
+
+function DetailSkeleton() {
+  return (
+    <div role="status" aria-label="読み込み中" className="space-y-4">
+      <Skeleton className="h-6 w-2/3" />
+      <div className="flex gap-2">
+        <Skeleton className="h-6 w-20 rounded-full" />
+        <Skeleton className="h-6 w-40 rounded-full" />
+      </div>
+      <Skeleton className="h-9 w-72 rounded-lg" />
+      <div className="rounded-xl border border-border p-3">
+        <SkeletonText lines={4} />
+      </div>
+    </div>
+  );
+}
+
+function Detail() {
+  const { item, where, now } = useItem();
+  const tabs = TABS.filter((t) => t.kinds.includes(item.kind));
+  const [chosen, setChosen] = usePluginState<string>(`tab:${where.repo}#${where.number}`, tabs[0]?.id ?? "");
+  const tab = tabs.find((t) => t.id === chosen) ?? tabs[0];
+  return (
+    <>
+      <Title />
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
+        <StateBadge item={item} />
+        <span>
+          {item.author ?? "不明"} が<RelativeTime at={item.createdAt} now={now} />
+          に作成
+        </span>
+        <span>
+          更新 <RelativeTime at={item.updatedAt} now={now} />
+        </span>
+      </div>
+      {SECTIONS.filter((s) => s.kinds.includes(item.kind)).map((s, i) => (
+        <s.View key={i} />
+      ))}
+      {tab && (
+        <AnimatedTabs
+          label={`${NAME[item.kind]} #${item.number} の内容`}
+          tabs={tabs.map((t) => {
+            const Icon = t.icon;
+            const badge = t.badge?.(item);
+            return { id: t.id, label: t.label, ...(Icon ? { icon: <Icon /> } : {}), ...(badge !== undefined ? { badge } : {}) };
+          })}
+          value={tab.id}
+          onChange={setChosen}
+        >
+          <tab.View />
+        </AnimatedTabs>
+      )}
+    </>
+  );
+}
+
+function Title() {
+  const { item, where, busy, run } = useItem();
+  const [draft, setDraft] = useState<string>();
+  if (draft === undefined) {
+    return (
+      <div className="flex items-start gap-2">
+        <h2 className="min-w-0 flex-1 text-lg leading-snug font-semibold break-words">{item.title}</h2>
+        <Button variant="ghost" size="icon" onClick={() => setDraft(item.title)} aria-label="題を変える" title="題を変える">
+          <Pencil />
+        </Button>
+      </div>
+    );
+  }
+  const save = async () => {
+    const ok = await run({
+      id: "title",
+      op: "edit",
+      params: { title: draft },
+      summary: `#${where.number} の題を変える`,
+      done: "題を変えました",
+      undo: { op: "edit", params: { title: item.title }, summary: `#${where.number} の題を戻す` },
+    });
+    if (ok) setDraft(undefined);
+  };
+  return (
+    <div className="space-y-2">
+      <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="題" className={INPUT} maxLength={256} />
+      <div className="flex gap-2">
+        <Button variant="primary" onClick={() => void save()} isLoading={busy === "title"} loadingText="保存しています…" disabled={busy !== undefined || !draft.trim() || draft === item.title}>
+          保存する
+        </Button>
+        <Button onClick={() => setDraft(undefined)} disabled={busy === "title"}>
+          やめる
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function StateBadge({ item }: { item: GitHubItemDetail }) {
+  const Icon = item.kind === "issues" && item.state === "closed" && item.stateReason === "not_planned" ? NOT_PLANNED_ICON : itemIcon(item);
+  const [label, tone]: [string, BadgeTone] =
+    item.state === "merged"
+      ? ["Merged", "merged"]
+      : item.state === "closed"
+        ? item.kind === "pulls"
+          ? ["Closed", "danger"]
+          : item.stateReason === "not_planned"
+            ? ["Closed（対応しない）", "neutral"]
+            : ["Closed", "merged"]
+        : item.draft
+          ? ["Draft", "neutral"]
+          : ["Open", "success"];
+  return (
+    <Badge tone={tone} icon={<Icon />}>
+      {label}
+    </Badge>
+  );
+}

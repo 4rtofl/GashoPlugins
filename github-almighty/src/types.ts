@@ -1,6 +1,7 @@
 // What github-almighty reads with gh and shows beside a worktree's sessions: the issue its branch is named after, the
 // pull requests of its branch, the ones added to it by hand, and one of them with its conversation. The daemon part
 // (src/daemon) makes them, the web part (src/web) shows them and asks the daemon part to change them on GitHub.
+// The parts of one item's read (src/daemon/detail) declare the fields they add to GitHubItemDetail where they are.
 import type { GitHubRepo } from "@gasho/plugin-sdk";
 
 export type { GitHubRepo };
@@ -75,6 +76,20 @@ export interface GitHubFile {
   deletions: number;
 }
 
+/** A change of an issue or pull request, shown between its comments (GraphQL timelineItems). */
+export interface GitHubEvent {
+  type: "labeled" | "unlabeled" | "assigned" | "unassigned" | "closed" | "reopened" | "merged";
+  /** ISO 8601 */
+  at: string;
+  actor?: string;
+  /** labeled, unlabeled */
+  label?: { name: string; color?: string };
+  /** assigned, unassigned */
+  assignee?: string;
+  /** closed (issues): as done or as not planned. */
+  stateReason?: "completed" | "not_planned";
+}
+
 /** One issue or pull request with its text and conversation, as gasho-daemon read it with `gh`. */
 export interface GitHubItemDetail {
   kind: GitHubKind;
@@ -94,7 +109,7 @@ export interface GitHubItemDetail {
   assignees: string[];
   body: string;
   /** Oldest first; when there are many, the latest ones (`commentsLeftOut` says how many older ones were left out). */
-  comments: GitHubComment[];
+  comments?: GitHubComment[];
   commentsLeftOut?: number;
   /** Pull requests only. */
   draft?: boolean;
@@ -106,6 +121,5 @@ export interface GitHubItemDetail {
   deletions?: number;
   changedFiles?: number;
   files?: GitHubFile[];
-  commits?: number;
   checks?: GitHubCheck[];
 }
