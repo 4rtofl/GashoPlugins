@@ -1,0 +1,8 @@
+{
+  "name": "gasho-plugin-ayu-dark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "gasho-plugin build"
+  }
+}

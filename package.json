@@ -4,17 +4,19 @@
   "type": "module",
   "description": "Gasho のプラグイン。プラグインごとのディレクトリが並ぶ",
   "workspaces": [
+    "ayu-dark",
     "github",
     "github-almighty",
     "kanban",
     "pondering",
     "remote-control-shell",
     "session-list-rewind",
-    "usage"
+    "usage",
+    "vscode-dark-2026"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces && tsc -p scripts",
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p scripts",
     "test": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\"",
     "check": "node scripts/check.ts"
   },

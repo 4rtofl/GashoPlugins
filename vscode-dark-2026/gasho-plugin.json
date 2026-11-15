@@ -1,0 +1,30 @@
+{
+  "id": "vscode-dark-2026",
+  "name": "VS Code Dark 2026",
+  "version": "1.0.0",
+  "description": "VS Code の既定の暗い配色 Dark 2026（microsoft/vscode、MIT）",
+  "genre": "theme",
+  "api": "1.6",
+  "theme": {
+    "background": "#121314",
+    "foreground": "#BBBEBF",
+    "card": "#202122",
+    "popover": "#202122",
+    "surface": "#191A1B",
+    "surface-raised": "#202122",
+    "surface-hover": "#FFFFFF14",
+    "primary": "#297AA0",
+    "primary-foreground": "#FFFFFF",
+    "muted-foreground": "#8C8C8C",
+    "destructive": "#f48771",
+    "border": "#2A2B2C",
+    "input": "#333536",
+    "ring": "#3994BCB3",
+    "sidebar": "#191A1B",
+    "sidebar-primary": "#297AA0",
+    "sidebar-border": "#2A2B2C",
+    "neutral-800": "#2A2B2C",
+    "neutral-900": "#202122",
+    "neutral-950": "#191A1B"
+  }
+}

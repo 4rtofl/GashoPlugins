@@ -1,0 +1,8 @@
+{
+  "name": "gasho-plugin-vscode-dark-2026",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "gasho-plugin build"
+  }
+}
