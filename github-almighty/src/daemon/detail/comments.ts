@@ -2,7 +2,7 @@
 import type { GitHubComment } from "../../types.ts";
 import { clip, httpsUrl, login, str, type DetailPart } from "../gh.ts";
 
-const COMMENTS_MAX = 200;
+export const COMMENTS_MAX = 200;
 
 export default {
   fields: { issues: ["comments"], pulls: ["comments"] },

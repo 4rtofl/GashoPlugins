@@ -1,14 +1,18 @@
-// The body, first in the conversation, with a button that edits it; an Undo Toast can put the old text back.
+// The body, first in the conversation, with a button that edits it (an Undo Toast can put the old text back) and its
+// reactions.
 import { FileText, Pencil } from "lucide-react";
 import { useState } from "react";
 import { cn, Markdown, RelativeTime } from "@gasho/plugin-sdk";
 import { Button } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
 import { useItem } from "../context.tsx";
+import { useConversationMeta } from "../conversation-meta.ts";
 import type { ConversationPart } from "../parts.ts";
+import { Reactions } from "../reactions.tsx";
 
 function useBody() {
   const { item, where, now, busy, run } = useItem();
+  const meta = useConversationMeta().data;
   const [draft, setDraft] = useState<string>();
   const save = async () => {
     if (draft === undefined) return;
@@ -53,10 +57,11 @@ function useBody() {
               </Button>
             </div>
           </div>
-        ) : item.body.trim() ? (
-          <Markdown text={item.body} />
         ) : (
-          <p className="text-sm text-muted-foreground">説明はありません。</p>
+          <>
+            {item.body.trim() ? <Markdown text={item.body} /> : <p className="text-sm text-muted-foreground">説明はありません。</p>}
+            {meta && <Reactions subject={meta.id} reactions={meta.reactions} of="本文" />}
+          </>
         ),
     },
   ];
