@@ -7,6 +7,7 @@ import { Badge } from "../../ui/badge.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 import { Picker } from "../picker.tsx";
+import { Row } from "../row.tsx";
 
 // GitHub keeps a due date as a moment of that day in UTC.
 const due = (m: GitHubMilestone): string | undefined => (m.dueOn ? `${new Date(m.dueOn).toLocaleDateString("ja-JP", { timeZone: "UTC" })} まで` : undefined);
@@ -22,8 +23,7 @@ function Milestone() {
   const choose = (m: GitHubMilestone) =>
     void run({ id: "milestone", op: "milestone", params: { milestone: m.number }, summary: `${id} のマイルストーンを「${m.title}」にする`, done: `マイルストーンを「${m.title}」にしました`, undo: back });
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="shrink-0 text-muted-foreground">マイルストーン</span>
+    <Row label="マイルストーン">
       {now ? (
         <Badge
           variant="outline"
@@ -58,8 +58,8 @@ function Milestone() {
             pick: () => choose(m),
           }))}
       />
-    </div>
+    </Row>
   );
 }
 
-export default { order: 35, kinds: ["issues", "pulls"], View: Milestone } satisfies ItemSection;
+export default { order: 35, kinds: ["issues", "pulls"], place: "row", View: Milestone } satisfies ItemSection;

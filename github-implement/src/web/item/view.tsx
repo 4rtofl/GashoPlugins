@@ -1,7 +1,7 @@
-// The tab of one issue or pull request of a worktree: its title and state, the rows of sections/ (state changes,
-// assignees, labels, a pull request's branches), and the tabs of tabs/ (the conversation, and for a pull request its
-// commits, checks and files). After a change, gasho-daemon drops what it kept of the repository, so reading again shows
-// GitHub as it is now.
+// The tab of one issue or pull request of a worktree: its title and state, the parts of sections/ (the buttons that
+// change the state at the end of its line, the rows of assignees, labels and a pull request's branches, and blocks such
+// as the merge), and the tabs of tabs/ (the conversation, and for a pull request its commits, checks and files). After
+// a change, gasho-daemon drops what it kept of the repository, so reading again shows GitHub as it is now.
 import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
@@ -17,6 +17,7 @@ import { ToastProvider } from "../ui/toast.tsx";
 import { ItemProvider, useChanges, useItem, type Where } from "./context.tsx";
 import { ItemPalette } from "./palette.tsx";
 import { partsOf, type ItemSection, type ItemTab } from "./parts.ts";
+import { Rows } from "./row.tsx";
 import { StateBadge } from "./state-badge.tsx";
 
 const TABS = partsOf(import.meta.glob<{ default: ItemTab }>("./tabs/*.tsx", { eager: true }));
@@ -120,22 +121,26 @@ function Detail() {
   const tabs = TABS.filter((t) => t.kinds.includes(item.kind));
   const [chosen, setChosen] = usePluginState<string>(`tab:${where.repo}#${where.number}`, tabs[0]?.id ?? "");
   const tab = tabs.find((t) => t.id === chosen) ?? tabs[0];
+  const sections = SECTIONS.filter((s) => s.kinds.includes(item.kind));
+  const at = (place: ItemSection["place"]) => sections.filter((s) => s.place === place).map((s, i) => <s.View key={i} />);
   return (
     <>
-      <Title />
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
-        <StateBadge item={item} />
-        <span>
-          {item.author ?? "不明"} が<RelativeTime at={item.createdAt} now={now} />
-          に作成
-        </span>
-        <span>
-          更新 <RelativeTime at={item.updatedAt} now={now} />
-        </span>
+      <div className="space-y-2">
+        <Title />
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 text-xs text-muted-foreground">
+          <StateBadge item={item} />
+          <span>
+            {item.author ?? "不明"} が<RelativeTime at={item.createdAt} now={now} />
+            に作成
+          </span>
+          <span>
+            更新 <RelativeTime at={item.updatedAt} now={now} />
+          </span>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">{at("actions")}</div>
+        </div>
       </div>
-      {SECTIONS.filter((s) => s.kinds.includes(item.kind)).map((s, i) => (
-        <s.View key={i} />
-      ))}
+      <Rows>{at("row")}</Rows>
+      {at(undefined)}
       {tab && (
         <AnimatedTabs
           label={`${NAME[item.kind]} #${item.number} の内容`}

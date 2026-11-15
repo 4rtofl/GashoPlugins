@@ -9,11 +9,11 @@ import type { IssueRef, SubIssues } from "../../../daemon/ops/sub-issues.ts";
 import { readOp } from "../../daemon.ts";
 import { numberFrom } from "../../number.ts";
 import { itemIcon, NOT_PLANNED_ICON, useRefreshOptions } from "../../tabs.ts";
-import { Alert } from "../../ui/alert.tsx";
 import { Button } from "../../ui/button.tsx";
 import { Skeleton } from "../../ui/skeleton.tsx";
 import { useAfterChange, useItem, type Change } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
+import { Row } from "../row.tsx";
 
 const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -96,7 +96,20 @@ function SubIssuesRows() {
   useAfterChange(r.reload);
   const data = r.data;
   if (!data) {
-    return r.error ? <Alert tone="warning">親と sub-issue を読めませんでした：{r.error}</Alert> : <Skeleton className="h-5 w-56" />;
+    return r.error ? (
+      <Row label="親と sub-issue">
+        <span className="text-amber-700 dark:text-amber-400">読めませんでした：{r.error}</span>
+      </Row>
+    ) : (
+      <>
+        <Row label="親">
+          <Skeleton className="h-5 w-40" />
+        </Row>
+        <Row label="sub-issue">
+          <Skeleton className="h-5 w-40" />
+        </Row>
+      </>
+    );
   }
   const id = `#${where.number}`;
   const name = (i: IssueRef) => (sameRepo(i.repo, where.repo) ? `#${i.number}` : `${i.repo}#${i.number}`);
@@ -111,115 +124,111 @@ function SubIssuesRows() {
   const closed = children.filter((c) => c.state === "closed").length;
   const parent = data.parent;
   return (
-    <div className="space-y-2 text-xs">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="w-10 shrink-0 text-muted-foreground">親</span>
-          {parent ? (
-            <>
-              <IssueLink issue={parent} repo={where.repo} />
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={`${name(parent)} の sub-issue から外す`}
-                title={`${name(parent)} の sub-issue から外す`}
-                disabled={busy !== undefined}
-                isLoading={busy === "parent-"}
-                onClick={() =>
-                  change({
-                    id: "parent-",
-                    ...link("remove", parent, where.number),
-                    summary: `${id} を ${name(parent)} の sub-issue から外す`,
-                    done: `${name(parent)} の sub-issue から外しました`,
-                    undo: { ...link("add", parent, where.number), summary: `${id} を ${name(parent)} の sub-issue に戻す` },
-                  })
-                }
-              >
-                <X />
-              </Button>
-            </>
-          ) : (
-            <>
-              <span className="text-muted-foreground">なし</span>
-              <NumberAdd
-                label="親を決める"
-                repo={where.repo}
-                disabled={busy !== undefined}
-                onAdd={(n) =>
-                  change({
-                    id: "parent+",
-                    ...link("add", n, where.number),
-                    summary: `${id} を #${n} の sub-issue にする`,
-                    done: `#${n} の sub-issue にしました`,
-                    undo: { ...link("remove", n, where.number), summary: `${id} を #${n} の sub-issue から外す` },
-                  })
-                }
-              />
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="shrink-0 text-muted-foreground">sub-issue</span>
-          {children.length === 0 ? (
+    <>
+      <Row label="親">
+        {parent ? (
+          <>
+            <IssueLink issue={parent} repo={where.repo} />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`${name(parent)} の sub-issue から外す`}
+              title={`${name(parent)} の sub-issue から外す`}
+              disabled={busy !== undefined}
+              isLoading={busy === "parent-"}
+              onClick={() =>
+                change({
+                  id: "parent-",
+                  ...link("remove", parent, where.number),
+                  summary: `${id} を ${name(parent)} の sub-issue から外す`,
+                  done: `${name(parent)} の sub-issue から外しました`,
+                  undo: { ...link("add", parent, where.number), summary: `${id} を ${name(parent)} の sub-issue に戻す` },
+                })
+              }
+            >
+              <X />
+            </Button>
+          </>
+        ) : (
+          <>
             <span className="text-muted-foreground">なし</span>
-          ) : (
-            <>
-              <span className="tabular-nums">
-                {children.length} 件中 {closed} 件を閉じた
-              </span>
-              <span aria-hidden className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
-                <span className="block h-full rounded-full bg-violet-500" style={{ width: `${(closed / children.length) * 100}%` }} />
-              </span>
-            </>
-          )}
-          <NumberAdd
-            label="sub-issue を足す"
-            repo={where.repo}
-            disabled={busy !== undefined}
-            onAdd={(n) =>
-              change({
-                id: `sub+${n}`,
-                ...link("add", where.number, n),
-                summary: `${id} に sub-issue #${n} を足す`,
-                done: `sub-issue に #${n} を足しました`,
-                undo: { ...link("remove", where.number, n), summary: `${id} の sub-issue から #${n} を外す` },
-              })
-            }
-          />
-        </div>
-      </div>
-      {children.length > 0 && (
-        <ul aria-label="sub-issue" className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-          {children.map((c) => (
-            <li key={`${c.repo}#${c.number}`} className="flex items-center gap-2 py-1 pr-1 pl-3">
-              <span className="min-w-0 flex-1">
-                <IssueLink issue={c} repo={where.repo} />
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={`${name(c)} を sub-issue から外す`}
-                title={`${name(c)} を sub-issue から外す`}
-                disabled={busy !== undefined}
-                isLoading={busy === `sub-${c.repo}#${c.number}`}
-                onClick={() =>
-                  change({
-                    id: `sub-${c.repo}#${c.number}`,
-                    ...link("remove", where.number, c),
-                    summary: `${id} の sub-issue から ${name(c)} を外す`,
-                    done: `sub-issue から ${name(c)} を外しました`,
-                    undo: { ...link("add", where.number, c), summary: `${id} に sub-issue ${name(c)} を戻す` },
-                  })
-                }
-              >
-                <X />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+            <NumberAdd
+              label="親を決める"
+              repo={where.repo}
+              disabled={busy !== undefined}
+              onAdd={(n) =>
+                change({
+                  id: "parent+",
+                  ...link("add", n, where.number),
+                  summary: `${id} を #${n} の sub-issue にする`,
+                  done: `#${n} の sub-issue にしました`,
+                  undo: { ...link("remove", n, where.number), summary: `${id} を #${n} の sub-issue から外す` },
+                })
+              }
+            />
+          </>
+        )}
+      </Row>
+      <Row label="sub-issue">
+        {children.length === 0 ? (
+          <span className="text-muted-foreground">なし</span>
+        ) : (
+          <>
+            <span className="tabular-nums">
+              {children.length} 件中 {closed} 件を閉じた
+            </span>
+            <span aria-hidden className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
+              <span className="block h-full rounded-full bg-violet-500" style={{ width: `${(closed / children.length) * 100}%` }} />
+            </span>
+          </>
+        )}
+        <NumberAdd
+          label="sub-issue を足す"
+          repo={where.repo}
+          disabled={busy !== undefined}
+          onAdd={(n) =>
+            change({
+              id: `sub+${n}`,
+              ...link("add", where.number, n),
+              summary: `${id} に sub-issue #${n} を足す`,
+              done: `sub-issue に #${n} を足しました`,
+              undo: { ...link("remove", where.number, n), summary: `${id} の sub-issue から #${n} を外す` },
+            })
+          }
+        />
+        {children.length > 0 && (
+          <ul aria-label="sub-issue" className="w-full divide-y divide-border overflow-hidden rounded-xl border border-border">
+            {children.map((c) => (
+              <li key={`${c.repo}#${c.number}`} className="flex items-center gap-2 py-1 pr-1 pl-3">
+                <span className="min-w-0 flex-1">
+                  <IssueLink issue={c} repo={where.repo} />
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`${name(c)} を sub-issue から外す`}
+                  title={`${name(c)} を sub-issue から外す`}
+                  disabled={busy !== undefined}
+                  isLoading={busy === `sub-${c.repo}#${c.number}`}
+                  onClick={() =>
+                    change({
+                      id: `sub-${c.repo}#${c.number}`,
+                      ...link("remove", where.number, c),
+                      summary: `${id} の sub-issue から ${name(c)} を外す`,
+                      done: `sub-issue から ${name(c)} を外しました`,
+                      undo: { ...link("add", where.number, c), summary: `${id} に sub-issue ${name(c)} を戻す` },
+                    })
+                  }
+                >
+                  <X />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Row>
+    </>
   );
 }
 
-export default { order: 38, kinds: ["issues"], View: SubIssuesRows } satisfies ItemSection;
+export default { order: 38, kinds: ["issues"], place: "row", View: SubIssuesRows } satisfies ItemSection;

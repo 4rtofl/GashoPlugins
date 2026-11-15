@@ -10,6 +10,7 @@ import { Badge } from "../../ui/badge.tsx";
 import { Button } from "../../ui/button.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
+import { Row } from "../row.tsx";
 
 type Label = RepoMeta["labels"][number];
 
@@ -26,8 +27,7 @@ function Labels() {
   const meta = useRequest<RepoMeta>(readOp(machine, "meta", { repo: where.repo }), { staleSeconds: 300 });
   const id = `#${where.number}`;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="w-10 shrink-0 text-muted-foreground">ラベル</span>
+    <Row label="ラベル">
       {item.labels.map((l) => (
         <Badge
           key={l.name}
@@ -51,7 +51,7 @@ function Labels() {
       ))}
       {item.labels.length === 0 && <span className="text-muted-foreground">なし</span>}
       <LabelMenu labels={meta.data?.labels} error={meta.error} reload={meta.reload} disabled={busy !== undefined} />
-    </div>
+    </Row>
   );
 }
 
@@ -272,4 +272,4 @@ function NewLabelForm({
   );
 }
 
-export default { order: 30, kinds: ["issues", "pulls"], View: Labels } satisfies ItemSection;
+export default { order: 30, kinds: ["issues", "pulls"], place: "row", View: Labels } satisfies ItemSection;

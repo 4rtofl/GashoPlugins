@@ -1,6 +1,7 @@
-// Close and reopen, and a pull request's draft and ready, each of which an Undo Toast can put back. A merged pull
-// request has none. As on GitHub, a close or reopen button says what it closes and has the icon and color of the state
-// it leads to, and an issue closes as done or, when that is picked in the menu beside its button, as not planned.
+// Close and reopen, and a pull request's draft and ready, at the end of the line of the state; an Undo Toast can put
+// each back. A merged pull request has none. As on GitHub, a close or reopen button says what it closes and has the
+// icon and color of the state it leads to, and an issue closes as done or, when that is picked in the menu beside its
+// button, as not planned.
 import { Check, ChevronDown, CircleCheck, CircleDot, CircleSlash, GitPullRequest, GitPullRequestClosed, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import { cn, Popover } from "@gasho/plugin-sdk";
@@ -34,7 +35,7 @@ function ActionButton({ action, className }: { action: Action; className?: strin
   const { busy, run } = useItem();
   const { label, doing, icon: Icon, color, ...c } = action;
   return (
-    <Button onClick={() => void run(c)} disabled={busy !== undefined} isLoading={busy === c.id} loadingText={doing} leftIcon={Icon && <Icon className={color} />} className={className}>
+    <Button size="xs" onClick={() => void run(c)} disabled={busy !== undefined} isLoading={busy === c.id} loadingText={doing} leftIcon={Icon && <Icon className={color} />} className={className}>
       {label}
     </Button>
   );
@@ -67,7 +68,7 @@ function CloseIssue({ id }: { id: string }) {
         align="start"
         className="w-64 p-1"
         trigger={
-          <Button aria-label="Issue の閉じ方を選ぶ" title="Issue の閉じ方を選ぶ" disabled={busy !== undefined} className="-ml-px rounded-l-none px-2 hover:z-10 focus-visible:z-10">
+          <Button size="xs" aria-label="Issue の閉じ方を選ぶ" title="Issue の閉じ方を選ぶ" disabled={busy !== undefined} className="-ml-px rounded-l-none px-1.5 hover:z-10 focus-visible:z-10">
             <ChevronDown />
           </Button>
         }
@@ -128,13 +129,13 @@ function StateActions() {
     });
   }
   return (
-    <div className="flex flex-wrap gap-2">
+    <>
       {actions.map((a) => (
         <ActionButton key={a.id} action={a} />
       ))}
       {item.state === "open" && item.kind === "issues" && <CloseIssue id={id} />}
-    </div>
+    </>
   );
 }
 
-export default { order: 10, kinds: ["issues", "pulls"], View: StateActions } satisfies ItemSection;
+export default { order: 10, kinds: ["issues", "pulls"], place: "actions", View: StateActions } satisfies ItemSection;

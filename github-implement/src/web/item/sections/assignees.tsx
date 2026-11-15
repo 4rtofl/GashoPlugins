@@ -8,6 +8,7 @@ import { Button } from "../../ui/button.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 import { Picker } from "../picker.tsx";
+import { Row } from "../row.tsx";
 
 function Assignees() {
   const { machine, item, where, busy, run } = useItem();
@@ -25,8 +26,7 @@ function Assignees() {
       undo: { op: "edit", params: { removeAssignees: [as] }, summary: `${id} の担当から ${who} を外す` },
     });
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-      <span className="w-10 shrink-0 text-muted-foreground">担当</span>
+    <Row label="担当">
       {item.assignees.map((a) => (
         <Badge
           key={a}
@@ -59,8 +59,8 @@ function Assignees() {
         disabled={busy !== undefined}
         choices={meta.data?.assignable.filter((a) => !item.assignees.includes(a)).map((a) => ({ key: a, name: a, text: <span>{a}</span>, pick: () => add(a) }))}
       />
-    </div>
+    </Row>
   );
 }
 
-export default { order: 20, kinds: ["issues", "pulls"], View: Assignees } satisfies ItemSection;
+export default { order: 20, kinds: ["issues", "pulls"], place: "row", View: Assignees } satisfies ItemSection;
