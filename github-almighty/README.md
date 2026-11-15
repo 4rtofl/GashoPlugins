@@ -9,6 +9,7 @@ worktree の Issue（ブランチ名の番号）と Pull request（そのブラ�
 - 読み込み中は Skeleton、読めなかったときは Alert、操作の結果は Toast で出す。担当やラベルを外す・閉じるなど、元に戻せる操作は、Toast の「元に戻す」で取り消せる
 - ここ 24 時間に開いた worktree を、設定 `refreshSeconds`（既定 60 秒、0 で止める）の間隔で裏でも読み直す。設定画面に、間隔ごとに GitHub の上限の半分に収まる worktree の数と、working server ごとのいまの点数を半円のゲージで出す
 - 裏の読み直しで増えたコメント・レビュー・終わったチェックの数を、Issue・Pull request のタブに出す（タブを開くと消える）。⌘K（Ctrl+K）で、いまの画面の操作と worktree の Issue・Pull request を探して実行できる。本文とコメントの #番号 にポインターを置くと、その題と状態が出る
+- 「GitHub」タブの下と、サイドバーのページ「GitHub」に、リポジトリの Open な Issue と Pull request の一覧を出す。Issue と Pull request を切り替え、「すべて」「自分が担当」「自分が作成」（Pull request は「レビューを頼まれた」も）で絞り込み、題の語で探せる。新しく更新されたものから 50 件まで、GraphQL の検索 1 回（1 点）で読む。ページには、working server に登録したリポジトリと、Gasho のセッションのあるリポジトリが並び、押すと、登録したリポジトリはその本体の worktree、ほかはそのセッションの worktree で、Issue・Pull request の画面を開く
 - 部品は easyui（easyui.site）のものを `src/web/ui/` に写し、Gasho の色に直した（framer-motion を同梱する）
 
 ## 足すときの置き場
