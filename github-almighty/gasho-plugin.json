@@ -1,7 +1,7 @@
 {
   "id": "github-almighty",
   "name": "GitHub Almighty",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "worktree の Issue と Pull request を、セッションと並んだタブで読み、assign・コメント・本文の変更などの操作をする（working server の gh を使う）",
   "api": "1.5",
   "web": {
@@ -12,43 +12,13 @@
     "js": "daemon.js"
   },
   "methods": {
-    "status": {
-      "kind": "read"
-    },
-    "items": {
+    "read": {
       "kind": "read",
-      "timeoutSeconds": 25
-    },
-    "item": {
-      "kind": "read",
-      "timeoutSeconds": 25
-    },
-    "meta": {
-      "kind": "read",
-      "timeoutSeconds": 25
-    },
-    "add": {
-      "kind": "write",
-      "timeoutSeconds": 25
-    },
-    "remove": {
-      "kind": "write"
-    },
-    "edit": {
-      "kind": "write",
       "timeoutSeconds": 30
     },
-    "comment": {
+    "write": {
       "kind": "write",
-      "timeoutSeconds": 30
-    },
-    "state": {
-      "kind": "write",
-      "timeoutSeconds": 30
-    },
-    "ready": {
-      "kind": "write",
-      "timeoutSeconds": 30
+      "timeoutSeconds": 60
     }
   },
   "settings": {

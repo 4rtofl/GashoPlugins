@@ -1,6 +1,7 @@
 // What github-almighty reads with gh and shows beside a worktree's sessions: the issue its branch is named after, the
 // pull requests of its branch, the ones added to it by hand, and one of them with its conversation. The daemon part
 // (src/daemon) makes them, the web part (src/web) shows them and asks the daemon part to change them on GitHub.
+// The parts of one item's read (src/daemon/detail) declare the fields they add to GitHubItemDetail where they are.
 import type { GitHubRepo } from "@gasho/plugin-sdk";
 
 export type { GitHubRepo };
@@ -68,11 +69,31 @@ export interface GitHubCheck {
   url?: string;
 }
 
-/** A file a pull request changes. */
+/** A file a pull request changes (the operation "files"). */
 export interface GitHubFile {
   path: string;
+  /** GitHub's "copied" is added, and a change of only the file's mode is modified. */
+  status: "added" | "modified" | "removed" | "renamed";
+  /** renamed: the path it had. */
+  previousPath?: string;
   additions: number;
   deletions: number;
+  /** Its diff's id on the pull request's page of files: diff-<SHA-256 of the path>. */
+  anchor: string;
+}
+
+/** A change of an issue or pull request, shown between its comments (GraphQL timelineItems). */
+export interface GitHubEvent {
+  type: "labeled" | "unlabeled" | "assigned" | "unassigned" | "closed" | "reopened" | "merged";
+  /** ISO 8601 */
+  at: string;
+  actor?: string;
+  /** labeled, unlabeled */
+  label?: { name: string; color?: string };
+  /** assigned, unassigned */
+  assignee?: string;
+  /** closed (issues): as done or as not planned. */
+  stateReason?: "completed" | "not_planned";
 }
 
 /** One issue or pull request with its text and conversation, as gasho-daemon read it with `gh`. */
@@ -94,7 +115,7 @@ export interface GitHubItemDetail {
   assignees: string[];
   body: string;
   /** Oldest first; when there are many, the latest ones (`commentsLeftOut` says how many older ones were left out). */
-  comments: GitHubComment[];
+  comments?: GitHubComment[];
   commentsLeftOut?: number;
   /** Pull requests only. */
   draft?: boolean;
@@ -105,7 +126,5 @@ export interface GitHubItemDetail {
   additions?: number;
   deletions?: number;
   changedFiles?: number;
-  files?: GitHubFile[];
-  commits?: number;
   checks?: GitHubCheck[];
 }

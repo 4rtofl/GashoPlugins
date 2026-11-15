@@ -23,8 +23,11 @@ export class Store {
   private loaded?: Promise<void>;
   private writing: Promise<void> = Promise.resolve();
   private written = new Map<string, number>();
+  private readonly file: string;
 
-  constructor(private readonly file: string) {}
+  constructor(file: string) {
+    this.file = file;
+  }
 
   load(): Promise<void> {
     this.loaded ??= fs.readFile(this.file, "utf8").then(

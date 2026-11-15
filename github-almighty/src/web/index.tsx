@@ -2,7 +2,7 @@
 // screens they open, and, on the settings screen, how much of GitHub's hourly limit the background reads take.
 import { definePlugin } from "@gasho/plugin-sdk";
 import { HomeView } from "./home";
-import { ItemView } from "./item";
+import { ItemView } from "./item/view";
 import { RefreshSettings } from "./settings";
 import { useItemTabs } from "./tabs.ts";
 import "./style.css";
