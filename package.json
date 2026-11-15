@@ -15,7 +15,8 @@
     "remote-control-shell",
     "session-list-rewind",
     "usage",
-    "vscode-dark-2026"
+    "vscode-dark-2026",
+    "worktree-status"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
