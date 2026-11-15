@@ -8,7 +8,7 @@
 | `better-worktree-list/` | サイドバーの worktree の一覧を、リポジトリごとか、確認待ち・作業中・待機中・オフライン・セッションなしのカテゴリに分けて出す。分け方は一覧の見出しのメニューで選び、行とセッションのタブはそのまま残す。プラグインの API 1.8 に対応した Gasho が要る。仕様は [better-worktree-list/README.md](better-worktree-list/README.md) |
 | `git/` | セッションのリポジトリの、開いている Issue と Pull request を読む。working server の GitHub CLI（gh）を使う |
 | `github/` | セッションのヘッダーの「Actions」「Projects」「Packages」から右にパネルを開き、リポジトリの GitHub Actions の実行（ジョブ、ステップ、失敗したログの末尾）、Project のボード、パッケージの版を読む。読むだけで、GitHub は変えない。プラグインの API 1.3 に対応した gasho-daemon が要る。仕様は [github/README.md](github/README.md) |
-| `github-almighty/` | worktree の Issue（ブランチ名の番号）と Pull request（そのブランチのもの、手で足したもの）を、セッションと並んだタブで読む。1 件の画面は会話・コミット・チェック・ファイルのタブに分かれ、題と本文の変更、担当、ラベル、コメント、閉じる・開き直す、Draft の切り替えを、GitHub を開かずに行う。マージ済みの Pull request の画面からは、その worktree とセッションをまとめて削除できる。ここ 24 時間に開いた worktree を、設定の間隔（既定は 60 秒）で読み直す。プラグインの API 1.10 に対応した Gasho が要る。仕様と足し方は [github-almighty/README.md](github-almighty/README.md) |
+| `github-implement/` | worktree の Issue（ブランチ名の番号）と Pull request（そのブランチのもの、手で足したもの）を、セッションと並んだタブで読む。1 件の画面は会話・コミット・チェック・ファイルのタブに分かれ、題と本文の変更、担当、ラベル、コメント、閉じる・開き直す、Draft の切り替えを、GitHub を開かずに行う。マージ済みの Pull request の画面からは、その worktree とセッションをまとめて削除できる。ここ 24 時間に開いた worktree を、設定の間隔（既定は 60 秒）で読み直す。プラグインの API 1.10 に対応した Gasho が要る。仕様と足し方は [github-implement/README.md](github-implement/README.md) |
 | `github-review/` | 自分にレビューを頼まれた Pull request と、選んだ repo の Pull request を、GitHub の一覧と同じ書き方で探す。行から、primary checkout の隣にレビュー用の worktree（`review-<PR 番号>`）を作り、その中でセッションを起動して、選んだテンプレートの指示を送る。済んだら worktree とローカルのブランチを片付ける。working server の git と gh を使う。プラグインの API 1.3 に対応した gasho-daemon が要る。仕様は [github-review/README.md](github-review/README.md) |
 | `kanban/` | 選んだ repo の worktree と自分の Pull request を、列のボードに並べる。working server の git と gh を使う。仕様は [kanban/README.md](kanban/README.md) |
 | `pondering/` | Claude が作業しているあいだ、会話の末尾に Claude Code のスピナーのような文言とアニメーションを出す。文言は6つの言語から作業ごとに選び、作業の時間、書いたトークン数、動いているツールも添える。プラグインの API 1.2 に対応した Gasho が要る |
@@ -19,7 +19,7 @@
 
 ## ジャンル
 
-プラグインは、`gasho-plugin.json` の `genre` に、ジャンルの ID を1つ書く。使えるジャンルは `genres.json` に並べた、連携（`integration`）、作業の管理（`workflow`）、監視（`monitoring`）、見た目（`appearance`）、開発ツール（`devtools`）、テーマ（`theme`）、その他（`other`）である。それぞれにどんなプラグインが当てはまるかも、`genres.json` に書いた。いまのプラグインは、`git` と `github` と `github-almighty` が連携、`kanban` と `github-review` が作業の管理、`usage` が監視、`pondering` と `session-list-rewind` と `better-worktree-list` が見た目、`remote-control-shell` が開発ツール、`ayu-dark` と `vscode-dark-2026` がテーマである。Gasho のプラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて、`genres.json` の順に並べる。
+プラグインは、`gasho-plugin.json` の `genre` に、ジャンルの ID を1つ書く。使えるジャンルは `genres.json` に並べた、連携（`integration`）、作業の管理（`workflow`）、監視（`monitoring`）、見た目（`appearance`）、開発ツール（`devtools`）、テーマ（`theme`）、その他（`other`）である。それぞれにどんなプラグインが当てはまるかも、`genres.json` に書いた。いまのプラグインは、`git` と `github` と `github-implement` が連携、`kanban` と `github-review` が作業の管理、`usage` が監視、`pondering` と `session-list-rewind` と `better-worktree-list` が見た目、`remote-control-shell` が開発ツール、`ayu-dark` と `vscode-dark-2026` がテーマである。Gasho のプラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて、`genres.json` の順に並べる。
 
 ```json
 {

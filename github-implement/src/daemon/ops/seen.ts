@@ -1,5 +1,5 @@
 // What an item's screen shows, every time it reads the item: { repo, number, marks: SeenMarks }. The item's worktree tab
-// then counts only what comes after (ops/news.ts). It changes only what github-almighty keeps, as "items" writes down
+// then counts only what comes after (ops/news.ts). It changes only what github-implement keeps, as "items" writes down
 // that a worktree showed, and opening a tab is not an operation for Gasho's log: a read.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
 import type { SeenMarks } from "../../news.ts";

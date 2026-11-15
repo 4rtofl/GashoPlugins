@@ -21,7 +21,7 @@ const path = (file: string): string => file.replace(/^.*\//, "").replace(/\.ts$/
 export async function dispatch(ops: Map<string, Op>, kind: Op["kind"], params: unknown, ctx: DaemonContext): Promise<unknown> {
   const p = objArg(params);
   const op = typeof p.op === "string" ? ops.get(p.op) : undefined;
-  if (!op) throw new PluginError("github-almighty の daemon の部分に、この操作がありません。working server の github-almighty を新しくしてください。");
+  if (!op) throw new PluginError("github-implement の daemon の部分に、この操作がありません。working server の github-implement を新しくしてください。");
   if (op.kind !== kind) throw new PluginError(`操作「${String(p.op)}」は ${op.kind} で呼んでください。`);
   return op.run(p, ctx);
 }
