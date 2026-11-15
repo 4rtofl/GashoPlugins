@@ -100,7 +100,7 @@ export function branchNumber(branch: string | undefined): number | undefined {
   return Number.isInteger(n) && n >= 1 && n <= 1e9 ? n : undefined;
 }
 
-const SUMMARY = "__typename ... on Issue { number title state url } ... on PullRequest { number title state isDraft url }";
+export const SUMMARY = "__typename ... on Issue { number title state url } ... on PullRequest { number title state isDraft url }";
 const PULL_SUMMARY = "__typename number title state isDraft url";
 
 /**
@@ -116,7 +116,7 @@ export function itemsQueryArgs(repo: string, branch: string | undefined, numbers
   return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, ...(branch ? ["-f", `branch=${branch}`] : [])];
 }
 
-function summary(raw: unknown): ItemSummary | undefined {
+export function summary(raw: unknown): ItemSummary | undefined {
   const r = (raw ?? {}) as Record<string, unknown>;
   const number = num(r.number);
   const title = str(r.title);
