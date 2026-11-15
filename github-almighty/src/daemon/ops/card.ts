@@ -66,6 +66,6 @@ export default {
   async run(p, ctx) {
     const repo = repoArg(p.repo);
     const number = numberArg(p.number);
-    return gh(`read the card of #${number}`, async () => parseCard(await readAllowingNotFound(ctx, cardQueryArgs(repo, number), { repo, maxAgeSeconds: maxAge(p) })), ctx);
+    return gh(`read the card of #${number}`, async () => parseCard(await readAllowingNotFound(ctx.github.read(cardQueryArgs(repo, number), { repo, maxAgeSeconds: maxAge(p) }))), ctx);
   },
 } satisfies Op;

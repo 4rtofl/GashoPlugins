@@ -2,7 +2,7 @@
 // number, fresh? } → ItemLinks. For a pull request, also the repository's open issues it could be linked to. One
 // GraphQL query (1 or 2 points), read when the screen shows, not in the background.
 import type { GitHubKind } from "../../types.ts";
-import { gh, maxAge } from "../core.ts";
+import { gh, itemRead } from "../core.ts";
 import { httpsUrl, kindArg, num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -111,7 +111,7 @@ export default {
     const number = numberArg(p.number);
     return gh(
       `read the links of #${number}`,
-      async () => parseLinks((await ctx.github.read(linksQueryArgs(repo, kind, number), { repo, maxAgeSeconds: maxAge(p) })).stdout, repo, kind),
+      async () => parseLinks((await itemRead(ctx, repo, number, p)(linksQueryArgs(repo, kind, number))).stdout, repo, kind),
       ctx,
     );
   },

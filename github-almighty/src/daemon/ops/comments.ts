@@ -5,7 +5,7 @@
 // item's read keeps (1 point; 2 for the first of a pull request, which also reads its latest 100 reviews); read when
 // the conversation shows, not in the background.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import { gh, maxAge, type Ctx } from "../core.ts";
+import { gh, itemRead, type Ctx } from "../core.ts";
 import { COMMENTS_MAX } from "../detail/comments.ts";
 import { kindArg, login, num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
@@ -128,11 +128,12 @@ export function parseComments(json: string): { meta: ConversationMeta; before?: 
 }
 
 /** `reviews`: it is a pull request, whose latest reviews the first page reads. */
-export async function readComments(ctx: Ctx, repo: string, number: number, maxAgeSeconds: number, reviews = false): Promise<ConversationMeta> {
+export async function readComments(ctx: Ctx, repo: string, number: number, params: Record<string, unknown>, reviews = false): Promise<ConversationMeta> {
+  const read = itemRead(ctx, repo, number, params);
   let meta: ConversationMeta | undefined;
   let before: string | undefined;
   do {
-    const { stdout } = await ctx.github.read(commentsQueryArgs(repo, number, before, reviews && !meta), { repo, maxAgeSeconds });
+    const { stdout } = await read(commentsQueryArgs(repo, number, before, reviews && !meta));
     const page = parseComments(stdout);
     if (!page) throw new PluginError("この番号の Issue や Pull request は見つかりません。");
     meta = meta ? { ...meta, comments: [...page.meta.comments, ...meta.comments] } : page.meta;
@@ -147,6 +148,6 @@ export default {
     const repo = repoArg(p.repo);
     const number = numberArg(p.number);
     const pull = p.kind !== undefined && kindArg(p.kind) === "pulls";
-    return gh(`read the comments of #${number}`, () => readComments(ctx, repo, number, maxAge(p), pull), ctx);
+    return gh(`read the comments of #${number}`, () => readComments(ctx, repo, number, p, pull), ctx);
   },
 } satisfies Op;

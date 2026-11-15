@@ -1,7 +1,7 @@
 // Whether the conversation of an issue or pull request is locked, and why: { repo, number, fresh? } → LockState.
 // `gh … view --json` has no field for it, so this reads GitHub's REST API (a pull request is an issue there), which
 // has an hourly limit of its own apart from the GraphQL points the background reads use.
-import { gh, maxAge } from "../core.ts";
+import { gh, itemRead } from "../core.ts";
 import { numberArg, repoArg } from "../gh.ts";
 import type { Op } from "../op.ts";
 import { isLockReason, type LockReason } from "./lock.ts";
@@ -23,6 +23,6 @@ export default {
   async run(p, ctx) {
     const repo = repoArg(p.repo);
     const number = numberArg(p.number);
-    return gh(`read whether #${number} is locked`, async () => parseLocked((await ctx.github.read(lockedArgs(repo, number), { maxAgeSeconds: maxAge(p) })).stdout), ctx);
+    return gh(`read whether #${number} is locked`, async () => parseLocked((await itemRead(ctx, repo, number, p)(lockedArgs(repo, number))).stdout), ctx);
   },
 } satisfies Op;

@@ -2,7 +2,7 @@
 // { repo, number, head, base, fresh? } → PullStack. The screen gives the head and base it read (GitHubItemDetail), so
 // that it is one GraphQL query (1 point), read when a pull request's screen shows, not in the background.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import { gh, maxAge, readAllowingNotFound } from "../core.ts";
+import { gh, itemRead, readAllowingNotFound } from "../core.ts";
 import { branchArg, num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -137,7 +137,7 @@ export default {
     return gh(
       `read the stack of #${number}`,
       // A head GitHub cannot compare (deleted, or in a fork) is NOT_FOUND.
-      async () => parseStack(await readAllowingNotFound(ctx, stackQueryArgs(repo, number, head, base), { repo, maxAgeSeconds: maxAge(p) }), number, base),
+      async () => parseStack(await readAllowingNotFound(itemRead(ctx, repo, number, p)(stackQueryArgs(repo, number, head, base))), number, base),
       ctx,
     );
   },

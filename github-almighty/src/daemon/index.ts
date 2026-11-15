@@ -2,7 +2,8 @@
 // screen asks for, all with gh through gasho-daemon (ctx.github). Each operation is a file of ops/ and each part of the
 // read of one item a file of detail/ (Vite puts every file of the folder here), so that new ones are new files. The
 // worktrees Gasho showed in the last day are read again in the background, every "refreshSeconds" (a setting), so that
-// their tabs and screens open with what GitHub has now.
+// their tabs and screens open with what GitHub has now: their items every time, the rest of an item when its version
+// changed or what was read of it is KEEP_MAX_SECONDS old (core.ts).
 import { defineDaemonPlugin, type DaemonStartContext } from "@gasho/plugin-sdk/daemon";
 import { addDetailParts, begin, current, end, keepSeconds, readDetail, readItems, refreshSeconds, SHOWN_WITHIN_MS, takeSettings } from "./core.ts";
 import type { DetailPart } from "./gh.ts";
@@ -18,18 +19,17 @@ let stopped = false;
 async function round(ctx: DaemonStartContext): Promise<void> {
   const s = current();
   await s.load();
-  const keep = keepSeconds();
   for (const [, w] of s.shownSince(Date.now() - SHOWN_WITHIN_MS)) {
     if (stopped) return;
     try {
-      const items = await readItems(ctx, w.repo, w.branch, w.added, keep);
+      const items = await readItems(ctx, w.repo, w.branch, w.added, keepSeconds());
       // What a tab opens first: the issue the branch is named after and its open pull requests.
       const open = [...(items.named ? [items.named] : []), ...items.pulls].filter((i) => i.state === "open");
       const seen = new Set<string>();
       for (const i of open) {
         if (stopped || seen.has(`${i.kind}${i.number}`)) continue;
         seen.add(`${i.kind}${i.number}`);
-        await readDetail(ctx, w.repo, i.kind, i.number, keep);
+        await readDetail(ctx, w.repo, i.kind, i.number);
       }
     } catch (e) {
       ctx.log(`could not read ${w.repo}${w.branch ? ` (${w.branch})` : ""} again`, e);

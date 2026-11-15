@@ -2,7 +2,7 @@
 // reopened and merged: { repo, number, fresh? } → GitHubEvent[], oldest first. One GraphQL query (1 point), read when
 // the conversation shows, not in the background.
 import type { GitHubEvent } from "../../types.ts";
-import { gh, maxAge } from "../core.ts";
+import { gh, itemRead } from "../core.ts";
 import { labelColor, login, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -68,6 +68,6 @@ export default {
   async run(p, ctx) {
     const repo = repoArg(p.repo);
     const number = numberArg(p.number);
-    return gh(`read the events of #${number}`, async () => parseEvents((await ctx.github.read(eventsQueryArgs(repo, number), { repo, maxAgeSeconds: maxAge(p) })).stdout), ctx);
+    return gh(`read the events of #${number}`, async () => parseEvents((await itemRead(ctx, repo, number, p)(eventsQueryArgs(repo, number))).stdout), ctx);
   },
 } satisfies Op;

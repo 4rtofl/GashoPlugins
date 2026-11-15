@@ -76,7 +76,7 @@ test("older pages are read until there are as many comments as the item's read k
     },
     log: () => undefined,
   } as unknown as Ctx;
-  const meta = await readComments(ctx, "o/r", 1, 0, true);
+  const meta = await readComments(ctx, "o/r", 1, {}, true);
   assert.deepEqual(asked, [
     [undefined, "reviews=true"],
     ["c2", "reviews=false"],
@@ -92,7 +92,7 @@ test("older pages are read until there are as many comments as the item's read k
   );
   // An issue has no reviews, and asking for them would cost a point.
   asked.length = 0;
-  await readComments(ctx, "o/r", 1, 0);
+  await readComments(ctx, "o/r", 1, {});
   assert.ok(asked.every(([, reviews]) => reviews === "reviews=false"));
 
   // A page holds 100: the item's read keeps COMMENTS_MAX, so no more pages than that are read.
@@ -102,7 +102,7 @@ test("older pages are read until there are as many comments as the item's read k
     github: { read: async () => (reads++, { stdout: page(full(reads * 100), "more"), stderr: "" }) },
     log: () => undefined,
   } as unknown as Ctx;
-  assert.equal((await readComments(many, "o/r", 1, 0)).comments.length, COMMENTS_MAX);
+  assert.equal((await readComments(many, "o/r", 1, {})).comments.length, COMMENTS_MAX);
   assert.equal(reads, COMMENTS_MAX / 100);
 });
 

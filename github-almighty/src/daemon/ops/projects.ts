@@ -3,7 +3,7 @@
 // GraphQL query (1 point), read when the screen shows, not in the background. gh's login needs the scope "project" (or
 // "read:project") for it; without it the answer is { noScope: true }, so that the screen can say how to add it.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import { gh, maxAge } from "../core.ts";
+import { gh, itemRead } from "../core.ts";
 import { num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
@@ -173,7 +173,7 @@ export default {
       async (): Promise<ProjectsRead> => {
         let stdout: string;
         try {
-          stdout = (await ctx.github.read(projectsQueryArgs(repo, number), { repo, maxAgeSeconds: maxAge(p) })).stdout;
+          stdout = (await itemRead(ctx, repo, number, p)(projectsQueryArgs(repo, number))).stdout;
         } catch (e) {
           if (lacksProjectScope(e)) return { noScope: true };
           throw e;
