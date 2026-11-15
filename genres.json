@@ -1,0 +1,9 @@
+[
+  { "id": "integration", "name": "連携", "description": "GitHub など、ほかのサービスとつないで、読んだり操作したりする" },
+  { "id": "workflow", "name": "作業の管理", "description": "worktree や Pull request などの作業を並べて、進み具合を管理する" },
+  { "id": "monitoring", "name": "監視", "description": "使用量や、セッション・working server の様子を見張って出す" },
+  { "id": "appearance", "name": "見た目", "description": "画面に表示や動きを足す。画面全体の色を変えるものは「テーマ」にする" },
+  { "id": "devtools", "name": "開発ツール", "description": "シェルなど、開発に使う道具を Gasho の中で使えるようにする" },
+  { "id": "theme", "name": "テーマ", "description": "画面全体の色と角の丸みを変える（gasho-plugin.json の theme）" },
+  { "id": "other", "name": "その他", "description": "どのジャンルにも当てはまらないもの" }
+]
