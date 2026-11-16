@@ -11,12 +11,12 @@ test("each reviewer stands where GitHub's sidebar shows them", () => {
   const json = JSON.stringify({
     number: 7,
     title: "t",
-    url: "https://github.com/4rtoflow/GashoPlugins/pull/7",
+    url: "https://github.com/4rtofl/GashoPlugins/pull/7",
     state: "OPEN",
     author: { login: "totosuki" },
     reviewRequests: [
       { __typename: "User", login: "4rna-y" },
-      { __typename: "Team", name: "UI", slug: "4rtoflow/ui" },
+      { __typename: "Team", name: "UI", slug: "4rtofl/ui" },
       { __typename: "Team", name: "Docs", slug: "docs" },
     ],
     reviews: [
@@ -35,8 +35,8 @@ test("each reviewer stands where GitHub's sidebar shows them", () => {
   });
   assert.deepEqual(parseDetail(json, "pulls", [reviewers])?.reviewers, [
     { name: "4rna-y", state: "requested" },
-    { name: "4rtoflow/ui", team: true, state: "requested" },
-    { name: "4rtoflow/docs", team: true, state: "requested" },
+    { name: "4rtofl/ui", team: true, state: "requested" },
+    { name: "4rtofl/docs", team: true, state: "requested" },
     { name: "yu1sh", state: "approved" },
     { name: "octocat", state: "commented" },
     { name: "hubot", state: "changes_requested" },
@@ -63,9 +63,9 @@ test("a review goes to gh with its body as the value of --body, and one that nee
 
 test("reviewers are logins or teams as org/slug, and never a flag of gh", async () => {
   const { writes, ctx } = fakeGitHub();
-  await changeReviewers.run({ repo: "o/r", number: 7, add: ["yu1sh", "4rtoflow/ui"], remove: ["4rna-y"] }, ctx);
+  await changeReviewers.run({ repo: "o/r", number: 7, add: ["yu1sh", "4rtofl/ui"], remove: ["4rna-y"] }, ctx);
   await assert.rejects(changeReviewers.run({ repo: "o/r", number: 7, add: ["--repo=x/y"] }, ctx));
   await assert.rejects(changeReviewers.run({ repo: "o/r", number: 7, add: ["a/b/c"] }, ctx));
   await assert.rejects(changeReviewers.run({ repo: "o/r", number: 7 }, ctx));
-  assert.deepEqual(writes, [["pr", "edit", "7", "--repo", "o/r", "--add-reviewer=yu1sh", "--add-reviewer=4rtoflow/ui", "--remove-reviewer=4rna-y"]]);
+  assert.deepEqual(writes, [["pr", "edit", "7", "--repo", "o/r", "--add-reviewer=yu1sh", "--add-reviewer=4rtofl/ui", "--remove-reviewer=4rna-y"]]);
 });

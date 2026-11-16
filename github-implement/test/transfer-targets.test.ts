@@ -6,18 +6,18 @@ const repo = (nameWithOwner: string, more: Record<string, unknown> = {}) => ({ n
 
 test("an issue moves only to the owner's other repositories that have issues and that the login can write to", () => {
   const json = JSON.stringify([
-    repo("4rtoflow/GashoPlugins"),
-    repo("4rtoflow/Gasho", { viewerPermission: "ADMIN" }),
-    repo("4rtoflow/Archived", { isArchived: true }),
-    repo("4rtoflow/NoIssues", { hasIssuesEnabled: false }),
-    repo("4rtoflow/ReadOnly", { viewerPermission: "READ" }),
-    repo("4rtoflow/Triage", { viewerPermission: "TRIAGE" }),
-    repo("4rtoflow/Audipp", { viewerPermission: "MAINTAIN", visibility: "PRIVATE" }),
+    repo("4rtofl/GashoPlugins"),
+    repo("4rtofl/Gasho", { viewerPermission: "ADMIN" }),
+    repo("4rtofl/Archived", { isArchived: true }),
+    repo("4rtofl/NoIssues", { hasIssuesEnabled: false }),
+    repo("4rtofl/ReadOnly", { viewerPermission: "READ" }),
+    repo("4rtofl/Triage", { viewerPermission: "TRIAGE" }),
+    repo("4rtofl/Audipp", { viewerPermission: "MAINTAIN", visibility: "PRIVATE" }),
   ]);
-  assert.deepEqual(transferTargets(json, "4rtoflow/gashoplugins"), ["4rtoflow/Audipp", "4rtoflow/Gasho"]);
+  assert.deepEqual(transferTargets(json, "4rtofl/gashoplugins"), ["4rtofl/Audipp", "4rtofl/Gasho"]);
 });
 
 test("from a repository that is not public, an issue never moves into a public one", () => {
-  const json = JSON.stringify([repo("4rtoflow/Secret", { visibility: "PRIVATE" }), repo("4rtoflow/Open"), repo("4rtoflow/Inside", { visibility: "INTERNAL" }), repo("4rtoflow/Other", { visibility: "PRIVATE" })]);
-  assert.deepEqual(transferTargets(json, "4rtoflow/Secret"), ["4rtoflow/Inside", "4rtoflow/Other"]);
+  const json = JSON.stringify([repo("4rtofl/Secret", { visibility: "PRIVATE" }), repo("4rtofl/Open"), repo("4rtofl/Inside", { visibility: "INTERNAL" }), repo("4rtofl/Other", { visibility: "PRIVATE" })]);
+  assert.deepEqual(transferTargets(json, "4rtofl/Secret"), ["4rtofl/Inside", "4rtofl/Other"]);
 });

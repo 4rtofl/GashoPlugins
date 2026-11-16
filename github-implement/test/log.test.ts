@@ -4,11 +4,11 @@ import { actionsIdArg, actionsJob } from "../src/daemon/detail/checks.ts";
 import { parseLog } from "../src/daemon/ops/log.ts";
 
 test("a check of GitHub Actions is known by its link, with ids past what numberArg takes", () => {
-  const ids = actionsJob("https://github.com/4rtoflow/Gasho/actions/runs/43628523537/job/132549714426");
+  const ids = actionsJob("https://github.com/4rtofl/Gasho/actions/runs/43628523537/job/132549714426");
   assert.deepEqual(ids, { run: 43628523537, job: 132549714426 });
   assert.equal(actionsIdArg(ids?.job), 132549714426);
-  assert.equal(actionsJob("https://github.com/4rtoflow/Gasho/actions/runs/43628523537"), undefined);
-  assert.equal(actionsJob("https://ci.example.com/4rtoflow/Gasho/actions/runs/1/job/2"), undefined);
+  assert.equal(actionsJob("https://github.com/4rtofl/Gasho/actions/runs/43628523537"), undefined);
+  assert.equal(actionsJob("https://ci.example.com/4rtofl/Gasho/actions/runs/1/job/2"), undefined);
   assert.throws(() => actionsIdArg("132549714426"));
 });
 

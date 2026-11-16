@@ -2,7 +2,7 @@
 
 セッションの画面で、入力欄の下の行に、そのセッションの Context Window の使用率をリングで出す。リングを押すと Popover が開き、Context Window の使用量と、Claude.ai のプランで決まっている使用量の上限を出す。上限には、すべてのモデルを合わせた週の上限のほかに、Fable のようなモデルごとの週の上限と、プランにあれば5時間の上限も出す。
 
-プラグインの API 1.4 に対応した Gasho が要る（Gasho の PR #32）。入力欄の下の部品（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo.context` と `SessionInfo.limits`、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わない決まりを使う。どれも Gasho の [docs/plugins.md](https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md) に書いてある。
+プラグインの API 1.4 に対応した Gasho が要る（Gasho の PR #32）。入力欄の下の部品（P14、`composerFooter`）、SDK の `Popover`、`SessionInfo.context` と `SessionInfo.limits`、プラグイン専用のフォルダーで動く Claude Code をセッションとして扱わない決まりを使う。どれも Gasho の [docs/plugins.md](https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md) に書いてある。
 
 ## 決めたこと
 

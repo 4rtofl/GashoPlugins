@@ -70,9 +70,9 @@ test("what the forms send never becomes a flag of gh, and gh never pushes the br
 test("a search keeps only the repository's own issues and pull requests", () => {
   const node = (repo: string, number: number) => ({ __typename: "Issue", number, title: `#${number}`, state: "OPEN", url: `https://github.com/${repo}/issues/${number}` });
   // The words may name another repository (repo:…); its #5 is not this repository's #5.
-  const json = JSON.stringify({ data: { search: { nodes: [node("4rtoflow/GashoPlugins", 27), node("4rtoflow/Gasho", 5), node("4rtoflow/GashoPlugins2", 6)] } } });
+  const json = JSON.stringify({ data: { search: { nodes: [node("4rtofl/GashoPlugins", 27), node("4rtofl/Gasho", 5), node("4rtofl/GashoPlugins2", 6)] } } });
   assert.deepEqual(
-    parseSearch(json, "4rtoflow/GashoPlugins").map((i) => i.number),
+    parseSearch(json, "4rtofl/GashoPlugins").map((i) => i.number),
     [27],
   );
 });

@@ -6,7 +6,7 @@ import { installCommand, listPackages, packageNameArg, packagesBase, parsePackag
 const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}`, import.meta.url), "utf8");
 
 test("an organization's packages are kept when their repository is the session's (real output)", () => {
-  const gasho = parsePackages(fixture("packages-org-npm.json"), "4rtoflow/gasho");
+  const gasho = parsePackages(fixture("packages-org-npm.json"), "4rtofl/gasho");
   assert.ok(gasho.some((p) => p.name === "gasho-plugin-sdk"));
   const sdk = gasho.find((p) => p.name === "gasho-plugin-sdk");
   assert.deepEqual(sdk, {
@@ -16,10 +16,10 @@ test("an organization's packages are kept when their repository is the session's
     versions: sdk?.versions,
     createdAt: "2026-11-14T12:20:33Z",
     updatedAt: sdk?.updatedAt,
-    url: "https://github.com/orgs/4rtoflow/packages/npm/package/gasho-plugin-sdk",
+    url: "https://github.com/orgs/4rtofl/packages/npm/package/gasho-plugin-sdk",
   });
   assert.equal(typeof sdk?.versions, "number");
-  assert.deepEqual(parsePackages(fixture("packages-org-npm.json"), "4rtoflow/GashoPlugins"), []);
+  assert.deepEqual(parsePackages(fixture("packages-org-npm.json"), "4rtofl/GashoPlugins"), []);
   // A user's packages do not say how many versions they have.
   const user = parsePackages(fixture("packages-user-container.json"), "4rna-y/AwakeVerify");
   assert.equal(user.length, 3);
@@ -41,7 +41,7 @@ test("versions: npm's numbers and a container's tags, newest first (real output)
 });
 
 test("the command that installs a version", () => {
-  assert.equal(installCommand({ type: "npm", name: "gasho-plugin-sdk" }, "4rtoflow", "Gasho", { id: 1, name: "1.9.0" }), "npm install @4rtoflow/gasho-plugin-sdk@1.9.0 --registry=https://npm.pkg.github.com");
+  assert.equal(installCommand({ type: "npm", name: "gasho-plugin-sdk" }, "4rtofl", "Gasho", { id: 1, name: "1.9.0" }), "npm install @4rtofl/gasho-plugin-sdk@1.9.0 --registry=https://npm.pkg.github.com");
   assert.equal(installCommand({ type: "container", name: "Awaver-Backend" }, "4rna-y", "x", { id: 1, name: "sha256:ab", tags: ["prod", "v1"] }), "docker pull ghcr.io/4rna-y/awaver-backend:prod");
   assert.equal(installCommand({ type: "container", name: "app" }, "O", "x", { id: 1, name: "sha256:ab", tags: [] }), "docker pull ghcr.io/o/app@sha256:ab");
   assert.equal(installCommand({ type: "rubygems", name: "gem" }, "O", "x", { id: 1, name: "1.0" }), "gem install gem --version 1.0 --source https://rubygems.pkg.github.com/o");
@@ -99,10 +99,10 @@ test("without read:packages, the answer says how to add it; a package of another
       },
     },
   };
-  assert.equal(await readPackage(elsewhere as never, "4rtoflow/GashoPlugins", "npm", "gasho-hub", { maxAgeSeconds: 60 }), undefined);
-  const read = await readPackage(elsewhere as never, "4rtoflow/Gasho", "npm", "gasho-hub", { maxAgeSeconds: 60 });
+  assert.equal(await readPackage(elsewhere as never, "4rtofl/GashoPlugins", "npm", "gasho-hub", { maxAgeSeconds: 60 }), undefined);
+  const read = await readPackage(elsewhere as never, "4rtofl/Gasho", "npm", "gasho-hub", { maxAgeSeconds: 60 });
   assert.equal(read?.versions.length, 3);
-  assert.match(read?.install ?? "", /^npm install @4rtoflow\/gasho-hub@1\.10\.0 /);
+  assert.match(read?.install ?? "", /^npm install @4rtofl\/gasho-hub@1\.10\.0 /);
 });
 
 test("a package's name is checked before it reaches gh", () => {

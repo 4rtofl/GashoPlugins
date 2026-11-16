@@ -51,4 +51,4 @@ GraphQL の `repository.packages` は npm のパッケージを返さないの�
 
 ## テスト
 
-`test/` の gh の出力の読み取りは、実際の gh の出力（`test/fixtures/`、2026-11-15 に 4rtoflow/GashoPlugins、4rtoflow/Gasho、github/roadmap、4rna-y のパッケージで取ったもの）をもとにしている。
+`test/` の gh の出力の読み取りは、実際の gh の出力（`test/fixtures/`、2026-11-15 に 4rtofl/GashoPlugins、4rtofl/Gasho、github/roadmap、4rna-y のパッケージで取ったもの）をもとにしている。Org 名が 4rtofl に変わったため、fixtures の中の Org 名は 4rtofl に置き換えてある。

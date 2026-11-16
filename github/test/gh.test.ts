@@ -5,7 +5,7 @@ import { branchArg, ghError, idArg, maxAge, missingScope, repoOf } from "../src/
 const repo = (owner: string, name: string) => ({ owner, name, url: `https://github.com/${owner}/${name}` });
 
 test("the repository's owner/name is checked before it goes to gh as --repo", () => {
-  assert.equal(repoOf(repo("4rtoflow", "Gasho")), "4rtoflow/Gasho");
+  assert.equal(repoOf(repo("4rtofl", "Gasho")), "4rtofl/Gasho");
   assert.equal(repoOf(repo("a-b", "x.y_z-1")), "a-b/x.y_z-1");
   for (const [o, n] of [["-x", "r"], ["o", "-r"], ["o/x", "r"], ["o", "r/s"], ["o", ".."], ["o", "r --web"], ["", "r"]] as const) {
     assert.throws(() => repoOf(repo(o, n)), /読めません/);

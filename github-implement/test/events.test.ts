@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { eventsQueryArgs, parseEvents } from "../src/daemon/ops/events.ts";
 
 test("only a pull request's part of the events query asks for merges", () => {
-  const args = eventsQueryArgs("4rtoflow/GashoPlugins", 9);
+  const args = eventsQueryArgs("4rtofl/GashoPlugins", 9);
   const query = args[args.indexOf("-f") + 1] ?? "";
   // GitHub refuses the whole query when an issue's timeline items spread MergedEvent.
   const issuePart = query.slice(query.indexOf("... on Issue"), query.indexOf("... on PullRequest"));
