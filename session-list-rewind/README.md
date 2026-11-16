@@ -4,7 +4,7 @@
 
 いまの Gasho のサイドバーは、worktree ごとに1行を出し、同じ worktree のセッションは上のタブで切り替える。同じ worktree で多くのセッションを動かすと、サイドバーの行は少ないままで、セッションはタブからしか選べない。このプラグインは、worktree の一覧より前の「セッション」の一覧のように、サイドバーからセッションを直接選べるようにする（Rewind）。
 
-プラグインの API 1.7 に対応した Gasho が要る（Gasho の PR #48）。サイドバーのセッションの一覧（P17、`sessionList`）を使う。Gasho の [docs/plugins.md](https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md) に書いてある。
+プラグインの API 1.7 に対応した Gasho が要る（Gasho の PR #48）。サイドバーのセッションの一覧（P17、`sessionList`）を使う。Gasho の [docs/plugins.md](https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md) に書いてある。
 
 ## 決めたこと
 

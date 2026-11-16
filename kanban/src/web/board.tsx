@@ -1,4 +1,4 @@
-// The kanban's page (moved here from Gasho's views/kanban.tsx of PR #8, after 4rtoflow/Dashboard): the worktrees and my
+// The kanban's page (moved here from Gasho's views/kanban.tsx of PR #8, after 4rtofl/Dashboard): the worktrees and my
 // pull requests of the watched repositories, read by each working server's daemon part, in the columns the board plugin
 // of each repository gives (in the first one without a plugin). The look follows
 // easyui.site: dark tiles with hairline borders, color only where it tells a state, and springs. On a computer the board

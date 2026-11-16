@@ -1,6 +1,6 @@
 # GashoPlugins
 
-[Gasho](https://github.com/4rtoflow/Gasho) のプラグインを置くリポジトリ。プラグインごとに、ID と同じ名前のフォルダーを並べる。プラグインの仕組みと API は、Gasho の [docs/plugins.md](https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md) にまとめた。
+[Gasho](https://github.com/4rtofl/Gasho) のプラグインを置くリポジトリ。プラグインごとに、ID と同じ名前のフォルダーを並べる。プラグインの仕組みと API は、Gasho の [docs/plugins.md](https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md) にまとめた。
 
 | フォルダー | プラグイン |
 |---|---|
@@ -38,7 +38,7 @@ Pull request と main への push のたびに、GitHub Actions が `scripts/che
 
 ## ビルドする
 
-SDK は、GitHub Packages の `@4rtoflow/gasho-plugin-sdk` を `@gasho/plugin-sdk` の名前で入れて使う。GitHub Packages から入れるには、`read:packages` の権限のあるトークンを `~/.npmrc` に書いておく。書き方は、Gasho の [docs/daemon-setup.md](https://github.com/4rtoflow/Gasho/blob/main/docs/daemon-setup.md) と同じ。
+SDK は、GitHub Packages の `@4rtofl/gasho-plugin-sdk` を `@gasho/plugin-sdk` の名前で入れて使う。GitHub Packages から入れるには、`read:packages` の権限のあるトークンを `~/.npmrc` に書いておく。書き方は、Gasho の [docs/daemon-setup.md](https://github.com/4rtofl/Gasho/blob/main/docs/daemon-setup.md) と同じ。
 
 ```bash
 npm install
@@ -58,7 +58,7 @@ npm test
 
 版を上げずにマージしたものは公開しない。ただし、ジャンル（`genre` や `genres.json`）を変えたときは、`catalog.json` だけを作り直す。Pull request では、`gasho-plugin.json` の確認、型チェック、テスト、ビルドだけを行う。何が公開されるかは、ビルドしてから `node scripts/release.ts --dry-run` で確かめられる（何も変えない）。
 
-GitHub Actions は、GitHub Packages の SDK を、このリポジトリの `GITHUB_TOKEN` で入れる。そのため、SDK のパッケージ（`@4rtoflow/gasho-plugin-sdk`）の設定の「Manage Actions access」に、このリポジトリを Read で足しておく。
+GitHub Actions は、GitHub Packages の SDK を、このリポジトリの `GITHUB_TOKEN` で入れる。そのため、SDK のパッケージ（`@4rtofl/gasho-plugin-sdk`）の設定の「Manage Actions access」に、このリポジトリを Read で足しておく。
 
 ## Gasho に入れる
 

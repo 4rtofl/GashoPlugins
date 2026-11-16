@@ -12,7 +12,7 @@ on:
 
 permissions:
   contents: write # the releases
-  packages: read # the SDK, @4rtoflow/gasho-plugin-sdk on GitHub Packages
+  packages: read # the SDK, @4rtofl/gasho-plugin-sdk on GitHub Packages
 
 concurrency:
   # One release at a time; checks of pull requests do not wait for it.
@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://npm.pkg.github.com
-          scope: "@4rtoflow"
+          scope: "@4rtofl"
       # Every plugin names a genre of genres.json (scripts/check.ts); it needs nothing installed.
       - run: node scripts/check.ts
       - run: npm ci

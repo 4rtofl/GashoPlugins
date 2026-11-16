@@ -26,7 +26,7 @@ test("a file comes as added, modified, removed or renamed, with the id of its di
       ["run.sh", "modified", undefined],
     ],
   );
-  // As https://github.com/4rtoflow/GashoPlugins/pull/35/files names README.md's diff.
+  // As https://github.com/4rtofl/GashoPlugins/pull/35/files names README.md's diff.
   assert.equal(files[0]?.anchor, "diff-b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5");
   const jq = filesArgs("o/r", 7, 2);
   assert.equal(jq[1], "repos/o/r/pulls/7/files?per_page=100&page=2");
