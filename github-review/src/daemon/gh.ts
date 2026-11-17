@@ -10,13 +10,16 @@ import { latestMark } from "../verdict.ts";
 export const SEARCH_LIMIT = 50;
 /** The latest comments read of each pull request for the mark of its review: few, to keep the query cheap. */
 export const MARK_COMMENTS = 10;
+/** The latest reviews that request changes read of each pull request, for when "差し戻す" is done (cleanup.ts). */
+export const CHANGES_REVIEWS = 5;
 /** GitHub's search takes a query of up to 256 characters: the watched repositories go into as many searches as need be. */
 const QUERY_MAX = 256;
 
 const PR_FIELDS =
   "number title url state isDraft createdAt headRefName headRefOid isCrossRepository repository { nameWithOwner } author { login } " +
   "labels(first: 10) { nodes { name color } } reviewDecision totalCommentsCount statusCheckRollup { state } " +
-  `viewerDidAuthor mergeable maintainerCanModify recent: comments(last: ${MARK_COMMENTS}) { nodes { viewerDidAuthor body url createdAt } }`;
+  `viewerDidAuthor mergeable maintainerCanModify recent: comments(last: ${MARK_COMMENTS}) { nodes { viewerDidAuthor body url createdAt } } ` +
+  `changes: reviews(last: ${CHANGES_REVIEWS}, states: [CHANGES_REQUESTED]) { nodes { viewerDidAuthor submittedAt } }`;
 const SEARCH_NODES = `issueCount nodes { ... on PullRequest { ${PR_FIELDS} } }`;
 
 /** GitHub sorts a search by best match: the list of pull requests puts the newest first. */
@@ -87,6 +90,17 @@ function parseComments(conn: unknown): PrComment[] {
   });
 }
 
+/** When I last requested changes, of the reviews that request changes (nodes of a connection). */
+function myChanges(conn: unknown): string | undefined {
+  const nodes = isRecord(conn) && Array.isArray(conn.nodes) ? conn.nodes : [];
+  let latest: string | undefined;
+  for (const n of nodes) {
+    const at = isRecord(n) && n.viewerDidAuthor === true ? str(n.submittedAt) : undefined;
+    if (at && !Number.isNaN(Date.parse(at)) && (!latest || Date.parse(at) > Date.parse(latest))) latest = at;
+  }
+  return latest;
+}
+
 /** A pull request as the query reads it; undefined for anything else (an issue, a missing one). */
 export function parsePr(raw: unknown): PrRow | undefined {
   if (!isRecord(raw)) return undefined;
@@ -106,6 +120,7 @@ export function parsePr(raw: unknown): PrRow | undefined {
   const author = str((raw.author as { login?: unknown } | null)?.login);
   const head = str(raw.headRefOid);
   const mark = latestMark(parseComments(raw.recent));
+  const changesRequestedAt = myChanges(raw.changes);
   return {
     repo,
     number: raw.number,
@@ -126,6 +141,7 @@ export function parsePr(raw: unknown): PrRow | undefined {
     ...(raw.mergeable === "CONFLICTING" ? { conflict: true } : {}),
     ...(raw.maintainerCanModify === true ? { canModify: true } : {}),
     ...(mark ? { mark } : {}),
+    ...(changesRequestedAt ? { changesRequestedAt } : {}),
   };
 }
 
