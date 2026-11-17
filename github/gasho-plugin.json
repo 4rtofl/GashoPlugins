@@ -1,7 +1,7 @@
 {
   "id": "github",
   "name": "GitHub",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "セッションのリポジトリの Actions の実行、Projects のボード、Packages の版を読む（working server の gh を使う）",
   "genre": "integration",
   "api": "1.3",

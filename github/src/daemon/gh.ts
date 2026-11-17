@@ -54,6 +54,19 @@ export const githubUrl = (v: unknown): string | undefined => {
   return s?.startsWith("https://github.com/") ? s : undefined;
 };
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** `text`, or when longer than `max` UTF-16 units, its start up to there between characters as shown (an emoji is never cut in two) and `more`. */
+export function cut(text: string, max: number, more: string): string {
+  if (text.length <= max) return text;
+  let end = 0;
+  for (const { index, segment } of graphemes.segment(text)) {
+    if (index + segment.length > max) break;
+    end = index + segment.length;
+  }
+  return `${text.slice(0, end)}${more}`;
+}
+
 /** What `gh api` printed: JSON (also when it failed with an HTTP error, which it prints on stdout). */
 export function parseJson(stdout: string): unknown {
   try {
@@ -102,5 +115,5 @@ export function ghError(e: unknown): string {
     .split("\n")
     .map((l) => l.trim())
     .find((l) => l && !l.startsWith("Command failed") && !l.startsWith("{"));
-  return `GitHub から読み込めませんでした：${(first ?? "原因が分かりません").slice(0, 200)}`;
+  return `GitHub から読み込めませんでした：${cut(first ?? "原因が分かりません", 200, "")}`;
 }
