@@ -33,11 +33,13 @@
 }
 ```
 
-Pull request と main への push のたびに、GitHub Actions が `scripts/check.ts` で確かめる。`genre` のないプラグインや、`genres.json` にないジャンルを書いたプラグインがあると、依存パッケージを入れる前に失敗し、Pull request のそのファイルにエラーを出す。ID がフォルダーの名前と違うもの、`version` が 1.2.0 の形でないもの、`package.json` の `workspaces` にないプラグインのフォルダーも、同じく失敗にする。手元では `npm run check` で確かめられる。
+Pull request と main への push のたびに、GitHub Actions が `scripts/check.ts` で確かめる。`genre` のないプラグインや、`genres.json` にないジャンルを書いたプラグインがあると、依存パッケージを入れる前に失敗し、Pull request のそのファイルにエラーを出す。ID がフォルダーの名前と違うもの、`package.json` の `workspaces` にないプラグインのフォルダー、Gasho サーバーが受け付けない `gasho-plugin.json`（name が 41 文字以上、api が 1.0 の形でない、無い権限の名前、`timeoutSeconds` が 120 を超える、web・daemon・theme のどれも無い、など。規則は `scripts/manifest.ts`）も、同じく失敗にする。web か daemon のあるプラグインは、`package.json` に `typecheck` の script が要る（無いと `npm run typecheck` がそのプラグインの型を確かめない）。手元では `npm run check` で確かめられる。
 
 ジャンルを足すときや名前を変えるときは、`genres.json` を直す。プラグインの画面は、ジャンルの名前と並びをカタログ（`catalog.json` の `genres`）から読むので、Gasho は直さなくてよい。
 
 ## ビルドする
+
+Node.js は 24.2 以上を使う（`.nvmrc`）。それより古いと `npm ci` が止まる。
 
 SDK は、GitHub Packages の `@4rtofl/gasho-plugin-sdk` を `@gasho/plugin-sdk` の名前で入れて使う。GitHub Packages から入れるには、`read:packages` の権限のあるトークンを `~/.npmrc` に書いておく。書き方は、Gasho の [docs/daemon-setup.md](https://github.com/4rtofl/Gasho/blob/main/docs/daemon-setup.md) と同じ。
 
@@ -45,7 +47,7 @@ SDK は、GitHub Packages の `@4rtofl/gasho-plugin-sdk` を `@gasho/plugin-sdk`
 npm install
 npm run build -w git          # git/dist/ に gasho-plugin.json、web.js、web.css、daemon.js を書く
 npm run dev -w git            # 保存するたびにビルドし直す
-npm run check                 # どのプラグインも genres.json のジャンルを書いているか
+npm run check                 # どのプラグインも Gasho サーバーが受け付ける gasho-plugin.json で、genres.json のジャンルを書いているか
 npm run typecheck
 npm test
 ```
@@ -54,10 +56,16 @@ npm test
 
 プラグインを直したら、`gasho-plugin.json` の `version` を上げて main にマージする。GitHub Actions（`.github/workflows/release.yml`）が、`gasho-plugin.json` の確認（ジャンルなど）、型チェック、テスト、ビルドをしてから、版の上がったプラグインを公開する。
 
-- `dist/` の中身を `<ID>-<版>.tgz` にまとめて、リリース `<ID>-v<版>` に置く。前の版のリリースは残す
-- リリース `catalog` の `catalog.json`（プラグインごとの最新の版とジャンル、ファイルの SHA-256、ジャンルの一覧）を作り直す
+- `dist/` の中身（プラグインのフォルダーに `LICENSE` があれば、それも）を `<ID>-<版>.tgz` にまとめて、リリース `<ID>-v<版>` に置く。前の版のリリースは残す
+- リリース `catalog` の `catalog.json`（プラグインごとの最新の版とジャンル、ファイルの SHA-256、ジャンルの一覧）を作り直す。新しい `catalog.json` を上げ終えてから、古いものを消す
 
-版を上げずにマージしたものは公開しない。ただし、ジャンル（`genre` や `genres.json`）を変えたときは、`catalog.json` だけを作り直す。Pull request では、`gasho-plugin.json` の確認、型チェック、テスト、ビルドだけを行う。何が公開されるかは、ビルドしてから `node scripts/release.ts --dry-run` で確かめられる（何も変えない）。
+公開済みの版のカタログの項目（api・権限など）は、その版の tgz の中の `gasho-plugin.json` から作る。ジャンルだけは、今の `gasho-plugin.json` から取る。
+
+版を上げずにマージしたものは公開しない。ただし、ジャンル（`genre` や `genres.json`）を変えたときは、`catalog.json` だけを作り直す。公開した版のあとにプラグインのフォルダーのファイル（README などの `.md` と、テストを除く）が変わっていると、GitHub Actions がそのプラグインの `gasho-plugin.json` に警告を出し、ジョブの Summary に表を出す。公開するときは版を上げる。
+
+公開済みのいちばん新しい版より低い版にすると（revert など）、失敗にして何も公開しない。カタログの版は下がらない。main の先頭より古い commit の run（Re-run など）は、何も公開しない。
+
+Pull request と main 以外のブランチでは、`gasho-plugin.json` の確認、型チェック、テスト、ビルドのあと、`node scripts/release.ts --dry-run` で何が公開されるかを出す（何も変えない）。手元でも、ビルドしてから同じコマンドで確かめられる。公開した版と比べるのに、リリースのタグ（`git fetch --tags`）を使う。
 
 GitHub Actions は、GitHub Packages の SDK を、このリポジトリの `GITHUB_TOKEN` で入れる。そのため、SDK のパッケージ（`@4rtofl/gasho-plugin-sdk`）の設定の「Manage Actions access」に、このリポジトリを Read で足しておく。
 
