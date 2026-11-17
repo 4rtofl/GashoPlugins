@@ -20,9 +20,9 @@ import {
 } from "@gasho/plugin-sdk";
 import type { CheckRunState, PrComment, PrDetail } from "../types.ts";
 import { askOf, withoutMark } from "../verdict.ts";
-import { openedText, progressOf, type Item } from "./actions";
+import { progressOf, type Item } from "./actions";
 import { DEFAULT_QUERY, useListings } from "./listing";
-import { AgentAsk, PROGRESS, ProgressBadge, RowContext, stateLook } from "./row";
+import { AgentAsk, openedText, PROGRESS, ProgressBadge, RowContext, stateLook } from "./row";
 import { useRowShell } from "./shell";
 import { Alert, AlertDescription, Skeleton } from "./ui/parts";
 
