@@ -54,9 +54,10 @@ npx vitest run github         # 画面の部品のテストを、パスで絞っ
 
 `@gasho/plugin-sdk` の hooks と部品は、Gasho の画面が実行時に渡すので、テストの中には無い。Vitest は、`@gasho/plugin-sdk` の import を `test/sdk.tsx` に向ける（`vitest.config.ts`）。
 
-- hooks は、テストが `set`（`useMachines`・`useNow`・`useSetting` などが返す値）・`respond`（`useRequest` がメソッドごとに返す値）・`answerCalls`（`useCall` の関数が返す値）で決めた値を返す。決めていない `useRequest` は読み込み中を返す
+- hooks は、テストが `set`（`useMachines`・`useNow`・`useSetting`・`useDaemonReady` などが返す値）・`respond`（`useRequest` がメソッドごとに返す値）・`answerCalls`（`useCall` の関数が返す値）で決めた値を返す。決めていない `useRequest` は読み込み中を返す。`useDaemonReady` の値は、working server の ID を受ける関数でも渡せる
+- `respond` に関数を渡すときは、描くたびに同じオブジェクトを返す。描くたびに新しい `data` を返すと、`data` を effect の依存に持つ部品は描き直しを止めない
 - 受けた引数は `sdk` のモック（`sdk.request`・`sdk.call`・`sdk.nav.openPanel` など）に残る。`callsOf`・`lastRequest` で、メソッドごとに取り出せる
-- `Page`・`Panel`・`Tile` などの部品は、受け取った題と中身を描くだけにした。Gasho の見た目や、`Popover` の出る位置は確かめられない
+- `Page`・`Panel`・`Tile` などの部品は、受け取った題と中身を描くだけにした。`Popover` は、trigger を押すと開き、開いているあいだだけ中身を描く。Gasho の見た目や、`Popover` の出る位置は確かめられない
 - 決めた値と記録は、テストごとに `test/setup.ts` が消す
 
 ## 公開する
