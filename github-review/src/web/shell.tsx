@@ -2,11 +2,13 @@
 // templates and the settings of the merge, which rows are at work, and the dialogs and the notice they show; and the
 // removal of the review worktrees whose merge or send-back is done.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useCall, useLaunchSession, useNavigation, useRemoveWorktree, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
+import { useCall, useLaunchSession, useNavigation, useRemoveWorktree, removeWorktreeProblem, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../cleanup.ts";
 import { mergeMethodOf } from "../instructions.ts";
 import { parseTemplates } from "../template.ts";
-import { cleanUp, readyToClean, type Actions, type Item, type Notice, type Spot, type Tools } from "./actions";
+import type { Place } from "../types.ts";
+import { working } from "../verdict.ts";
+import { cleanUp, type Actions, type Item, type Notice, type Spot, type Tools } from "./actions";
 import { AskDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
 import type { Source } from "./listing";
 import type { RowShared } from "./row";
@@ -112,4 +114,11 @@ function useAutoCleanup(sources: Record<string, Source>, ready: MachineInfo[], t
       }
     }
   }, [sources, ready, tools]);
+}
+
+/** A review worktree whose merge or send-back is done, with no session at work in it: the page removes it now. */
+function readyToClean(machine: MachineInfo, place: Place): boolean {
+  const { worktree, cleanup } = place;
+  if (!worktree?.review || !cleanup?.done || cleanup.problem) return false;
+  return !working(machine.sessions, worktree.path) && removeWorktreeProblem(machine, { path: worktree.path, repo: place.primary }) === undefined;
 }

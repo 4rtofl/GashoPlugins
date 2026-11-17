@@ -1,12 +1,11 @@
-// What the buttons of a pull request's row do: make its review worktree on a working server, start a session there,
-// send the chosen template and open the session; open the worktree it has (its Gasho session, or one started there), or
-// start a new session there and open it; remove its review worktree; and send the Agent in its worktree what
-// "マージしてもらう", "差し戻す" or "修正してもらう" asks, and remove its review worktree once a merge or a send-back
-// asked with "終わったら片付ける" is done (cleanup.ts). The daemon part does the git; the page asks the person before
-// trusting a folder, before removing, and before asking for a merge or a send-back.
+// What the buttons of a pull request's row do: make its review worktree on a working server, start a session there and
+// send the chosen template, staying on the page (the notice offers to open the session); open the worktree it has (its
+// Gasho session, or one started there), or start a new session there and open it; remove its review worktree; and send
+// the Agent in its worktree what "マージしてもらう", "差し戻す" or "修正してもらう" asks, and remove its review worktree
+// once a merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when). The daemon
+// part does the git; the page asks the person before trusting a folder, before removing, and before asking for a merge
+// or a send-back.
 import {
-  relativeTime,
-  removeWorktreeProblem,
   type MachineInfo,
   type Navigation,
   type SessionInfo,
@@ -101,9 +100,16 @@ async function openIn(machine: MachineInfo, dir: string, t: Tools): Promise<void
   t.nav.openSession(machine.id, sessionId);
 }
 
+/** The notice that a session got what it was sent, with a button to open it: the page stays where it is. */
+function sentNotice(machine: MachineInfo, sessionId: string, text: string, t: Tools): void {
+  t.actions.notify({ text, action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) } });
+}
+
 /**
- * Makes the review worktree of a pull request on a working server, starts a session there, sends the template (none
- * for "何も送らない") and opens the session. When the worktree turns out to be there already, it only opens.
+ * Makes the review worktree of a pull request on a working server, starts a session there and sends the template (none
+ * for "何も送らない"). When the worktree turns out to be there already, it takes the Gasho session used last there (or
+ * starts one) and sends nothing. Either way the page stays, so the person can go on to other pull requests; the notice
+ * offers to open the session.
  */
 export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<void> {
   const { machine } = spot;
@@ -120,7 +126,8 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
     return;
   }
   if (!r.data.created) {
-    await openIn(machine, r.data.path, t);
+    const sessionId = sessionsIn(machine, r.data.path)[0]?.sessionId ?? (await start(machine, r.data.path, t));
+    if (sessionId) sentNotice(machine, sessionId, `#${pr.number} のレビュー用の worktree はもうありました（${folderName(r.data.path)}）。`, t);
     return;
   }
   const sessionId = await start(machine, r.data.path, t);
@@ -130,12 +137,20 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
     // The verdict's mark is asked for after the template, whatever it says.
     const sent = await t.send({ machine: machine.id, sessionId, text: `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}` });
     if (!sent.ok) {
-      t.actions.notify({ text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`, tone: "danger" });
+      t.actions.notify({
+        text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`,
+        tone: "danger",
+        action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
+      });
       return;
     }
   }
-  t.actions.notify(undefined);
-  t.nav.openSession(machine.id, sessionId);
+  sentNotice(
+    machine,
+    sessionId,
+    template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`,
+    t,
+  );
 }
 
 /** Opens the worktree a pull request has on a working server. */
@@ -170,10 +185,7 @@ export async function askAgent(spot: Spot, label: string, text: string, t: Tools
     return false;
   }
   const later = session && session.status !== "idle";
-  t.actions.notify({
-    text: later ? `「${label}」を送りました。セッションの作業が終わってから入力されます。` : `「${label}」をセッションに送りました。`,
-    action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
-  });
+  sentNotice(machine, sessionId, later ? `「${label}」を送りました。セッションの作業が終わってから入力されます。` : `「${label}」をセッションに送りました。`, t);
   return true;
 }
 
@@ -194,13 +206,6 @@ export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind,
 }
 
 const KIND_TEXT: Record<CleanupKind, string> = { merge: "マージ", sendBack: "差し戻し" };
-
-/** A review worktree whose merge or send-back is done, with no session at work in it: the page removes it now. */
-export function readyToClean(machine: MachineInfo, place: Place): boolean {
-  const { worktree, cleanup } = place;
-  if (!worktree?.review || !cleanup?.done || cleanup.problem) return false;
-  return !working(machine.sessions, worktree.path) && removeWorktreeProblem(machine, { path: worktree.path, repo: place.primary }) === undefined;
-}
 
 /**
  * Removes a review worktree whose merge or send-back is done, with the sessions in it and its local branch, as Gasho's
@@ -252,10 +257,4 @@ export async function removeWorktree(item: Item, spot: Spot, t: Tools): Promise<
       ? { text: `${folderName(r.data.path)} を片付けました${r.data.branch ? `（ローカルのブランチ ${r.data.branch} も消しました）` : ""}。` }
       : { text: r.error, tone: "danger" },
   );
-}
-
-/** "totosuki が 3日前に開いた": who opened a pull request, and when. */
-export function openedText(pr: Pick<PrRow, "author" | "createdAt">, now: number): string {
-  const when = pr.createdAt ? relativeTime(Date.parse(pr.createdAt), now) : undefined;
-  return [pr.author ? `${pr.author} が` : undefined, when ? `${when}に開いた` : "開いた"].filter(Boolean).join(" ");
 }

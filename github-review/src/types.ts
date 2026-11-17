@@ -113,7 +113,7 @@ export interface Listing {
 /** What "worktree を作る" did: the worktree of the pull request, made now or found. */
 export interface Created {
   path: string;
-  /** False: it was there already, and only opens. */
+  /** False: it was there already (the page takes the session used last there, and sends nothing). */
   created: boolean;
   branch?: string;
 }

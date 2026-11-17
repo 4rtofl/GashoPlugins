@@ -23,12 +23,12 @@ import {
 } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { createContext, useContext, type MouseEvent, type ReactNode } from "react";
-import { cn } from "@gasho/plugin-sdk";
+import { cn, relativeTime } from "@gasho/plugin-sdk";
 import { askInstruction, type MergeMethod } from "../instructions.ts";
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
 import { askOf, type AskKind, type ReviewProgress } from "../verdict.ts";
-import { askAgent, createWorktree, followCleanup, newSessionIn, openedText, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
+import { askAgent, createWorktree, followCleanup, newSessionIn, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
 import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
@@ -365,4 +365,10 @@ function CreateMenu({ item, disabled }: { item: Item; disabled: boolean }) {
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
+}
+
+/** "totosuki が 3日前に開いた": who opened a pull request, and when. */
+export function openedText(pr: Pick<PrRow, "author" | "createdAt">, now: number): string {
+  const when = pr.createdAt ? relativeTime(Date.parse(pr.createdAt), now) : undefined;
+  return [pr.author ? `${pr.author} が` : undefined, when ? `${when}に開いた` : "開いた"].filter(Boolean).join(" ");
 }
