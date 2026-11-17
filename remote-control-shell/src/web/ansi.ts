@@ -1,8 +1,9 @@
 // Output with ANSI escape sequences, as a terminal would show it, in lines of styled spans (README.md「出力の表示」).
 // SGR (colors, bold, …) becomes styles; a carriage return goes back to the start of the line, so that what follows
-// overwrites it (progress shown on one line); a backspace steps back; "erase in line" clears. Every other escape
-// sequence (cursor movement, window titles, …) is left out. An escape sequence cut off at the end of the text is left
-// for later: the panel parses a command's output again, whole, as more of it comes. Pure, and imports nothing.
+// overwrites it (progress shown on one line); a backspace and the cursor's moves along the line step back and forth;
+// "erase in line" clears. Every other escape sequence (moves to other lines, window titles, …) is left out. While more
+// of the text may come, an escape sequence cut off at its end is left for later: the panel parses a command's output
+// again, whole, as more of it comes. Pure, and imports nothing.
 
 export interface Style {
   /** 0-15: the palette of the theme; "#rrggbb": as given. */
@@ -31,6 +32,8 @@ interface Cell {
 const PLAIN: Style = Object.freeze({});
 /** An OSC (window title, link, …) longer than this without its end is taken as broken: its start is dropped. */
 const MAX_STRING_SEQUENCE = 4096;
+/** The cursor goes no further right than this: COLUMNS is 500 at most (daemon/index.ts). */
+const MAX_COLUMN = 500;
 
 const hex = (r: number, g: number, b: number): string =>
   `#${[r, g, b].map((x) => Math.min(255, Math.max(0, Math.round(x))).toString(16).padStart(2, "0")).join("")}`;
@@ -161,8 +164,12 @@ function spans(cells: Cell[]): Line {
   return line;
 }
 
-/** The lines of `text`. A newline at the very end makes no empty line after it. */
-export function toLines(text: string): Line[] {
+/**
+ * The lines of `text`. A newline at the very end makes no empty line after it. `more`: more of the text may come after
+ * it (a command that runs), so that an escape sequence cut off at its end waits for the rest; without it, such a
+ * sequence is broken, and what follows its start shows.
+ */
+export function toLines(text: string, more = false): Line[] {
   const lines: Line[] = [];
   let cells: Cell[] = [];
   let col = 0;
@@ -182,14 +189,28 @@ export function toLines(text: string): Line[] {
     const c = text.charCodeAt(i);
     if (c === 0x1b) {
       const next = text[i + 1];
-      if (next === undefined) break;
+      if (next === undefined) {
+        if (more) break;
+        i++;
+        continue;
+      }
       if (next === "[") {
         // CSI: parameter bytes, intermediate bytes, a final byte.
         let j = i + 2;
         while (j < n && text.charCodeAt(j) >= 0x30 && text.charCodeAt(j) <= 0x3f) j++;
         const params = text.slice(i + 2, j);
         while (j < n && text.charCodeAt(j) >= 0x20 && text.charCodeAt(j) <= 0x2f) j++;
-        if (j >= n) break;
+        if (j >= n) {
+          if (more) break;
+          i = n;
+          continue;
+        }
+        const f = text.charCodeAt(j);
+        // No final byte (a newline, a letter of another script, …): the sequence is left out, and what follows stays.
+        if (f < 0x40 || f > 0x7e) {
+          i = j;
+          continue;
+        }
         const final = text[j];
         const privateParams = /[<=>?]/.test(params);
         if (final === "m" && !privateParams) style = applySgr(style, params);
@@ -198,12 +219,17 @@ export function toLines(text: string): Line[] {
           if (mode === 0) cells.length = Math.min(cells.length, col);
           else if (mode === 1) for (let k = 0; k <= col && k < cells.length; k++) cells[k] = { ch: " ", style: PLAIN };
           else if (mode === 2) cells = [];
+        } else if ((final === "G" || final === "C" || final === "D") && !privateParams) {
+          // To a column (Node's readline goes back to the start with ESC[1G), right, left.
+          const k = Math.max(1, Number.parseInt(params, 10) || 1);
+          col = Math.min(MAX_COLUMN, final === "G" ? k - 1 : final === "C" ? col + k : Math.max(0, col - k));
         }
         i = j + 1;
         continue;
       }
       if (next === "]" || next === "P" || next === "_" || next === "^" || next === "X") {
-        // OSC, DCS, APC, PM, SOS: up to BEL or ST (ESC \).
+        // OSC, DCS, APC, PM, SOS: up to BEL or ST (ESC \). A newline or another escape sequence before that ends it
+        // as broken: it is left out up to there.
         let end = -1;
         for (let j = i + 2; j < n; j++) {
           const d = text.charCodeAt(j);
@@ -215,16 +241,19 @@ export function toLines(text: string): Line[] {
             end = j + 2;
             break;
           }
+          if (d === 0x0a || (d === 0x1b && j + 1 < n)) {
+            end = j;
+            break;
+          }
         }
         if (end >= 0) {
           i = end;
           continue;
         }
-        if (n - i > MAX_STRING_SEQUENCE) {
-          i += 2;
-          continue;
-        }
-        break;
+        if (more && n - i <= MAX_STRING_SEQUENCE) break;
+        // It never ends: only its start is left out, so that what follows shows (and is copied).
+        i += 2;
+        continue;
       }
       // Character sets take one more byte (ESC ( B); anything else is ESC and one byte (ESC 7, ESC =, …).
       i += next === "(" || next === ")" || next === "*" || next === "+" ? 3 : 2;
@@ -270,8 +299,56 @@ export function toLines(text: string): Line[] {
 }
 
 /** The text as the panel shows it, without styles (what "出力をコピー" copies). */
-export function plainText(text: string): string {
-  return toLines(text)
+export function plainText(text: string, more = false): string {
+  return toLines(text, more)
     .map((line) => line.map((s) => s.text).join(""))
     .join("\n");
+}
+
+const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+
+/** The end of a line, `max` characters at most (a surrogate pair stays whole). */
+function endOfLine(line: Line, max: number): Line {
+  const out: Line = [];
+  let left = max;
+  for (let k = line.length - 1; k >= 0 && left > 0; k--) {
+    const s = line[k] as Span;
+    if (s.text.length <= left) {
+      out.unshift(s);
+      left -= s.text.length;
+      continue;
+    }
+    let cut = s.text.length - left;
+    if (isLow(s.text.charCodeAt(cut))) cut++;
+    out.unshift({ text: s.text.slice(cut), style: s.style });
+    left = 0;
+  }
+  return out;
+}
+
+/**
+ * The last `maxLines` lines, `maxChars` characters at most (each line's end counting as one): the first of them loses
+ * its start when it does not fit. `cut`: lines or characters were left out.
+ */
+export function lastLines(lines: Line[], maxLines: number, maxChars: number): { lines: Line[]; cut: boolean } {
+  const out: Line[] = [];
+  let left = maxChars;
+  for (let i = lines.length - 1; i >= 0 && out.length < maxLines && left > 0; i--) {
+    const line = lines[i] as Line;
+    const length = line.reduce((n, s) => n + s.text.length, 0);
+    if (length <= left) {
+      out.unshift(line);
+      left -= length + 1;
+      continue;
+    }
+    out.unshift(endOfLine(line, left));
+    return { lines: out, cut: true };
+  }
+  return { lines: out, cut: out.length < lines.length };
+}
+
+/** A stretch of output that may start inside a line: without that line's cut-off part (up to its first newline). */
+export function fromLineStart(text: string): string {
+  const i = text.indexOf("\n");
+  return i >= 0 ? text.slice(i + 1) : text;
 }
