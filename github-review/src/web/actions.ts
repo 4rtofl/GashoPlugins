@@ -191,7 +191,8 @@ export async function askAgent(spot: Spot, label: string, text: string, t: Tools
 
 /**
  * After a merge or a send-back was sent: the daemon part keeps whether to remove the review worktree once it is done
- * (`cleanup`), or forgets what an earlier ask said. Only a review worktree (review-<number>) is ever removed.
+ * (`cleanup`), or forgets what an earlier ask said. Only a review worktree
+ * (review-<repository>-<number>, or review-<number> from before) is ever removed.
  */
 export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind, cleanup: boolean, t: Tools): Promise<void> {
   if (!spot.worktree?.review) return;
