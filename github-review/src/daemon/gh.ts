@@ -1,18 +1,22 @@
 // GitHub for github-review: one GraphQL query (gh api graphql, about 1 point of the hourly 5000) reads the page of a
 // working server: the open pull requests I am asked to review, those of the watched repositories, and those that have
-// a review worktree. The search words go into variables of the query, never into the query itself; GitHub's search
+// a review worktree, each with the marks of the latest comments (verdict.ts). The search words go into variables of the query, never into the query itself; GitHub's search
 // takes them as its list of pull requests does (author:, label:, …). Everything here only builds arguments and reads
 // output, so that it can be tested without gh.
-import type { CheckState, PrRow, PrState, ReviewState } from "../types.ts";
+import type { CheckRunState, CheckState, PrCheck, PrComment, PrDetail, PrRow, PrState, ReviewState } from "../types.ts";
+import { latestMark } from "../verdict.ts";
 
 /** Pull requests read per search. */
 export const SEARCH_LIMIT = 50;
+/** The latest comments read of each pull request for the mark of its review: few, to keep the query cheap. */
+export const MARK_COMMENTS = 10;
 /** GitHub's search takes a query of up to 256 characters: the watched repositories go into as many searches as need be. */
 const QUERY_MAX = 256;
 
 const PR_FIELDS =
   "number title url state isDraft createdAt headRefName headRefOid isCrossRepository repository { nameWithOwner } author { login } " +
-  "labels(first: 10) { nodes { name color } } reviewDecision totalCommentsCount statusCheckRollup { state }";
+  "labels(first: 10) { nodes { name color } } reviewDecision totalCommentsCount statusCheckRollup { state } " +
+  `viewerDidAuthor mergeable maintainerCanModify recent: comments(last: ${MARK_COMMENTS}) { nodes { viewerDidAuthor body url createdAt } }`;
 const SEARCH_NODES = `issueCount nodes { ... on PullRequest { ${PR_FIELDS} } }`;
 
 /** GitHub sorts a search by best match: the list of pull requests puts the newest first. */
@@ -73,8 +77,18 @@ const STATES: Record<string, PrState> = { OPEN: "open", CLOSED: "closed", MERGED
 const CHECKS: Record<string, CheckState> = { SUCCESS: "success", FAILURE: "failure", ERROR: "failure", PENDING: "pending", EXPECTED: "pending" };
 const REVIEWS: Record<string, ReviewState> = { APPROVED: "approved", CHANGES_REQUESTED: "changes_requested", REVIEW_REQUIRED: "review_required" };
 
-/** A pull request as the query reads it, with its head; undefined for anything else (an issue, a missing one). */
-export function parsePr(raw: unknown): (PrRow & { head?: string }) | undefined {
+/** Comments as GitHub gives them (nodes of a connection), oldest first. */
+function parseComments(conn: unknown): PrComment[] {
+  const nodes = isRecord(conn) && Array.isArray(conn.nodes) ? conn.nodes : [];
+  return nodes.flatMap((n): PrComment[] => {
+    if (!isRecord(n) || typeof n.body !== "string" || !str(n.url)) return [];
+    const author = str((n.author as { login?: unknown } | null)?.login);
+    return [{ ...(author ? { author } : {}), body: n.body, ...(str(n.createdAt) ? { at: str(n.createdAt) } : {}), url: str(n.url) ?? "", mine: n.viewerDidAuthor === true }];
+  });
+}
+
+/** A pull request as the query reads it; undefined for anything else (an issue, a missing one). */
+export function parsePr(raw: unknown): PrRow | undefined {
   if (!isRecord(raw)) return undefined;
   const repo = str((raw.repository as { nameWithOwner?: unknown } | null)?.nameWithOwner);
   const url = str(raw.url);
@@ -91,6 +105,7 @@ export function parsePr(raw: unknown): (PrRow & { head?: string }) | undefined {
   const review = REVIEWS[str(raw.reviewDecision) ?? ""];
   const author = str((raw.author as { login?: unknown } | null)?.login);
   const head = str(raw.headRefOid);
+  const mark = latestMark(parseComments(raw.recent));
   return {
     repo,
     number: raw.number,
@@ -106,11 +121,15 @@ export function parsePr(raw: unknown): (PrRow & { head?: string }) | undefined {
     comments: typeof raw.totalCommentsCount === "number" ? raw.totalCommentsCount : 0,
     branch: raw.headRefName,
     ...(raw.isCrossRepository === true ? { fork: true } : {}),
-    ...(head ? { head } : {}),
+    ...(head ? { head: head.toLowerCase() } : {}),
+    ...(raw.viewerDidAuthor === true ? { own: true } : {}),
+    ...(raw.mergeable === "CONFLICTING" ? { conflict: true } : {}),
+    ...(raw.maintainerCanModify === true ? { canModify: true } : {}),
+    ...(mark ? { mark } : {}),
   };
 }
 
-export type ParsedPr = NonNullable<ReturnType<typeof parsePr>>;
+export type ParsedPr = PrRow;
 
 export interface ListAnswer {
   requested: { prs: ParsedPr[]; more: number };
@@ -217,4 +236,82 @@ export function headArgs(repo: string, number: number): string[] {
 
 export function parseHead(json: string): ParsedPr | undefined {
   return parsePr((JSON.parse(json) as { data?: { repository?: { pullRequest?: unknown } | null } | null }).data?.repository?.pullRequest);
+}
+
+/** Comments the side panel shows, at most. */
+export const DETAIL_COMMENTS = 30;
+/** Checks the side panel shows, at most. */
+export const DETAIL_CHECKS = 50;
+
+/** The query that reads what the side panel shows of a pull request: its body, its latest comments and its checks. */
+export function detailArgs(repo: string, number: number): string[] {
+  const [owner, name] = repo.split("/") as [string, string];
+  const checks =
+    `commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: ${DETAIL_CHECKS}) { nodes { __typename ` +
+    "... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl description } } } } } } }";
+  const query =
+    `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { pullRequest(number: ${Math.trunc(number)}) { ${PR_FIELDS} body ` +
+    `comments(last: ${DETAIL_COMMENTS}) { totalCount nodes { author { login } viewerDidAuthor body url createdAt } } ${checks} } } }`;
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`];
+}
+
+const RUN_STATES: Record<string, CheckRunState> = {
+  SUCCESS: "success",
+  FAILURE: "failure",
+  TIMED_OUT: "failure",
+  CANCELLED: "failure",
+  ACTION_REQUIRED: "failure",
+  STARTUP_FAILURE: "failure",
+  ERROR: "failure",
+  NEUTRAL: "neutral",
+  SKIPPED: "skipped",
+  STALE: "neutral",
+  PENDING: "pending",
+  EXPECTED: "pending",
+};
+
+function parseCheck(n: unknown): PrCheck | undefined {
+  if (!isRecord(n)) return undefined;
+  const url = (u: unknown) => {
+    const v = str(u);
+    return v?.startsWith("https://") ? { url: v } : {};
+  };
+  if (n.__typename === "CheckRun") {
+    const name = str(n.name);
+    if (!name) return undefined;
+    // A run that has not completed has no conclusion yet.
+    const state = str(n.status) === "COMPLETED" ? (RUN_STATES[str(n.conclusion) ?? ""] ?? "neutral") : "pending";
+    return { name, state, ...url(n.detailsUrl) };
+  }
+  if (n.__typename === "StatusContext") {
+    const name = str(n.context);
+    if (!name) return undefined;
+    const description = str(n.description);
+    return { name, state: RUN_STATES[str(n.state) ?? ""] ?? "neutral", ...url(n.targetUrl), ...(description ? { description } : {}) };
+  }
+  return undefined;
+}
+
+/** The answer of detailArgs' query, without where the pull request is (the caller adds it); undefined when there is none. */
+export function parseDetail(json: string): PrDetail | undefined {
+  const raw = (JSON.parse(json) as { data?: { repository?: { pullRequest?: unknown } | null } | null }).data?.repository?.pullRequest;
+  const pr = parsePr(raw);
+  if (!pr || !isRecord(raw)) return undefined;
+  const comments = parseComments(raw.comments);
+  const total = isRecord(raw.comments) && typeof raw.comments.totalCount === "number" ? raw.comments.totalCount : comments.length;
+  // The panel's verdict comes from all the comments it reads, not only the latest few of the list.
+  const mark = latestMark(comments) ?? pr.mark;
+  const commit = ((raw.commits as { nodes?: unknown[] } | null)?.nodes?.[0] as { commit?: { statusCheckRollup?: { contexts?: { nodes?: unknown[] } } | null } } | undefined)
+    ?.commit;
+  const checks = (commit?.statusCheckRollup?.contexts?.nodes ?? []).flatMap((n) => {
+    const c = parseCheck(n);
+    return c ? [c] : [];
+  });
+  return {
+    pr: { ...pr, ...(mark ? { mark } : {}) },
+    body: typeof raw.body === "string" ? raw.body : "",
+    comments,
+    commentsMore: Math.max(0, total - comments.length),
+    checks,
+  };
 }

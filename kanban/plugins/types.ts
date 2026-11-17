@@ -1,16 +1,72 @@
-// What a board plugin (kanban/plugins/<name>/index.ts) gets and gives. The kanban's daemon part calls its `fetch` for
+// What a board plugin (<name>/index.ts in this folder) gets and gives. The kanban's daemon part calls its `fetch` for
 // each repository that chose it in "見る repo", for what the cards do not have; the web part calls its `state` for each
 // card of those repositories, with what `fetch` gave, puts the card in the column it gives with the marks it gives, and
 // lists the instructions it gives on the card's menu; and it calls its `headings` for each of those repositories, for
-// the headings above the board.
-import type { DaemonGitHub, DaemonStartContext } from "@gasho/plugin-sdk/daemon";
-import type { BoardHeading, CardAction, CardMark, KanbanCard, KanbanColumn } from "../src/cards.ts";
-import type { RepoMaterial } from "../src/types.ts";
+// the headings above the board. The kanban writes this file again whenever it starts: do not change it.
 
-export type { BoardHeading, CardAction, CardMark, KanbanColumn };
+/** The columns: my move, the agent works, GitHub works (CI), the reviewers' move, done. */
+export type KanbanColumn = "mine" | "agent" | "github" | "review" | "done";
 
-/** A card as `state` gets it: what the card shows, before it has a column. */
-export type StateCard = Omit<KanbanCard, "column" | "reason" | "marks" | "actions">;
+/** A Claude Code session working in a card's worktree: any session on the working server, not only Gasho's. */
+export interface CardSession {
+  sessionId: string;
+  /** busy: working; waiting: awaiting an answer (a question, a permission); idle: done with its turn. */
+  status: "busy" | "waiting" | "idle" | "unknown";
+  /** Started by Gasho, so the card can open it. */
+  managed?: boolean;
+}
+
+/** A card as `state` gets it: one worktree with its branch's pull request, or an open pull request of mine without a worktree. */
+export interface StateCard {
+  /** Unique on its working server. */
+  id: string;
+  /** OWNER/REPO */
+  repo: string;
+  /** The worktree's folder name; "PR #12" for a pull request without a worktree. */
+  label: string;
+  path?: string;
+  branch?: string;
+  /** The repository's primary checkout, shown only while it has an open pull request or a session needs it. */
+  primary?: boolean;
+  /** The pull request's title, or else the branch. */
+  title: string;
+  /** The issue number in the branch name (feat/12-x → 12). */
+  issue?: number;
+  /** The open pull request of the branch, or else its latest closed one. */
+  pr?: { number: number; url: string; state: "open" | "merged" | "closed"; draft?: boolean };
+  /** When the open pull request last changed (ISO 8601). */
+  updatedAt?: string;
+  sessions: CardSession[];
+}
+
+/** An instruction on a card's menu: pressing it sends `text` to the worktree's Gasho session. */
+export interface CardAction {
+  label: string;
+  text: string;
+}
+
+/** A mark on a card: a Stack the worktree deployed to last, or deploys to now. */
+export interface CardMark {
+  text: string;
+  /** Shown when the pointer rests on the mark, and in the card's menu. */
+  detail?: string;
+  /** Going on now (a deploy): in amber, and on the one-line card too. */
+  active?: boolean;
+}
+
+/** A heading above the board: a Stack and the worktree that deployed to it last. */
+export interface BoardHeading {
+  /** What it is about, in bold: the Stack's name. */
+  label: string;
+  /** How it stands: the worktree, or that there is no record. */
+  text?: string;
+  /** When it happened (ms since the epoch): shown as how long ago. */
+  at?: number;
+  /** Going on now (a deploy): in amber. */
+  active?: boolean;
+  /** Shown when the pointer rests on it. */
+  detail?: string;
+}
 
 /** Where `state` puts a card. */
 export interface Placement {
@@ -34,8 +90,39 @@ export interface Placement {
  */
 export type State<T = unknown> = (card: StateCard, fetched: T | undefined) => Placement;
 
-/** A repository as `fetch` and `headings` get it: what the kanban has just read of it. */
-export type FetchRepo = Omit<RepoMaterial, "plugin" | "fetched">;
+/** An open pull request of mine, as `gh pr list --json number,title,url,headRefName,isDraft,updatedAt` gives it. */
+export interface OpenPr {
+  number: number;
+  title: string;
+  url: string;
+  headRefName: string;
+  isDraft?: boolean;
+  /** ISO 8601 */
+  updatedAt?: string;
+}
+
+/** A closed or merged pull request of mine: the latest of its branch. */
+export interface ClosedPr {
+  number: number;
+  headRefName: string;
+  /** MERGED or CLOSED */
+  state: string;
+  title: string;
+  url: string;
+}
+
+/** A repository as `fetch` and `headings` get it: what the kanban has just read of it. Paths are real paths. */
+export interface FetchRepo {
+  /** OWNER/REPO */
+  repo: string;
+  primary: { path: string; branch?: string };
+  /** Worktrees other than the primary checkout, on a branch. */
+  worktrees: { branch: string; path: string }[];
+  /** My open pull requests. */
+  prs: OpenPr[];
+  /** My latest closed pull request of each branch. */
+  closed: ClosedPr[];
+}
 
 /** What `fetch` keeps for itself between its calls, for each repository: kept when gasho-daemon starts again. */
 export interface FetchStore<K = unknown> {
@@ -45,11 +132,26 @@ export interface FetchStore<K = unknown> {
   set(value: K): Promise<void>;
 }
 
+/** What a command printed. */
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+}
+
 export interface FetchContext<K = unknown> {
-  /** gh of the working server, run by gasho-daemon (ctx.github.read of the plugin SDK): name the repository with --repo. */
-  github: Pick<DaemonGitHub, "read">;
-  /** Runs a command on the working server (ctx.exec of the plugin SDK: no shell, no terminal). Use `github` for gh. */
-  exec: DaemonStartContext["exec"];
+  /**
+   * gh of the working server, run by gasho-daemon for every plugin (ctx.github.read of Gasho's plugin SDK): give gh's
+   * arguments without "gh", and name the repository with --repo (or with `{ repo }` for `gh api graphql`). gasho-daemon
+   * answers the same arguments from what gh said within 30 seconds (`maxAgeSeconds`).
+   */
+  github: {
+    read(args: string[], options?: { maxAgeSeconds?: number; repo?: string; timeoutMs?: number; maxBuffer?: number }): Promise<ExecResult>;
+  };
+  /**
+   * Runs a command on the working server (ctx.exec of Gasho's plugin SDK): no shell, no terminal, stopped after 30
+   * seconds by default. It throws when the command fails, with `code`, `stdout` and `stderr`. Use `github` for gh.
+   */
+  exec(command: string, args: string[], options?: { cwd?: string; timeoutMs?: number; maxBuffer?: number; env?: Record<string, string> }): Promise<ExecResult>;
   store: FetchStore<K>;
 }
 

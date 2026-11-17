@@ -1,6 +1,8 @@
 // What github-review's daemon part reads on a working server and sends to the web part: the repositories that can be
 // watched, and the pull requests of the review page, each with where it is on that working server (the clone of its
-// repository, and its worktree there). The web part puts the answers of every working server together.
+// repository, and its worktree there) and the verdict of its review. The web part puts the answers of every working
+// server together.
+import type { ReviewMark } from "./verdict.ts";
 
 /** A repository in the folders Gasho can start sessions in, by its primary checkout. */
 export interface RepoOption {
@@ -53,6 +55,16 @@ export interface PrRow {
   branch: string;
   /** Its head is in another repository (a fork). */
   fork?: boolean;
+  /** The commit of its head. */
+  head?: string;
+  /** I opened it: GitHub lets me neither approve it nor request changes. */
+  own?: boolean;
+  /** GitHub found a conflict with its base. */
+  conflict?: boolean;
+  /** The maintainers may push to its head in the fork. */
+  canModify?: boolean;
+  /** The latest verdict I posted on it (the mark of the comment). */
+  mark?: ReviewMark;
   /** Absent when this working server has no clone of its repository. */
   place?: Place;
 }
@@ -95,6 +107,40 @@ export interface Removed {
   /** The local branch removed with it. */
   branch?: string;
 }
+
+export interface PrComment {
+  author?: string;
+  body: string;
+  /** ISO 8601 */
+  at?: string;
+  url: string;
+  /** I wrote it. */
+  mine: boolean;
+}
+
+export type CheckRunState = "success" | "failure" | "pending" | "neutral" | "skipped";
+
+/** A check of its head commit: a check run (GitHub Actions…) or a commit status. */
+export interface PrCheck {
+  name: string;
+  state: CheckRunState;
+  url?: string;
+  description?: string;
+}
+
+/** What the side panel shows of a pull request (the daemon's `detail`). */
+export interface PrDetail {
+  pr: PrRow;
+  body: string;
+  /** The latest comments, oldest first. */
+  comments: PrComment[];
+  /** How many older comments are left out. */
+  commentsMore: number;
+  checks: PrCheck[];
+}
+
+/** Its head can be pushed to: in the same repository, in my own fork, or one the maintainers may change. */
+export const canPush = (pr: Pick<PrRow, "fork" | "own" | "canModify">): boolean => !pr.fork || pr.own === true || pr.canModify === true;
 
 /** Repositories one working server can watch. */
 export const MAX_REPOS = 30;

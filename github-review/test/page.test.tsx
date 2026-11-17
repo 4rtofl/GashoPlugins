@@ -108,7 +108,7 @@ describe("ReviewPage", () => {
     const both = listed({ requested: [pr()] });
     sdk.request.mockImplementation(() => both);
     render(<ReviewPage params={{}} />);
-    expect(screen.getAllByRole("link", { name: "ログインを直す" })).toHaveLength(1);
+    expect(screen.getAllByText("ログインを直す")).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: /worktree を作る/ }));
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByText("mac に作り、送る指示")).toBeTruthy();

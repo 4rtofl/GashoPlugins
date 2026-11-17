@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { answerCalls, callsOf, machine, respond, sdk } from "../../test/sdk.tsx";
 import { ReposDialog } from "../src/web/repos-dialog.tsx";
+import type { PluginSet } from "../src/board-code.ts";
 import { MAX_REPOS, type RepoOption } from "../src/types.ts";
 
 const options: RepoOption[] = [
@@ -10,12 +11,17 @@ const options: RepoOption[] = [
   { path: "/work/lib", github: "4rtofl/lib" },
 ];
 type Watch = { paths: string[]; plugins: Record<string, string> } | undefined;
+const plugins: PluginSet = { dir: "/data/kanban/plugins", version: "1", names: ["example"], plugins: [], problems: [] };
 
-function draw({ watched = () => ({ paths: ["/work/app"], plugins: {} }), machines = [machine()] }: { watched?: (id: string) => Watch; machines?: ReturnType<typeof machine>[] } = {}) {
+function draw({
+  watched = () => ({ paths: ["/work/app"], plugins: {} }),
+  machines = [machine()],
+  pluginSet = () => plugins,
+}: { watched?: (id: string) => Watch; machines?: ReturnType<typeof machine>[]; pluginSet?: (id: string) => PluginSet | undefined } = {}) {
   const onClose = vi.fn();
   const reload = vi.fn();
-  const view = render(<ReposDialog open onClose={onClose} machines={machines} watched={watched} reload={reload} />);
-  return { onClose, reload, rerender: (w: (id: string) => Watch) => view.rerender(<ReposDialog open onClose={onClose} machines={machines} watched={w} reload={reload} />) };
+  const view = render(<ReposDialog open onClose={onClose} machines={machines} watched={watched} pluginSet={pluginSet} reload={reload} />);
+  return { onClose, reload, rerender: (w: (id: string) => Watch) => view.rerender(<ReposDialog open onClose={onClose} machines={machines} watched={w} pluginSet={pluginSet} reload={reload} />) };
 }
 
 const box = (path: string) => screen.getByRole("checkbox", { name: new RegExp(`${path}$`) });
@@ -94,5 +100,15 @@ describe("ReposDialog", () => {
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "4rtofl/app のカンバン用のプラグイン" }), "example");
     await save();
     expect(sdk.call).toHaveBeenCalledWith(expect.objectContaining({ params: { paths: ["/work/app"], plugins: { "/work/app": "example" } }, summary: "repo ごとのカンバン用のプラグインを変える" }));
+  });
+
+  it("offers the board plugins of the working server's folder, marking those it cannot load and the one chosen before that is gone", () => {
+    respond({ options: { data: options } });
+    draw({
+      watched: () => ({ paths: ["/work/app"], plugins: { "/work/app": "old" } }),
+      pluginSet: () => ({ ...plugins, names: ["example", "draft"], problems: [{ plugin: "draft", file: "draft/index.ts", line: 3, error: "SyntaxError" }] }),
+    });
+    const select = screen.getByRole("combobox", { name: "4rtofl/app のカンバン用のプラグイン" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["プラグインなし", "example", "draft（読み込めません）", "old（ありません）"]);
   });
 });

@@ -44,7 +44,8 @@ describe("a pull request without a worktree", () => {
     await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
     expect(callsOf("create")).toEqual([{ repo: "4rtofl/app", number: 7 }]);
     expect(sdk.launchSession).toHaveBeenCalledWith({ machine: "m1", cwd: "/work/review-7" });
-    expect(sdk.sendInput).toHaveBeenCalledWith({ machine: "m1", sessionId: "launched", text: "#7 をレビューして" });
+    // The instruction is the template filled in, followed by how to post the review (instructions.ts).
+    expect(sdk.sendInput).toHaveBeenCalledWith({ machine: "m1", sessionId: "launched", text: expect.stringMatching(/^#7 をレビューして(\n|$)/) });
   });
 
   it("opens the Gasho session already in a worktree that turns out to be there, without starting another", async () => {
