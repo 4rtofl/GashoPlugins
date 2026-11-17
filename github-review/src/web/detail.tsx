@@ -20,9 +20,9 @@ import {
 } from "@gasho/plugin-sdk";
 import type { CheckRunState, PrComment, PrDetail } from "../types.ts";
 import { askOf, withoutMark } from "../verdict.ts";
-import { openedText, progressOf, type Item } from "./actions";
+import { progressOf, type Item } from "./actions";
 import { DEFAULT_QUERY, useListings } from "./listing";
-import { AgentAsk, PROGRESS, ProgressBadge, RowContext, stateLook } from "./row";
+import { AgentAsk, openedText, PROGRESS, ProgressBadge, ReviewMenu, RowContext, stateLook } from "./row";
 import { useRowShell } from "./shell";
 import { Alert, AlertDescription, Skeleton } from "./ui/parts";
 
@@ -146,13 +146,13 @@ function StateIcon({ pr }: { pr: Item["pr"] }) {
   );
 }
 
-/** Where the review is, and the button its verdict calls for. */
+/** Where the review is, the button its verdict calls for, and "レビューする" on my own pull request. */
 function Progress({ item, now }: { item: Item; now: number }) {
   const shared = useContext(RowContext);
   const { pr } = item;
   const progress = progressOf(item);
   const ask = askOf(pr, progress);
-  const placed = item.spots.some((s) => s.worktree);
+  const placed = item.spots.some((s) => s.worktree && !s.worktree.missing);
   return (
     <div className="space-y-2 rounded-xl border border-border bg-surface px-3 py-2.5">
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -166,10 +166,11 @@ function Progress({ item, now }: { item: Item; now: number }) {
         {progress ? <ProgressBadge progress={progress} /> : <span className="text-xs text-muted-foreground">{pr.state === "open" ? "Agent のレビュー結果はまだありません" : "閉じられています"}</span>}
         {progress && <span className="text-xs text-muted-foreground">{PROGRESS[progress].hint}</span>}
       </div>
-      {ask && placed && shared && (
+      {(ask || (pr.own && pr.state === "open")) && placed && shared && (
         <div className="flex flex-wrap items-center gap-2">
           <AgentAsk item={item} />
-          {ask.blocked && <span className="text-xs text-amber-700 dark:text-amber-300">{ask.blocked}</span>}
+          <ReviewMenu item={item} />
+          {ask?.blocked && <span className="text-xs text-amber-700 dark:text-amber-300">{ask.blocked}</span>}
         </div>
       )}
       {ask && !placed && <p className="text-xs text-muted-foreground">この Pull request の worktree が無いので、Agent に頼めません。</p>}

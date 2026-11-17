@@ -1,6 +1,8 @@
 // The instructions the page sends to the session in a review worktree, besides the templates: how to post the review
 // (added at the end of the template sent when the worktree is made, so that a template changed in the settings never
-// loses the verdict), and what "マージしてもらう", "差し戻す" and, on my own pull request, "修正してもらう" ask.
+// loses the verdict), and what "マージしてもらう", "差し戻す" and, on my own pull request, "修正してもらう" ask; and the
+// effort level the session is switched to before each.
+import type { EffortLevel, MachineInfo } from "@gasho/plugin-sdk";
 import { canPush } from "./types.ts";
 import type { ReviewMark } from "./verdict.ts";
 
@@ -101,6 +103,22 @@ export function fixInstruction(pr: PrRef, mark: ReviewMark): string {
     "push したあとは、もう一度レビューするまでマージしないでください。終わったら、何を直したかを短く伝えてください。",
   ].join("\n");
 }
+
+/** The review itself (the template sent when the worktree is made) is done at the highest effort level. */
+export const REVIEW_EFFORT: EffortLevel = "max";
+
+/**
+ * The effort level for a row's button: "マージしてもらう" and "差し戻す" only follow steps, so they need no more than
+ * medium; "修正してもらう" mends the code, and keeps the session's (the review's max, unless changed since).
+ */
+export const askEffort = (kind: "merge" | "sendBack" | "fix"): EffortLevel | undefined => (kind === "fix" ? undefined : "medium");
+
+/**
+ * What to ask useSendInput to switch the effort level to: only where gasho-daemon can (it lists "effort" in
+ * MachineInfo.features, 0.6.0 and later); elsewhere the text goes as it is.
+ */
+export const effortFor = (machine: Pick<MachineInfo, "features">, effort: EffortLevel | undefined): { effort?: EffortLevel } =>
+  effort && machine.features?.includes("effort") ? { effort } : {};
 
 /** The instruction of a row's button (verdict.ts `askOf`) for a pull request with the mark of its review. */
 export function askInstruction(

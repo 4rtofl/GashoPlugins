@@ -31,7 +31,7 @@ export const RUNNING_WINDOW = 512 * 1024;
 /** What is read first of a command: the end of a running one, and the end of an ended one (for its last lines). */
 export const FIRST_RUNNING = 64 * 1024;
 export const FIRST_ENDED = 4 * 1024;
-/** Commands whose output is followed: the newest ones. */
+/** Commands whose output is followed: the newest ones, and older ones while they run. */
 export const FOLLOWED = 50;
 
 export const windowEnd = (w: OutputWindow): number => w.from + w.text.length;
@@ -39,9 +39,12 @@ export const windowEnd = (w: OutputWindow): number => w.from + w.text.length;
 /** Where each command's output is read from next. Ended commands whose output is all here are left out. */
 export function offsetsFor(s: ShellState): Record<string, number> {
   const offsets: Record<string, number> = {};
-  for (const job of s.jobs.slice(-FOLLOWED)) {
-    const w = s.windows[job.id];
+  const newest = s.jobs.length - FOLLOWED;
+  for (const [i, job] of s.jobs.entries()) {
     const running = job.state === "running";
+    // The setting keepJobs keeps up to 500 records; a command that runs is followed however many came after it.
+    if (i < newest && !running) continue;
+    const w = s.windows[job.id];
     if (w) {
       if (running || windowEnd(w) < job.size) offsets[job.id] = windowEnd(w);
       continue;

@@ -4,8 +4,10 @@
 // when the same query was read within 30 seconds, so however many browsers look, GitHub is read about once a minute.
 import fs from "node:fs/promises";
 import path from "node:path";
+import { cleanupDone } from "../cleanup.ts";
 import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
 import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
+import type { Cleanups } from "./cleanups.ts";
 import { prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, type Clone, type Exec } from "./git.ts";
 
 export type GitHubRead = (args: string[], o?: { maxAgeSeconds?: number; timeoutMs?: number; maxBuffer?: number }) => Promise<{ stdout: string }>;
@@ -27,6 +29,8 @@ export interface ReviewerDeps {
   file: string;
   log: (...args: unknown[]) => void;
   now?: () => number;
+  /** The review worktrees to remove once what was asked is done. */
+  cleanups?: Cleanups;
 }
 
 /** A pull request as the page gets it, with where it is here. */
@@ -233,11 +237,24 @@ export class Reviewer {
     const answer = parseList(json, { watched: asked.watched.length, lookups });
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));
 
+    // Those whose review worktree is gone from every clone of their repository here are forgotten.
+    const cleanups = this.deps.cleanups;
+    if (cleanups) {
+      await cleanups
+        .prune((e) => {
+          const of = clones.filter((c) => sameRepo(c.github, e.repo));
+          return of.length > 0 && !of.some((c) => reviewNumbers(c).includes(e.number));
+        })
+        .catch((e: unknown) => this.deps.log("github-review: could not forget the worktrees cleaned up", e));
+    }
+    const toClean = (await cleanups?.all().catch(() => [])) ?? [];
     const placeOf = (pr: ParsedPr): Place | undefined => {
       const c = this.pick(clones, pr.repo);
       if (!c) return undefined;
       const worktree = prWorktree(c, pr);
-      return { primary: c.path, ...(worktree ? { worktree } : {}) };
+      const e = worktree?.review ? toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number) : undefined;
+      const cleanup = e && { kind: e.kind, done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
+      return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}) };
     };
     const requested = answer.requested.prs;
     const watchedPrs = answer.watched.flatMap((w) => w.prs);

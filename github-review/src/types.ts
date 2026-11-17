@@ -2,6 +2,7 @@
 // watched, and the pull requests of the review page, each with where it is on that working server (the clone of its
 // repository, and its worktree there) and the verdict of its review. The web part puts the answers of every working
 // server together.
+import type { CleanupKind } from "./cleanup.ts";
 import type { ReviewMark } from "./verdict.ts";
 
 /** A repository in the folders Gasho can start sessions in, by its primary checkout. */
@@ -30,11 +31,25 @@ export interface PrWorktree {
   missing?: boolean;
 }
 
+/**
+ * "マージしてもらう" or "差し戻す" was asked with "終わったら片付ける": the page removes the review worktree once it is
+ * done (cleanup.ts), and the session there is at rest.
+ */
+export interface Cleanup {
+  kind: CleanupKind;
+  /** The pull request was merged, or I requested changes on it, after it was asked. */
+  done: boolean;
+  /** Why it could not be removed (it is not tried again; "片付ける" still removes it). */
+  problem?: string;
+}
+
 /** Where a pull request is on a working server: the clone of its repository, and its worktree there. */
 export interface Place {
   /** The primary checkout of the clone. */
   primary: string;
   worktree?: PrWorktree;
+  /** Its review worktree is to be removed once what was asked is done. */
+  cleanup?: Cleanup;
 }
 
 export interface PrRow {
@@ -67,6 +82,8 @@ export interface PrRow {
   canModify?: boolean;
   /** The latest verdict I posted on it (the mark of the comment). */
   mark?: ReviewMark;
+  /** When I last requested changes on it (ISO 8601). */
+  changesRequestedAt?: string;
   /** Absent when this working server has no clone of its repository. */
   place?: Place;
 }
@@ -98,7 +115,7 @@ export interface Listing {
 /** What "worktree を作る" did: the worktree of the pull request, made now or found. */
 export interface Created {
   path: string;
-  /** False: it was there already, and only opens. */
+  /** False: it was there already (the page takes the session used last there, and sends nothing). */
   created: boolean;
   branch?: string;
 }

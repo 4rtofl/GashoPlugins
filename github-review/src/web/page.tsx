@@ -49,7 +49,7 @@ export function ReviewPage(_: PageProps) {
   const list = (
     <Page
       title="レビュー"
-      description="レビューを頼まれた Pull request と、対象リポジトリの Pull request。worktree を作ると、その中でセッションを起動して開きます。"
+      description="レビューを頼まれた Pull request と、対象リポジトリの Pull request。worktree を作ると、その中でセッションを起動します（画面はこのページのまま）。"
       actions={
         <div className="flex flex-wrap gap-2">
           <Button size="sm" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
