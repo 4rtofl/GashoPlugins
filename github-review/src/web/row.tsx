@@ -29,7 +29,7 @@ import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
 import { askOf, type AskKind, type ReviewProgress } from "../verdict.ts";
 import { askAgent, createWorktree, newSessionIn, openedText, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
-import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
+import { Badge, Button, PortalScope, type BadgeTone, type ButtonVariant } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
 /** What the rows share: the tools of the buttons, the templates, and which rows' buttons are at work. */
@@ -286,13 +286,15 @@ function SpotButton({
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
-          {spots.map((s) => (
-            <DropdownMenu.Item key={s.machine.id} disabled={!usable(s)} onSelect={() => onPick(s)} className={MENU_ITEM}>
-              {s.machine.name}
-            </DropdownMenu.Item>
-          ))}
-        </DropdownMenu.Content>
+        <PortalScope>
+          <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
+            {spots.map((s) => (
+              <DropdownMenu.Item key={s.machine.id} disabled={!usable(s)} onSelect={() => onPick(s)} className={MENU_ITEM}>
+                {s.machine.name}
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </PortalScope>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
@@ -313,28 +315,30 @@ function CreateMenu({ item, disabled }: { item: Item; disabled: boolean }) {
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
-          {spots.map((s, i) => (
-            <DropdownMenu.Group key={s.machine.id}>
-              {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
-              <DropdownMenu.Label className="px-2.5 pt-1 pb-1.5 text-[11px] text-muted-foreground">
-                {spots.length > 1 ? `${s.machine.name} に作り、送る指示` : "作ってセッションを起動し、送る指示"}
-                {!s.machine.canLaunch && <span className="block text-amber-700 dark:text-amber-300">{cannotLaunch}</span>}
-              </DropdownMenu.Label>
-              {[undefined, ...templates].map((t, j) => (
-                <DropdownMenu.Item
-                  key={j}
-                  disabled={!s.machine.canLaunch}
-                  onSelect={() => run(pr.url, () => createWorktree(item, s, t, tools))}
-                  className={cn(MENU_ITEM, !t && "text-muted-foreground")}
-                  title={t?.body}
-                >
-                  {t ? t.name : "何も送らない"}
-                </DropdownMenu.Item>
-              ))}
-            </DropdownMenu.Group>
-          ))}
-        </DropdownMenu.Content>
+        <PortalScope>
+          <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
+            {spots.map((s, i) => (
+              <DropdownMenu.Group key={s.machine.id}>
+                {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
+                <DropdownMenu.Label className="px-2.5 pt-1 pb-1.5 text-[11px] text-muted-foreground">
+                  {spots.length > 1 ? `${s.machine.name} に作り、送る指示` : "作ってセッションを起動し、送る指示"}
+                  {!s.machine.canLaunch && <span className="block text-amber-700 dark:text-amber-300">{cannotLaunch}</span>}
+                </DropdownMenu.Label>
+                {[undefined, ...templates].map((t, j) => (
+                  <DropdownMenu.Item
+                    key={j}
+                    disabled={!s.machine.canLaunch}
+                    onSelect={() => run(pr.url, () => createWorktree(item, s, t, tools))}
+                    className={cn(MENU_ITEM, !t && "text-muted-foreground")}
+                    title={t?.body}
+                  >
+                    {t ? t.name : "何も送らない"}
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.Group>
+            ))}
+          </DropdownMenu.Content>
+        </PortalScope>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );

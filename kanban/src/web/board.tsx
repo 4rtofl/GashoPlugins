@@ -42,7 +42,7 @@ import { useBoardPlugins } from "./board-plugins";
 import { Card, CardActionsContext, CardSkeleton, CompactCard, type CardActions, type Notice, type Where } from "./card";
 import { clampWidth, columnCompact, columnWidth, setColumnCompact, setColumnSort, setColumnWidth, useKanbanPrefs, type KanbanPrefs } from "./prefs";
 import { ReposDialog } from "./repos-dialog";
-import { Alert, AlertDescription, AlertTitle, Badge, Button, DESKTOP, useMediaQuery, type BadgeTone } from "./ui/parts";
+import { Alert, AlertDescription, AlertTitle, Badge, Button, DESKTOP, PortalScope, useMediaQuery, type BadgeTone } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions, TILE, TILE_SHADOW } from "./ui/styles";
 
 /** The daemon part reads every minute while the board shows; an older reading means it stopped. */
@@ -173,7 +173,8 @@ export function KanbanPage(_: PageProps) {
   const [tab, setTab] = useState<KanbanColumn>("mine");
   // What a card's menu is doing or did: starting a session.
   const [notice, setNotice] = useState<Notice>();
-  const [trust, setTrust] = useState<{ path: string; warnings: string[]; answer: (yes: boolean) => void }>();
+  // Each card that starts a session waits for its own answer: one asked while another is shown waits for it.
+  const [trusts, setTrusts] = useState<{ path: string; warnings: string[]; answer: (yes: boolean) => void }[]>([]);
   // How many repositories each working server watched when last read, kept while the page is open: an offline one
   // is named above the board.
   const [lastWatched, setLastWatched] = usePluginState<Record<string, number>>("lastWatched", {});
@@ -226,13 +227,13 @@ export function KanbanPage(_: PageProps) {
   const actions = useMemo<CardActions>(
     () => ({
       notify: setNotice,
-      askTrust: (q) => new Promise<boolean>((resolve) => setTrust({ ...q, answer: resolve })),
+      askTrust: (q) => new Promise<boolean>((resolve) => setTrusts((cur) => [...cur, { ...q, answer: resolve }])),
     }),
     [],
   );
   const answerTrust = (yes: boolean) => {
-    trust?.answer(yes);
-    setTrust(undefined);
+    trusts[0]?.answer(yes);
+    setTrusts((cur) => cur.slice(1));
   };
 
   const call = useCall();
@@ -470,7 +471,8 @@ export function KanbanPage(_: PageProps) {
             pluginSet={(id) => sources[id]?.pluginSet}
             reload={(id) => sources[id]?.reload()}
           />
-          <TrustDialog question={trust} onAnswer={answerTrust} />
+          {/* Opens anew for the next folder, so that it shows as another question rather than the same one changing. */}
+          <TrustDialog key={trusts[0]?.path} question={trusts[0]} onAnswer={answerTrust} />
           <Toast
             notice={notice}
             onClose={() => setNotice(undefined)}
@@ -740,51 +742,53 @@ function SortMenu({ label, sort, onChange }: { label: string; sort: KanbanSort |
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content
-          align="start"
-          sideOffset={6}
-          className="z-50 w-64 rounded-xl border border-border bg-surface p-1.5 text-xs shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-        >
-          <button
-            type="button"
-            aria-pressed={!sort}
-            onClick={() => pick(undefined)}
-            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-neutral-300 hover:bg-surface-raised aria-pressed:text-foreground"
+        <PortalScope>
+          <Popover.Content
+            align="start"
+            sideOffset={6}
+            className="z-50 w-64 rounded-xl border border-border bg-surface p-1.5 text-xs shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
           >
-            <Check className={cn("size-3.5", sort && "invisible")} />
-            既定の順
-            <span className="ml-auto text-[11px] text-muted-foreground">更新の古い順</span>
-          </button>
-          <div className="mt-1 space-y-0.5 border-t border-border pt-1">
-            {(Object.keys(KANBAN_SORTS) as KanbanSortKey[]).map((key) => (
-              <div key={key} role="group" aria-label={KANBAN_SORTS[key].label} className="flex items-center gap-2 px-2 py-1">
-                <Check className={cn("size-3.5 shrink-0", sort?.key !== key && "invisible")} />
-                <span className="flex-1 text-neutral-300">{KANBAN_SORTS[key].label}</span>
-                <span className="inline-flex rounded-md border border-border p-0.5">
-                  {[false, true].map((desc) => {
-                    const on = sort?.key === key && sort.desc === desc;
-                    return (
-                      <button
-                        key={String(desc)}
-                        type="button"
-                        aria-pressed={on}
-                        title={desc ? KANBAN_SORTS[key].desc : KANBAN_SORTS[key].asc}
-                        onClick={() => pick({ key, desc })}
-                        className={cn(
-                          "cursor-pointer rounded-[5px] px-2 py-0.5 text-[11px] transition-colors",
-                          on ? "bg-primary text-primary-foreground" : "text-neutral-400 hover:bg-surface-raised hover:text-foreground",
-                        )}
-                      >
-                        {desc ? "降順" : "昇順"}
-                      </button>
-                    );
-                  })}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="px-2 pt-1.5 pb-0.5 text-[11px] leading-relaxed text-muted-foreground">番号や更新の時刻が無いカードは、どちらの向きでも下に並べます。</p>
-        </Popover.Content>
+            <button
+              type="button"
+              aria-pressed={!sort}
+              onClick={() => pick(undefined)}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-neutral-300 hover:bg-surface-raised aria-pressed:text-foreground"
+            >
+              <Check className={cn("size-3.5", sort && "invisible")} />
+              既定の順
+              <span className="ml-auto text-[11px] text-muted-foreground">更新の古い順</span>
+            </button>
+            <div className="mt-1 space-y-0.5 border-t border-border pt-1">
+              {(Object.keys(KANBAN_SORTS) as KanbanSortKey[]).map((key) => (
+                <div key={key} role="group" aria-label={KANBAN_SORTS[key].label} className="flex items-center gap-2 px-2 py-1">
+                  <Check className={cn("size-3.5 shrink-0", sort?.key !== key && "invisible")} />
+                  <span className="flex-1 text-neutral-300">{KANBAN_SORTS[key].label}</span>
+                  <span className="inline-flex rounded-md border border-border p-0.5">
+                    {[false, true].map((desc) => {
+                      const on = sort?.key === key && sort.desc === desc;
+                      return (
+                        <button
+                          key={String(desc)}
+                          type="button"
+                          aria-pressed={on}
+                          title={desc ? KANBAN_SORTS[key].desc : KANBAN_SORTS[key].asc}
+                          onClick={() => pick({ key, desc })}
+                          className={cn(
+                            "cursor-pointer rounded-[5px] px-2 py-0.5 text-[11px] transition-colors",
+                            on ? "bg-primary text-primary-foreground" : "text-neutral-400 hover:bg-surface-raised hover:text-foreground",
+                          )}
+                        >
+                          {desc ? "降順" : "昇順"}
+                        </button>
+                      );
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="px-2 pt-1.5 pb-0.5 text-[11px] leading-relaxed text-muted-foreground">番号や更新の時刻が無いカードは、どちらの向きでも下に並べます。</p>
+          </Popover.Content>
+        </PortalScope>
       </Popover.Portal>
     </Popover.Root>
   );
@@ -878,31 +882,33 @@ function TrustDialog({ question, onAnswer }: { question: { path: string; warning
   return (
     <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
-        <Dialog.Overlay className={DIALOG_OVERLAY} />
-        <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
-          <div className="space-y-1.5">
-            <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
-            <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-              Claude Code は、このフォルダーをまだ信頼していません。信頼すると、セッションはこのフォルダーのファイルを読み書きし、コマンドを実行できます。
-            </Dialog.Description>
-          </div>
-          <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>
-          {(question?.warnings.length ?? 0) > 0 && (
-            <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
-              {question?.warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
-          )}
-          <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Button size="sm" onClick={() => onAnswer(false)}>
-              やめる
-            </Button>
-            <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
-              信頼して起動する
-            </Button>
-          </div>
-        </Dialog.Content>
+        <PortalScope>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                Claude Code は、このフォルダーをまだ信頼していません。信頼すると、セッションはこのフォルダーのファイルを読み書きし、コマンドを実行できます。
+              </Dialog.Description>
+            </div>
+            <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>
+            {(question?.warnings.length ?? 0) > 0 && (
+              <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
+                {question?.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" onClick={() => onAnswer(false)}>
+                やめる
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
+                信頼して起動する
+              </Button>
+            </div>
+          </Dialog.Content>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );

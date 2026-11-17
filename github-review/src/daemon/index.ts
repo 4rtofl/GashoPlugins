@@ -68,6 +68,10 @@ export default defineDaemonPlugin({
       const p = objArg(params);
       return current().detail((args, o) => ctx.github.read(args, o), repoArg(p.repo), numberArg(p.number), p.fresh === true);
     },
+    /** The primary checkouts watched (string[]), read without gh: the page chooses from them while it has no list. */
+    async watched() {
+      return current().watching();
+    },
     /** Watches { paths } (primary checkouts from `options`) from now on; returns them. */
     async watch(params) {
       return current().watch(objArg(params).paths);

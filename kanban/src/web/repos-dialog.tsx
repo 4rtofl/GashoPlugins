@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { cn, useCall, useRequest, type MachineInfo } from "@gasho/plugin-sdk";
 import type { PluginSet } from "../board-code.ts";
 import { MAX_REPOS, type Board, type RepoOption } from "../types.ts";
-import { Button, DrawCheckbox } from "./ui/parts";
+import { Button, DrawCheckbox, PortalScope } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL } from "./ui/styles";
 
 /** What a working server watches: its repositories, and the board plugin of each that has one ({ path: name }). */
@@ -126,61 +126,63 @@ export function ReposDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className={DIALOG_OVERLAY} />
-        <Dialog.Content className={cn(DIALOG_PANEL, "flex w-[min(36rem,calc(100vw-2rem))] flex-col gap-4")}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="space-y-1">
-              <Dialog.Title className="text-base font-semibold tracking-tight">見る repo</Dialog.Title>
-              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-                選んだ repo の worktree と自分の PR を、カンバンを開いているあいだ、working server の gh で 1 分おきに読みます。working server ごとに {MAX_REPOS}{" "}
-                個まで選べます。カードを置く列は、repo ごとに選んだカンバン用のプラグインが決めます。選ばない repo のカードは「自分の番」に置きます。カンバン用のプラグインは、working server の置き場のフォルダーから読み込みます。
-              </Dialog.Description>
-            </div>
-            <Dialog.Close asChild>
-              <button type="button" className="text-muted-foreground hover:text-foreground" aria-label="閉じる">
-                <X className="size-4" />
-              </button>
-            </Dialog.Close>
-          </div>
-
-          <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm transition-colors focus-within:border-border-hover">
-            <Search className="size-4 shrink-0 text-muted-foreground" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="repo の名前やフォルダーで絞り込む"
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-              spellCheck={false}
-            />
-          </label>
-
-          {machines.map((m) => (
-            <MachineRepos
-              key={m.id}
-              machine={m}
-              choice={picked[m.id]}
-              pluginSet={pluginSet(m.id)}
-              query={q}
-              others={others}
-              onOthers={() => setOthers(!others)}
-              onToggle={(p) => toggle(m.id, p)}
-              onPlugin={(p, name) => choosePlugin(m.id, p, name)}
-            />
-          ))}
-
-          {error && <p className="text-xs whitespace-pre-line text-red-400">{error}</p>}
-          <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
-            <span className="text-xs text-muted-foreground tabular-nums">{chosen} 個の repo を見る</span>
-            <div className="flex gap-2">
+        <PortalScope>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content className={cn(DIALOG_PANEL, "flex w-[min(36rem,calc(100vw-2rem))] flex-col gap-4")}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <Dialog.Title className="text-base font-semibold tracking-tight">見る repo</Dialog.Title>
+                <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                  選んだ repo の worktree と自分の PR を、カンバンを開いているあいだ、working server の gh で 1 分おきに読みます。working server ごとに {MAX_REPOS}{" "}
+                  個まで選べます。カードを置く列は、repo ごとに選んだカンバン用のプラグインが決めます。選ばない repo のカードは「自分の番」に置きます。カンバン用のプラグインは、working server の置き場のフォルダーから読み込みます。
+                </Dialog.Description>
+              </div>
               <Dialog.Close asChild>
-                <Button size="sm">キャンセル</Button>
+                <button type="button" className="text-muted-foreground hover:text-foreground" aria-label="閉じる">
+                  <X className="size-4" />
+                </button>
               </Dialog.Close>
-              <Button size="sm" variant="primary" isLoading={saving} loadingText="保存中…" onClick={() => void save()}>
-                保存
-              </Button>
             </div>
-          </div>
-        </Dialog.Content>
+
+            <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm transition-colors focus-within:border-border-hover">
+              <Search className="size-4 shrink-0 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="repo の名前やフォルダーで絞り込む"
+                className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+                spellCheck={false}
+              />
+            </label>
+
+            {machines.map((m) => (
+              <MachineRepos
+                key={m.id}
+                machine={m}
+                choice={picked[m.id]}
+                pluginSet={pluginSet(m.id)}
+                query={q}
+                others={others}
+                onOthers={() => setOthers(!others)}
+                onToggle={(p) => toggle(m.id, p)}
+                onPlugin={(p, name) => choosePlugin(m.id, p, name)}
+              />
+            ))}
+
+            {error && <p className="text-xs whitespace-pre-line text-red-400">{error}</p>}
+            <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
+              <span className="text-xs text-muted-foreground tabular-nums">{chosen} 個の repo を見る</span>
+              <div className="flex gap-2">
+                <Dialog.Close asChild>
+                  <Button size="sm">キャンセル</Button>
+                </Dialog.Close>
+                <Button size="sm" variant="primary" isLoading={saving} loadingText="保存中…" onClick={() => void save()}>
+                  保存
+                </Button>
+              </div>
+            </div>
+          </Dialog.Content>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );

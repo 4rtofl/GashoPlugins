@@ -14,6 +14,8 @@ export interface Source {
   ready: boolean;
   reason?: string;
   listing?: Listing;
+  /** What it watches: the list's, or read on its own while no list has come. */
+  watched?: string[];
   error?: string;
   refreshing: boolean;
   reload: () => void;
@@ -27,8 +29,16 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
   const daemon = useDaemonReady(machine.id);
   const on = machine.connected && daemon.ready;
   const r = useRequest<Listing>(on ? { machine: machine.id, method: "list", params: { query } } : undefined, { staleSeconds: ASK_SECONDS, refreshSeconds: ASK_SECONDS });
+  // gh may fail before any list comes; what it watches is read without gh, so 対象リポジトリ can still be chosen.
+  const w = useRequest<string[]>(on && !r.data ? { machine: machine.id, method: "watched" } : undefined, { staleSeconds: 0 });
+  const watched = r.data?.watched ?? w.data;
   const call = useCall();
-  const { reload } = r;
+  const { reload: reloadList } = r;
+  const { reload: reloadWatched } = w;
+  const reload = useCallback(() => {
+    reloadList();
+    reloadWatched();
+  }, [reloadList, reloadWatched]);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string>();
   const asked = useRef(freshAsk);
@@ -52,8 +62,8 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
 
   const error = refreshError ?? r.error;
   useEffect(() => {
-    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, ...(error ? { error } : {}), refreshing, reload });
-  }, [machine.id, on, daemon.reason, r.data, error, refreshing, reload, onChange]);
+    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, watched, ...(error ? { error } : {}), refreshing, reload });
+  }, [machine.id, on, daemon.reason, r.data, watched, error, refreshing, reload, onChange]);
   useEffect(() => () => onChange(machine.id, undefined), [machine.id, onChange]);
   return null;
 }

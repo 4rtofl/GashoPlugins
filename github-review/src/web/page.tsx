@@ -153,7 +153,7 @@ export function ReviewPage(_: PageProps) {
         open={choosing}
         onClose={() => setChoosing(false)}
         machines={ready}
-        watched={(id) => sources[id]?.listing?.watched}
+        watched={(id) => sources[id]?.watched}
         reload={(id) => sources[id]?.reload()}
       />
       {overlays}

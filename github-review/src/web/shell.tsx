@@ -32,7 +32,8 @@ export function useRowShell({
   const [rawDelete] = useSetting<boolean>("deleteBranch");
   const merge = useMemo(() => ({ method: mergeMethodOf(rawMethod), deleteBranch: rawDelete !== false }), [rawMethod, rawDelete]);
   const [notice, setNotice] = useState<Notice>();
-  const [trust, setTrust] = useState<Question<{ path: string; warnings: string[] }>>();
+  // Each button that starts a session waits for its own answer: one asked while another is shown waits for it.
+  const [trusts, setTrusts] = useState<NonNullable<Question<{ path: string; warnings: string[] }>>[]>([]);
   const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot }>>();
   const [merging, setMerging] = useState<Question<{ item: Item; spot: Spot }>>();
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
@@ -40,7 +41,7 @@ export function useRowShell({
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
       notify: setNotice,
-      askTrust: (q) => new Promise<boolean>((resolve) => setTrust({ ...q, answer: resolve })),
+      askTrust: (q) => new Promise<boolean>((resolve) => setTrusts((cur) => [...cur, { ...q, answer: resolve }])),
       askRemove: (q) => new Promise<boolean>((resolve) => setRemoving({ ...q, answer: resolve })),
       askMerge: (q) => new Promise<boolean>((resolve) => setMerging({ ...q, answer: resolve })),
       reload: (id) => sources[id]?.reload(),
@@ -78,7 +79,8 @@ export function useRowShell({
     };
   const overlays = (
     <>
-      <TrustDialog question={trust} onAnswer={answer(trust, () => setTrust(undefined))} />
+      {/* Opens anew for the next folder, so that it shows as another question rather than the same one changing. */}
+      <TrustDialog key={trusts[0]?.path} question={trusts[0]} onAnswer={answer(trusts[0], () => setTrusts((cur) => cur.slice(1)))} />
       <RemoveDialog question={removing} onAnswer={answer(removing, () => setRemoving(undefined))} />
       <MergeDialog question={merging} merge={merge} onAnswer={answer(merging, () => setMerging(undefined))} />
       <Toast notice={notice} onClose={() => setNotice(undefined)} />
