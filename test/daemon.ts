@@ -5,7 +5,7 @@
 // - loadDaemon: a plugin's src/daemon/index.ts, called as gasho-daemon calls it (Gasho's apps/daemon/src/plugin-host.ts):
 //   params and results go through JSON, a PluginError's message reaches the person and any other error shows as
 //   「処理に失敗しました。…」, and ctx.github.write fails outside a method whose kind is "write". It checks that the
-//   daemon part defines the methods its gasho-plugin.json lists, and expands Vite's import.meta.glob (eager only).
+//   daemon part defines the methods its gasho-plugin.json lists, and expands Vite's import.meta.glob (eager only, and ?raw).
 //
 //   import { execError, fakeContext, loadDaemon } from "../../test/daemon.ts";
 //
@@ -243,26 +243,37 @@ export async function loadDaemon(folder: string): Promise<Daemon> {
   };
 }
 
-// Vite's import.meta.glob(pattern, { eager: true }), which gasho-plugin build expands, for Node: the files it matches
+// Vite's import.meta.glob(patterns, { eager: true }), which gasho-plugin build expands, for Node: the files it matches
 // become imports at the end of the module (so that its lines keep their numbers), and the call an object of them, keyed
-// as Vite keys them ("./ops/add.ts", "../../plugins/example/index.ts").
-const GLOB = /import\.meta\.glob(?:<[^()]*?>)?\(\s*(["'])([^"']+)\1\s*,\s*\{\s*eager:\s*true\s*\}\s*\)/g;
+// as Vite keys them ("./ops/add.ts", "../../plugins/example/index.ts"). With { query: "?raw", import: "default", eager: true }
+// the object holds the text of each file. `patterns` is one string or an array of them.
+const GLOB = /import\.meta\.glob(?:<[^()]*?>)?\(\s*(\[[^\]]*\]|(["'])[^"']+\2)\s*,\s*\{([^{}]*)\}\s*\)/g;
+const RAW = /^\s*(?:eager:\s*true|query:\s*"\?raw"|import:\s*"default")\s*$/;
 
 function expandGlobs(source: string, file: string): string {
   const imports: string[] = [];
-  const out = source.replace(GLOB, (call, _q: string, pattern: string) => {
-    const keys = fs
-      .globSync(pattern, { cwd: path.dirname(file) })
-      .map((f) => (f.startsWith("../") ? f : `./${f}`))
-      .sort();
-    const entries = keys.map((key) => {
+  const out = source.replace(GLOB, (call, patterns: string, _q: string, options: string) => {
+    const given = options.split(",").filter((o) => o.trim());
+    const raw = given.some((o) => /query/.test(o));
+    const known = given.every((o) => RAW.test(o)) && given.some((o) => /eager/.test(o)) && given.some((o) => /import/.test(o)) === raw;
+    if (!known) return call;
+    const keys = new Set<string>();
+    for (const m of patterns.matchAll(/(["'])([^"']+)\1/g)) {
+      for (const f of fs.globSync(m[2]!, { cwd: path.dirname(file) })) {
+        if (fs.statSync(path.resolve(path.dirname(file), f)).isFile()) keys.add(f.startsWith("../") ? f : `./${f}`);
+      }
+    }
+    const entries = [...keys].sort().map((key) => {
+      if (raw) return `${JSON.stringify(key)}: ${JSON.stringify(fs.readFileSync(path.resolve(path.dirname(file), key), "utf8"))}`;
       const name = `__gashoGlob${imports.length}`;
       imports.push(`import * as ${name} from ${JSON.stringify(key)};`);
       return `${JSON.stringify(key)}: ${name}`;
     });
     return `({ ${entries.join(", ")} })${"\n".repeat(call.split("\n").length - 1)}`;
   });
-  if (/import\.meta\.glob\s*[<(]/.test(out)) throw new Error(`${file}: test/daemon.ts expands only import.meta.glob("<pattern>", { eager: true })`);
+  if (/import\.meta\.glob\s*[<(]/.test(out)) {
+    throw new Error(`${file}: test/daemon.ts expands only import.meta.glob("<pattern>" or ["<pattern>", …], { eager: true } or { query: "?raw", import: "default", eager: true })`);
+  }
   return `${out}\n${imports.join("\n")}\n`;
 }
 
