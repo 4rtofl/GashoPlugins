@@ -93,7 +93,7 @@ export function ListPanel({ machine, session, params }: PanelProps) {
         {!list && r.loading && !noRepo && <p className="text-sm text-muted-foreground">読み込み中…</p>}
         {list &&
           (list.items.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{EMPTY[kind]}</p>
+            <p className="text-sm text-muted-foreground">{list.disabled ? "このリポジトリでは Issue が無効になっています。" : EMPTY[kind]}</p>
           ) : (
             <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
               {list.items.map((item) => {

@@ -1,7 +1,7 @@
 {
   "id": "git",
   "name": "Git",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "セッションのリポジトリの、開いている Issue と Pull request を読む（working server の gh を使う）",
   "genre": "integration",
   "api": "1.0",

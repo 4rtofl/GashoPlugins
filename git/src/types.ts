@@ -31,6 +31,8 @@ export interface GitHubList {
   items: GitHubItem[];
   /** More are open than were sent. */
   truncated: boolean;
+  /** Issues are turned off in the repository (as in a fork, by default): there is no list. */
+  disabled?: boolean;
 }
 
 /** A comment on an issue or pull request. Bodies are GitHub Markdown. */

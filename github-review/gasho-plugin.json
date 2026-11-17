@@ -1,11 +1,11 @@
 {
   "id": "github-review",
   "name": "GitHub Review",
-  "version": "1.2.0",
+  "version": "1.6.0",
   "description": "レビューを頼まれた Pull request と、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
   "genre": "workflow",
-  "api": "1.11",
-  "permissions": ["session.input", "session.launch"],
+  "api": "1.12",
+  "permissions": ["session.input", "session.launch", "worktree.remove"],
   "web": { "js": "web.js", "css": "web.css" },
   "daemon": { "js": "daemon.js" },
   "methods": {
@@ -14,7 +14,8 @@
     "detail": { "kind": "read", "timeoutSeconds": 30 },
     "watch": { "kind": "write", "timeoutSeconds": 60 },
     "create": { "kind": "write", "timeoutSeconds": 120 },
-    "remove": { "kind": "write", "timeoutSeconds": 60 }
+    "remove": { "kind": "write", "timeoutSeconds": 60 },
+    "cleanup": { "kind": "write", "timeoutSeconds": 30 }
   },
   "settings": {
     "templates": {
@@ -41,7 +42,7 @@
       "scope": "server",
       "default": true,
       "label": "「マージしてもらう」で、マージしたあと GitHub の head のブランチを消す",
-      "description": "fork の Pull request のブランチは消さない。ローカルのブランチと worktree は「片付ける」で消す"
+      "description": "fork の Pull request のブランチは消さない。ローカルのブランチと worktree は、頼むときに「終わったら worktree を片付ける」を選ぶか、「片付ける」で消す"
     }
   }
 }

@@ -18,6 +18,8 @@ import type {
   RequestTarget,
   SessionActivity,
   SessionContext,
+  SendInput,
+  SendInputResult,
   SessionInfo,
 } from "@gasho/plugin-sdk";
 
@@ -88,7 +90,7 @@ export const sdk = {
   call: vi.fn((_target: RequestTarget & { summary?: string }): CallResult<unknown> | Promise<CallResult<unknown>> | undefined => undefined),
   setSetting: vi.fn((_key: string, _value: unknown) => {}),
   setShared: vi.fn((_key: string, _value: unknown) => {}),
-  sendInput: vi.fn((_input: { machine: string; sessionId: string; text: string }): CallResult<undefined> => ({ ok: true, data: undefined })),
+  sendInput: vi.fn((_input: SendInput): CallResult<SendInputResult> => ({ ok: true, data: { queued: false } })),
   launchSession: vi.fn((_input: { machine: string; cwd: string; name?: string; trust?: boolean }): LaunchResult => ({ ok: true, sessionId: "launched" })),
   removeWorktree: vi.fn((_input: RemoveWorktreeInput): RemoveWorktreeResult => ({ ok: true, sessions: [] })),
   removeWorktreeProblem: vi.fn((_machine: MachineInfo, _worktree: { path: string; repo?: string }): string | undefined => undefined),

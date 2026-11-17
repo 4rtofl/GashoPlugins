@@ -29,6 +29,11 @@ beforeEach(() => {
   set({ machines: [machine({ canLaunch: true })], settings: { templates: JSON.stringify([{ name: "レビュー", body: "#{number} をレビューして" }]) } });
 });
 
+/** The page stays where it is after the session started; the notice at the bottom has the button that opens it. */
+async function openFromNotice() {
+  await userEvent.click(await screen.findByRole("button", { name: "セッションを開く" }));
+}
+
 async function choose(template: string) {
   await userEvent.click(screen.getByRole("button", { name: /worktree を作る/ }));
   await userEvent.click(await screen.findByRole("menuitem", { name: template }));
@@ -37,11 +42,12 @@ async function choose(template: string) {
 describe("a pull request without a worktree", () => {
   beforeEach(() => respond({ list: listed({ requested: [pr()] }) }));
 
-  it("gets its review worktree, a session started there with the template filled in, and that session opened", async () => {
+  it("gets its review worktree and a session started there with the template filled in, stays on the page, and opens the session from the notice", async () => {
     answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
     render(<ReviewPage params={{}} />);
     await choose("レビュー");
-    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
+    await openFromNotice();
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched");
     expect(callsOf("create")).toEqual([{ repo: "4rtofl/app", number: 7 }]);
     expect(sdk.launchSession).toHaveBeenCalledWith({ machine: "m1", cwd: "/work/review-7" });
     // The instruction is the template filled in, followed by how to post the review (instructions.ts).
@@ -54,7 +60,8 @@ describe("a pull request without a worktree", () => {
     answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: false } } });
     render(<ReviewPage params={{}} />);
     await choose("何も送らない");
-    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "old"));
+    await openFromNotice();
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "old");
     expect(sdk.launchSession).not.toHaveBeenCalled();
   });
 
@@ -79,7 +86,8 @@ describe("a pull request without a worktree", () => {
     expect(within(dialog).getByText("/work/review-7")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json があります")).toBeTruthy();
     await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
-    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
+    await openFromNotice();
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched");
     expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/review-7", trust: true });
   });
 
