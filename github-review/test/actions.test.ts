@@ -24,12 +24,13 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
       sent.push(`${sessionId}: ${text}`);
       return opts.send === "fail" ? { ok: false, error: "送れません" } : { ok: true, data: undefined };
     }) as Tools["send"],
+    remove: (async () => ({ ok: true })) as unknown as Tools["remove"],
     nav: { openSession: (machine: string, sessionId: string) => opened.push(`${machine}/${sessionId}`) } as unknown as Tools["nav"],
     actions: {
       notify: (n) => notices.push(n),
       askTrust: async () => true,
       askRemove: async () => true,
-      askMerge: async () => true,
+      askAgentFor: async () => ({ cleanup: true }),
       reload: () => {},
     },
   } satisfies Tools;
