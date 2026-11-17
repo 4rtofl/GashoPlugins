@@ -1,13 +1,13 @@
 // Chooses the repositories each working server's kanban watches (moved here from Gasho's views/kanban.tsx of PR #8), and
 // the board plugin that puts each one's cards in their columns. The daemon part of each working server offers the
 // repositories in the folders Gasho can start sessions in, and keeps the choices in its own folder; the board plugins
-// offered are the ones built into this web part.
+// offered are the ones in its board plugins' folder.
 import { ChevronDown, Search, Server, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { cn, useCall, useRequest, type MachineInfo } from "@gasho/plugin-sdk";
+import type { PluginSet } from "../board-code.ts";
 import { MAX_REPOS, type Board, type RepoOption } from "../types.ts";
-import { BOARD_PLUGINS } from "./board-plugins";
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL } from "./ui/styles";
 
@@ -25,6 +25,7 @@ export function ReposDialog({
   onClose,
   machines,
   watched,
+  pluginSet,
   reload,
 }: {
   open: boolean;
@@ -33,6 +34,8 @@ export function ReposDialog({
   machines: MachineInfo[];
   /** What each one watches now; undefined until its board has been read. */
   watched: (machine: string) => WatchChoice | undefined;
+  /** Each one's board plugins' folder, as last read. */
+  pluginSet: (machine: string) => PluginSet | undefined;
   /** Reads a working server's board again. */
   reload: (machine: string) => void;
 }) {
@@ -130,7 +133,7 @@ export function ReposDialog({
               <Dialog.Title className="text-base font-semibold tracking-tight">見る repo</Dialog.Title>
               <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
                 選んだ repo の worktree と自分の PR を、カンバンを開いているあいだ、working server の gh で 1 分おきに読みます。working server ごとに {MAX_REPOS}{" "}
-                個まで選べます。カードを置く列は、repo ごとに選んだカンバン用のプラグインが決めます。選ばない repo のカードは「自分の番」に置きます。
+                個まで選べます。カードを置く列は、repo ごとに選んだカンバン用のプラグインが決めます。選ばない repo のカードは「自分の番」に置きます。カンバン用のプラグインは、working server の置き場のフォルダーから読み込みます。
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -156,6 +159,7 @@ export function ReposDialog({
               key={m.id}
               machine={m}
               choice={picked[m.id]}
+              pluginSet={pluginSet(m.id)}
               query={q}
               others={others}
               onOthers={() => setOthers(!others)}
@@ -186,6 +190,7 @@ export function ReposDialog({
 function MachineRepos({
   machine,
   choice,
+  pluginSet,
   query,
   others,
   onOthers,
@@ -195,6 +200,7 @@ function MachineRepos({
   machine: MachineInfo;
   /** What is ticked and chosen; undefined until the board has been read. */
   choice: WatchChoice | undefined;
+  pluginSet: PluginSet | undefined;
   query: string;
   others: boolean;
   onOthers: () => void;
@@ -250,7 +256,7 @@ function MachineRepos({
                   }
                   description={<span className="font-mono break-all">{o.path}</span>}
                 />
-                {checked && <PluginSelect repo={o.github ?? o.path} value={choice?.plugins[o.path]} onChange={(n) => onPlugin(o.path, n)} />}
+                {checked && <PluginSelect repo={o.github ?? o.path} set={pluginSet} value={choice?.plugins[o.path]} onChange={(n) => onPlugin(o.path, n)} />}
               </li>
             );
           })}
@@ -278,13 +284,22 @@ function MachineRepos({
           )}
         </div>
       )}
+      {pluginSet && (
+        <p className="text-[11px] text-muted-foreground">
+          カンバン用のプラグインの置き場：<span className="font-mono break-all">{pluginSet.dir}</span>
+        </p>
+      )}
     </section>
   );
 }
 
-/** The board plugin of a watched repository: none, or one built into this web part (or the one chosen before, gone). */
-function PluginSelect({ repo, value, onChange }: { repo: string; value: string | undefined; onChange: (name: string | undefined) => void }) {
-  const names = [...BOARD_PLUGINS.keys()];
+/**
+ * The board plugin of a watched repository: none, or one in the working server's folder (those that cannot be used
+ * too, so that one being written can be chosen), or the one chosen before, gone.
+ */
+function PluginSelect({ repo, set, value, onChange }: { repo: string; set: PluginSet | undefined; value: string | undefined; onChange: (name: string | undefined) => void }) {
+  const names = set?.names ?? [];
+  const broken = new Set(set?.problems.flatMap((p) => (p.plugin === undefined ? [] : [p.plugin])));
   return (
     <select
       value={value ?? ""}
@@ -296,10 +311,10 @@ function PluginSelect({ repo, value, onChange }: { repo: string; value: string |
       <option value="">プラグインなし</option>
       {names.map((n) => (
         <option key={n} value={n}>
-          {n}
+          {broken.has(n) ? `${n}（読み込めません）` : n}
         </option>
       ))}
-      {value && !BOARD_PLUGINS.has(value) && <option value={value}>{value}（ありません）</option>}
+      {value && !names.includes(value) && <option value={value}>{set ? `${value}（ありません）` : value}</option>}
     </select>
   );
 }

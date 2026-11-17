@@ -1,5 +1,6 @@
 node_modules/
 dist/
-# Each person's board plugins stay out of git; only the sample is in it.
+# Board plugins left in a checkout stay out of git: the kanban reads them from the working server's folder
+# (kanban/README.md). Only the sample is in it.
 kanban/plugins/*/
 !kanban/plugins/example/

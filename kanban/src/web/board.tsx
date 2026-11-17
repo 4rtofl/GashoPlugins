@@ -1,9 +1,9 @@
 // The kanban's page (moved here from Gasho's views/kanban.tsx of PR #8, after 4rtofl/Dashboard): the worktrees and my
 // pull requests of the watched repositories, read by each working server's daemon part, in the columns the board plugin
-// of each repository gives (in the first one without a plugin). The look follows
+// of each repository gives (in the first one without a plugin), run from the working server's folder. The look follows
 // easyui.site: dark tiles with hairline borders, color only where it tells a state, and springs. On a computer the board
 // fills the page and each column scrolls by itself; on a phone one column shows at a time, picked with a sliding pill.
-import { ArrowUpDown, Check, LoaderCircle, RefreshCw, Settings2, SquareKanban, X } from "lucide-react";
+import { ArrowUpDown, Check, FileDown, LoaderCircle, RefreshCw, Settings2, SquareKanban, X } from "lucide-react";
 import { AnimatePresence, LayoutGroup, motion, MotionConfig } from "framer-motion";
 import { Dialog, Popover } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -11,6 +11,7 @@ import {
   cn,
   useCall,
   useDaemonReady,
+  useEvent,
   useMachines,
   useNavigation,
   useNow,
@@ -23,18 +24,21 @@ import {
 import {
   arrangeCards,
   boardHeadings,
+  boardStateCards,
   COLUMN_WIDTH,
   KANBAN_COLUMNS,
   KANBAN_SORTS,
   kanbanCards,
+  type BoardPlugins,
   type KanbanColumn,
   type KanbanSort,
   type KanbanSortKey,
   type PlacedCard,
   type RepoHeadings,
 } from "../cards.ts";
+import type { PluginProblem, PluginSet } from "../board-code.ts";
 import type { Board } from "../types.ts";
-import { BOARD_PLUGINS } from "./board-plugins";
+import { useBoardPlugins } from "./board-plugins";
 import { Card, CardActionsContext, CardSkeleton, CompactCard, type CardActions, type Notice, type Where } from "./card";
 import { clampWidth, columnCompact, columnWidth, setColumnCompact, setColumnSort, setColumnWidth, useKanbanPrefs, type KanbanPrefs } from "./prefs";
 import { ReposDialog } from "./repos-dialog";
@@ -48,6 +52,8 @@ const ASK_SECONDS = 60;
 const ASK_READING_SECONDS = 2;
 /** How long the refresh button waits for a working server to start reading. */
 const REFRESH_WAIT_MS = 3000;
+/** What one call of "カードを書き出す" may send (the Gasho server takes 64 KB of params). */
+const EXPORT_MAX_BYTES = 60_000;
 
 /** Each column's dot and count, in the colors Gasho gives the same states elsewhere (amber: needs me; green: working). */
 const COLUMN_LOOK: Record<KanbanColumn, { dot: string; tone: BadgeTone; pulse?: boolean }> = {
@@ -57,6 +63,8 @@ const COLUMN_LOOK: Record<KanbanColumn, { dot: string; tone: BadgeTone; pulse?: 
   review: { dot: "bg-violet-400", tone: "neutral" },
   done: { dot: "bg-neutral-500", tone: "neutral" },
 };
+
+const NO_PLUGINS: BoardPlugins = new Map();
 
 const time = (ms: number): string => new Date(ms).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
 
@@ -70,6 +78,10 @@ interface Source {
   error?: string;
   refreshing: boolean;
   reload: () => void;
+  /** Its board plugins' folder, as last read. */
+  pluginSet?: PluginSet;
+  /** Its board plugins as this browser runs them, and those that cannot be used; undefined before they first load. */
+  plugins?: { plugins: BoardPlugins; problems: PluginProblem[] };
 }
 
 /**
@@ -87,6 +99,20 @@ function BoardSource({ machine, refreshAsk, onChange }: { machine: MachineInfo; 
   });
   const checking = r.data?.checking === true;
   useEffect(() => setReading(checking), [checking]);
+  // The board plugins: asked for again when the daemon part says they changed (a file saved in their folder), or when
+  // the board has another version of them.
+  const told = useEvent<{ version?: string }>("plugins", { machine: machine.id });
+  const seen = [told?.version, r.data?.pluginsVersion].filter(Boolean).join(" ");
+  const set = useRequest<PluginSet>(on && seen ? { machine: machine.id, method: "plugins", params: { seen } } : undefined);
+  const plugins = useBoardPlugins(set.data);
+  // The daemon part runs the `fetch` of a plugin that changed before it tells: the board is asked for now, and every 2
+  // seconds while that reading goes on, rather than in a minute.
+  const toldBefore = useRef(told?.version);
+  useEffect(() => {
+    if (told?.version === toldBefore.current) return;
+    toldBefore.current = told?.version;
+    r.reload();
+  }, [told?.version]);
 
   const call = useCall();
   const { reload } = r;
@@ -109,10 +135,19 @@ function BoardSource({ machine, refreshAsk, onChange }: { machine: MachineInfo; 
     };
   }, [refreshAsk]);
 
-  const error = refreshError ?? r.error;
+  const error = refreshError ?? r.error ?? set.error;
   useEffect(() => {
-    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), board: r.data, ...(error ? { error } : {}), refreshing, reload });
-  }, [machine.id, on, daemon.reason, r.data, error, refreshing, reload, onChange]);
+    onChange(machine.id, {
+      ready: on,
+      ...(daemon.reason ? { reason: daemon.reason } : {}),
+      board: r.data,
+      ...(error ? { error } : {}),
+      refreshing,
+      reload,
+      ...(set.data ? { pluginSet: set.data } : {}),
+      ...(plugins ? { plugins } : {}),
+    });
+  }, [machine.id, on, daemon.reason, r.data, error, refreshing, reload, onChange, set.data, plugins]);
   useEffect(() => () => onChange(machine.id, undefined), [machine.id, onChange]);
   return null;
 }
@@ -147,10 +182,13 @@ export function KanbanPage(_: PageProps) {
   const ready = machines.filter((m) => m.connected && sources[m.id]?.ready);
   const boards = ready.flatMap((machine) => {
     const board = sources[machine.id]?.board;
-    return board ? [{ machine, board }] : [];
+    return board ? [{ machine, board, plugins: sources[machine.id]?.plugins?.plugins ?? NO_PLUGINS }] : [];
   });
-  const cards = useMemo(() => kanbanCards(boards, BOARD_PLUGINS), [machines, sources]);
-  const headings = useMemo(() => boardHeadings(boards, BOARD_PLUGINS), [machines, sources]);
+  const cards = useMemo(() => kanbanCards(boards), [machines, sources]);
+  const headings = useMemo(() => boardHeadings(boards), [machines, sources]);
+  const problems = ready.flatMap((machine) => (sources[machine.id]?.plugins?.problems ?? []).map((p) => ({ machine, ...p })));
+  // A board whose repositories chose board plugins waits for them, rather than putting every card in "mine" first.
+  const pluginsPending = boards.some((b) => b.board.repos.some((m) => m.plugin) && !sources[b.machine.id]?.plugins && !sources[b.machine.id]?.error);
   const watched = boards.reduce((n, b) => n + b.board.watched.length, 0);
   const updatedAt = Math.max(0, ...boards.map((b) => b.board.updatedAt ?? 0)) || undefined;
   const stale = updatedAt !== undefined && now - updatedAt > STALE_MS;
@@ -166,7 +204,7 @@ export function KanbanPage(_: PageProps) {
   // A working server's first board is on its way: what it watches is not known yet.
   const pending = ready.some((m) => !sources[m.id]?.board && !sources[m.id]?.error);
   // Nothing read yet, and nothing failed: the first reading is under way.
-  const loading = pending || (updatedAt === undefined && errors.length === 0 && watched > 0);
+  const loading = pending || pluginsPending || (updatedAt === undefined && errors.length === 0 && watched > 0);
   const where: Where = { machines: new Set(cards.map((c) => c.machine.id)).size > 1, repos: new Set(cards.map((c) => c.card.repo)).size > 1 };
   const byColumn = (id: KanbanColumn) => cards.filter((c) => c.card.column === id);
   // An offline working server that watched repositories keeps the board, empty, rather than asking to choose some.
@@ -197,6 +235,51 @@ export function KanbanPage(_: PageProps) {
     setTrust(undefined);
   };
 
+  const call = useCall();
+  const [exporting, setExporting] = useState(false);
+  /** Writes each working server's cards, as `state` gets them, to its board plugins' folder (cards/), for check.ts. */
+  const exportCards = async () => {
+    setExporting(true);
+    setNotice({ text: "カードを書き出しています…", busy: true });
+    const failed: string[] = [];
+    const dirs: string[] = [];
+    let repos = 0;
+    for (const { machine, board } of boards) {
+      // In calls of at most EXPORT_MAX_BYTES.
+      const chunks: { path: string; cards: unknown[] }[][] = [];
+      let size = 0;
+      for (const r of boardStateCards(machine, board)) {
+        const row = { path: r.path, cards: r.cards };
+        const bytes = new Blob([JSON.stringify(row)]).size;
+        if (chunks.length === 0 || size + bytes > EXPORT_MAX_BYTES) {
+          chunks.push([]);
+          size = 0;
+        }
+        chunks[chunks.length - 1]?.push(row);
+        size += bytes;
+      }
+      for (const chunk of chunks) {
+        const res = await call<{ dir: string; files: string[] }>({
+          machine: machine.id,
+          method: "exportCards",
+          params: { repos: chunk },
+          summary: `${chunk.length} 個の repo のカードを、カンバン用のプラグインの置き場に書き出す`,
+        });
+        if (!res.ok) failed.push(`${ready.length > 1 ? `${machine.name}：` : ""}${res.error}`);
+        else {
+          repos += chunk.length;
+          if (!dirs.includes(res.data.dir)) dirs.push(res.data.dir);
+        }
+      }
+    }
+    setExporting(false);
+    setNotice(
+      failed.length > 0
+        ? { text: `カードを書き出せませんでした：${failed.join("、")}`, tone: "danger" }
+        : { text: `${repos} 個の repo のカードを ${dirs.join("、")} に書き出しました` },
+    );
+  };
+
   return (
     <MotionConfig reducedMotion="user">
       <CardActionsContext.Provider value={actions}>
@@ -224,6 +307,19 @@ export function KanbanPage(_: PageProps) {
               {watched > 0 && (
                 <Button
                   size="sm"
+                  leftIcon={<FileDown />}
+                  isLoading={exporting}
+                  loadingText="書き出し中…"
+                  disabled={boards.length === 0}
+                  title="カードと fetch の結果を、working server のカンバン用のプラグインの置き場（cards/）に JSON で書き出す。置き場で node check.ts を流すと、state を当てた結果を一覧にできる"
+                  onClick={() => void exportCards()}
+                >
+                  カードを書き出す
+                </Button>
+              )}
+              {watched > 0 && (
+                <Button
+                  size="sm"
                   leftIcon={<RefreshCw />}
                   isLoading={checking}
                   loadingText="見直し中…"
@@ -240,6 +336,30 @@ export function KanbanPage(_: PageProps) {
           </header>
 
           <Headings rows={headings} now={now} />
+
+          {problems.length > 0 && (
+            <Alert tone="danger">
+              <AlertTitle>読み込めないカンバン用のプラグインがあります</AlertTitle>
+              <AlertDescription>
+                <ul className="space-y-0.5">
+                  {problems.map((p, i) => (
+                    <li key={`${p.machine.id}/${p.plugin ?? ""}/${i}`} className="break-words">
+                      {ready.length > 1 && `${p.machine.name} · `}
+                      {p.file && (
+                        <code className="text-neutral-900 dark:text-neutral-200">
+                          {p.file}
+                          {p.line !== undefined && `:${p.line}`}
+                        </code>
+                      )}
+                      {p.file && "："}
+                      {p.error}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1">ファイルを直して保存すると、読み込み直します。それまで、そのプラグインを選んだ repo のカードは「自分の番」に置きます。</p>
+              </AlertDescription>
+            </Alert>
+          )}
 
           {errors.length > 0 && (
             <Alert tone="danger">
@@ -347,6 +467,7 @@ export function KanbanPage(_: PageProps) {
               const board = sources[id]?.board;
               return board && { paths: board.watched, plugins: board.plugins ?? {} };
             }}
+            pluginSet={(id) => sources[id]?.pluginSet}
             reload={(id) => sources[id]?.reload()}
           />
           <TrustDialog question={trust} onAnswer={answerTrust} />
