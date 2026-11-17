@@ -1,16 +1,30 @@
-// The side panel of a pull request (on a phone, its own page): where the Agent's review is, with the button its verdict
-// calls for; the review's comment; the checks of its head; its body; and its latest comments. A light cut of
-// github-implement's pull request screen, with a link to GitHub for the rest.
+// The panel of a pull request beside the review page (P19: as a session's panel, beside the page on a computer and in
+// its place on a phone): where the Agent's review is, with the button its verdict calls for; the review's comment; the
+// checks of its head; its body; and its latest comments. A light cut of github-implement's pull request screen, with
+// a link to GitHub for the rest.
 import { Check, CircleDashed, Dot, ExternalLink, MinusCircle, RefreshCw, X, type LucideIcon } from "lucide-react";
-import { useContext, useState, type ReactNode } from "react";
-import { cn, Markdown, RelativeTime, useCall, useDaemonReady, useNow, useRequest, type MachineInfo } from "@gasho/plugin-sdk";
+import { useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  cn,
+  Markdown,
+  Panel,
+  PANEL_BUTTON,
+  RelativeTime,
+  useCall,
+  useDaemonReady,
+  useNow,
+  usePluginState,
+  useRequest,
+  type MachineInfo,
+  type PagePanelProps,
+} from "@gasho/plugin-sdk";
 import type { CheckRunState, PrComment, PrDetail } from "../types.ts";
 import { askOf, withoutMark } from "../verdict.ts";
 import { openedText, progressOf, type Item } from "./actions";
+import { DEFAULT_QUERY, useListings } from "./listing";
 import { AgentAsk, PROGRESS, ProgressBadge, RowContext, stateLook } from "./row";
+import { useRowShell } from "./shell";
 import { Alert, AlertDescription, Skeleton } from "./ui/parts";
-
-const ICON_BUTTON = "inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground [&_svg]:size-4";
 
 const CHECK_LOOKS: Record<CheckRunState, { Icon: LucideIcon; className: string; label: string }> = {
   success: { Icon: Check, className: "text-emerald-600 dark:text-emerald-400", label: "成功" },
@@ -20,26 +34,52 @@ const CHECK_LOOKS: Record<CheckRunState, { Icon: LucideIcon; className: string; 
   skipped: { Icon: MinusCircle, className: "text-muted-foreground", label: "スキップ" },
 };
 
+/** The key of a pull request whose panel is open, as the list marks its row (usePluginState "openPr"). */
+export const prKey = (repo: string, number: number): string => `${repo.toLowerCase()}#${number}`;
+
+/** The panel "pr" of the review page: { repo, number }. */
+export function PrPanel({ params }: PagePanelProps) {
+  const repo = /^[^/\s]+\/[^/\s]+$/.test(params.repo ?? "") ? (params.repo as string) : undefined;
+  const number = Number(params.number);
+  const valid = repo !== undefined && Number.isInteger(number) && number >= 1 && number <= 1e9;
+  // The list the review page asks for (the same search words), for where the pull request is on every working server.
+  const [query] = usePluginState("query", DEFAULT_QUERY);
+  const { sourcesEl, sources, ready, page } = useListings(query, 0);
+  const { shared, overlays } = useRowShell({ sources, ready });
+  const item = valid ? [...page.requested, ...page.groups.flatMap((g) => g.items)].find((i) => prKey(i.pr.repo, i.pr.number) === prKey(repo, number)) : undefined;
+  const machine = item?.spots[0]?.machine ?? ready[0];
+  // The list marks the row of the pull request open here, while it is open.
+  const [, setOpen] = usePluginState<string | null>("openPr", null);
+  const key = valid ? prKey(repo, number) : null;
+  useEffect(() => {
+    setOpen(key);
+    return () => setOpen((cur) => (cur === key ? null : cur));
+  }, [key]);
+
+  return (
+    <RowContext.Provider value={shared}>
+      {sourcesEl}
+      {valid && machine ? (
+        <PrPanelOf repo={repo} number={number} {...(item ? { item } : {})} machine={machine} />
+      ) : (
+        <Panel title="Pull request">
+          {valid ? (
+            <Alert>github-review の daemon の部分が動く working server がつながると、Pull request を読みます。</Alert>
+          ) : (
+            <Alert tone="danger">Pull request の指定が正しくありません。</Alert>
+          )}
+        </Panel>
+      )}
+      {overlays}
+    </RowContext.Provider>
+  );
+}
+
 /**
  * `item`: the pull request as the page lists it, with where it is on every working server (absent when the list does
  * not hold it: then it is where `machine` has it). `machine` reads it.
  */
-export function PrDetailView({
-  repo,
-  number,
-  item,
-  machine,
-  onClose,
-  docked,
-}: {
-  repo: string;
-  number: number;
-  item?: Item;
-  machine: MachineInfo;
-  onClose?: () => void;
-  /** Beside the list, as Gasho's side panel of a session: its heading stays above, and the rest scrolls. */
-  docked?: boolean;
-}) {
+function PrPanelOf({ repo, number, item, machine }: { repo: string; number: number; item?: Item; machine: MachineInfo }) {
   const daemon = useDaemonReady(machine.id);
   const target = daemon.ready ? { machine: machine.id, method: "detail", params: { repo, number } } : undefined;
   const r = useRequest<PrDetail>(target, { staleSeconds: 60, refreshSeconds: 60 });
@@ -61,71 +101,46 @@ export function PrDetailView({
     });
   };
 
-  const heading = (
-    <div className="flex items-start gap-2">
-      {pr && <StateIcon pr={pr} />}
-      <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted-foreground">
-          {repo} #{number}
-        </p>
-        <h2 className="mt-0.5 text-base font-semibold break-words">{pr?.title ?? <Skeleton className="h-5 w-48" />}</h2>
-      </div>
-      <div className="flex shrink-0 items-center">
-        <a href={pr?.url ?? `https://github.com/${repo}/pull/${number}`} target="_blank" rel="noreferrer" className={ICON_BUTTON} title="GitHub で開く" aria-label="GitHub で開く">
-          <ExternalLink />
-        </a>
-        <button type="button" className={ICON_BUTTON} onClick={refresh} disabled={!target || refreshing} title="読み直す" aria-label="読み直す">
-          <RefreshCw className={cn((refreshing || r.loading) && "motion-safe:animate-spin")} />
-        </button>
-        {onClose && (
-          <button type="button" className={ICON_BUTTON} onClick={onClose} title="閉じる" aria-label="閉じる">
-            <X />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-  const content = (
-    <>
-      {!daemon.ready && <Alert tone="warning">{daemon.reason ?? `${machine.name} で github-review の daemon の部分が動いていません。`}</Alert>}
-      {r.error && (
-        <Alert tone="danger">
-          <AlertDescription>{r.error}</AlertDescription>
-        </Alert>
-      )}
-
-      {shown && <Progress item={shown} now={now} />}
-
-      {!d && r.loading && (
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-4 w-1/2" />
-          <Skeleton className="h-20 w-full" />
-        </div>
-      )}
-      {d && <Body detail={d} markUrl={shown?.pr.mark?.url} now={now} />}
-    </>
-  );
-  if (docked) {
-    return (
-      <section aria-label={`Pull request #${number}`} className="flex h-full min-h-0 flex-col">
-        <header className="shrink-0 border-b border-border px-4 py-3">{heading}</header>
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-4">{content}</div>
-      </section>
-    );
-  }
   return (
-    <div className="flex flex-col gap-5">
-      {heading}
-      {content}
-    </div>
+    <Panel
+      title={pr?.title ?? `#${number}`}
+      subtitle={`${repo} #${number}`}
+      actions={
+        <>
+          <button type="button" className={PANEL_BUTTON} onClick={refresh} disabled={!target || refreshing} title="読み直す" aria-label="読み直す">
+            <RefreshCw className={cn("size-3.5", (refreshing || r.loading) && "motion-safe:animate-spin")} />
+          </button>
+          <a href={pr?.url ?? `https://github.com/${repo}/pull/${number}`} target="_blank" rel="noreferrer" className={PANEL_BUTTON}>
+            GitHub <ExternalLink className="size-3.5" />
+          </a>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        {!daemon.ready && <Alert tone="warning">{daemon.reason ?? `${machine.name} で github-review の daemon の部分が動いていません。`}</Alert>}
+        {r.error && (
+          <Alert tone="danger">
+            <AlertDescription>{r.error}</AlertDescription>
+          </Alert>
+        )}
+        {shown && <Progress item={shown} now={now} />}
+        {!d && r.loading && (
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        )}
+        {d && <Body detail={d} markUrl={shown?.pr.mark?.url} now={now} />}
+      </div>
+    </Panel>
   );
 }
 
 function StateIcon({ pr }: { pr: Item["pr"] }) {
   const look = stateLook(pr);
   return (
-    <span title={look.label} className="mt-1 inline-flex shrink-0">
+    <span title={look.label} className="inline-flex shrink-0">
       <look.Icon className={cn("size-4", look.className)} aria-label={look.label} />
     </span>
   );
@@ -140,9 +155,12 @@ function Progress({ item, now }: { item: Item; now: number }) {
   const placed = item.spots.some((s) => s.worktree);
   return (
     <div className="space-y-2 rounded-xl border border-border bg-surface px-3 py-2.5">
-      <p className="text-xs text-muted-foreground">
-        {openedText(pr, now)} · <span className="font-mono">{pr.branch}</span>
-        {pr.fork && " · fork から"}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <StateIcon pr={pr} />
+        <span>
+          {stateLook(pr).label} · {openedText(pr, now)} · <span className="font-mono">{pr.branch}</span>
+          {pr.fork && " · fork から"}
+        </span>
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {progress ? <ProgressBadge progress={progress} /> : <span className="text-xs text-muted-foreground">{pr.state === "open" ? "Agent のレビュー結果はまだありません" : "閉じられています"}</span>}

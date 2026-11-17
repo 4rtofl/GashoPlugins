@@ -1,36 +1,29 @@
 // The review page (P2): above, the open pull requests GitHub asks me to review (all of GitHub); below, those of the
 // repositories each working server watches, and those that have a review worktree. One search box narrows both, in the
 // words of GitHub's list of pull requests. Every working server's daemon part is asked once a minute while the page shows.
+// Pressing a row opens the pull request's panel ("pr", detail.tsx) beside the page, as a session's panel opens.
 import { MotionConfig } from "framer-motion";
 import { RefreshCw, Search, Settings2 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Page, useNavigation, useNow, usePluginState, type PageProps } from "@gasho/plugin-sdk";
 import { MAX_QUERY } from "../types.ts";
 import type { Item } from "./actions";
-import { PrDetailView } from "./detail";
+import { prKey } from "./detail";
 import { DEFAULT_QUERY, useListings } from "./listing";
-import { DESKTOP, useMediaQuery, usePanelWidth } from "./media";
 import { ReposDialog } from "./repos-dialog";
 import { PrItemRow, RowContext } from "./row";
 import { useRowShell } from "./shell";
 import { Alert, AlertDescription, AlertTitle, Button, Skeleton } from "./ui/parts";
 
-/** The pull request whose side panel is open. */
-interface Selected {
-  repo: string;
-  number: number;
-  url: string;
-}
-
 export function ReviewPage(_: PageProps) {
   const now = useNow(30_000);
   const nav = useNavigation();
-  const desktop = useMediaQuery(DESKTOP);
   const [query, setQuery] = usePluginState("query", DEFAULT_QUERY);
   const [draft, setDraft] = useState(query);
   const [freshAsk, setFreshAsk] = useState(0);
   const [choosing, setChoosing] = useState(false);
-  const [selected, setSelected] = usePluginState<Selected | null>("selected", null);
+  // The pull request whose panel is open (the panel says so while it is open).
+  const [open] = usePluginState<string | null>("openPr", null);
   const { sourcesEl, machines, sources, ready, page, pending, refreshing } = useListings(query, freshAsk);
   const watched = ready.reduce((n, m) => n + (sources[m.id]?.listing?.watched.length ?? 0), 0);
   const errors = ready.flatMap((m) => {
@@ -38,27 +31,15 @@ export function ReviewPage(_: PageProps) {
     return [...(s?.error ? [s.error] : []), ...(s?.listing?.errors ?? [])].map((e) => (machines.length > 1 ? `${m.name}：${e}` : e));
   });
   const unavailable = machines.filter((m) => m.connected && sources[m.id] && !sources[m.id]?.ready);
-  // A computer opens the side panel beside the list (pressing the row again closes it); a phone, the pull request's page.
+  // Pressing the row of the pull request whose panel is open closes it; another row shows its own in its place.
   const select = (item: Item) => {
-    const { repo, number, url } = item.pr;
-    if (!desktop) nav.openPage("pr", { repo, number: String(number) });
-    else setSelected((cur) => (cur?.url === url ? null : { repo, number, url }));
+    const { repo, number } = item.pr;
+    if (open === prKey(repo, number)) nav.closePanel();
+    else if (open) nav.replacePanel("pr", { repo, number: String(number) });
+    else nav.openPanel("pr", { repo, number: String(number) });
   };
-  const { shared, overlays } = useRowShell({ sources, ready, select, ...(desktop && selected ? { selected: selected.url } : {}) });
-  const all = [...page.requested, ...page.groups.flatMap((g) => g.items)];
-  const selectedItem = selected ? all.find((i) => i.pr.url === selected.url) : undefined;
-  const panelMachine = selectedItem?.spots[0]?.machine ?? ready[0];
-  const panel = desktop && selected && panelMachine;
-  const { ref: rowRef, width: panelWidth } = usePanelWidth();
-  // Esc closes the panel, as it closes Gasho's (not while a dialog or a menu takes it).
-  useEffect(() => {
-    if (!panel) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector("[role=dialog], [role=menu]")) setSelected(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [panel]);
+  const selected = open ? [...page.requested, ...page.groups.flatMap((g) => g.items)].find((i) => prKey(i.pr.repo, i.pr.number) === open)?.pr.url : undefined;
+  const { shared, overlays } = useRowShell({ sources, ready, select, ...(selected ? { selected } : {}) });
   const search = () => {
     const q = draft.trim().slice(0, MAX_QUERY);
     setDraft(q);
@@ -167,30 +148,7 @@ export function ReviewPage(_: PageProps) {
   return (
     <MotionConfig reducedMotion="user">
       {sourcesEl}
-      <RowContext.Provider value={shared}>
-        {desktop ? (
-          // As Gasho's screen puts a session and its side panel: the list scrolls on the left, the panel stands at the right
-          // edge, as high as the screen, with its own scroll.
-          <div ref={rowRef} className="absolute inset-0 flex">
-            <div className="min-w-0 flex-1 overflow-y-auto">{list}</div>
-            {panel && (
-              <aside style={{ width: panelWidth }} className="shrink-0 border-l border-border bg-background">
-                <PrDetailView
-                  key={selected.url}
-                  repo={selected.repo}
-                  number={selected.number}
-                  {...(selectedItem ? { item: selectedItem } : {})}
-                  machine={panelMachine}
-                  onClose={() => setSelected(null)}
-                  docked
-                />
-              </aside>
-            )}
-          </div>
-        ) : (
-          list
-        )}
-      </RowContext.Provider>
+      <RowContext.Provider value={shared}>{list}</RowContext.Provider>
       <ReposDialog
         open={choosing}
         onClose={() => setChoosing(false)}

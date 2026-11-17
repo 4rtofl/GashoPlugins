@@ -1,6 +1,6 @@
 # GitHub Review（github-review）
 
-サイドバーの「レビュー」で、レビューする Pull request を探し、その行からレビュー用の worktree とセッションを用意する。github-implement は worktree を作った実装者がその Issue と Pull request を開くためのもので、こちらは手元にその Pull request の worktree が無いレビューする人のためのもの。working server の git と gh を使う。プラグインの API 1.3 に対応した gasho-daemon が要る。
+サイドバーの「レビュー」で、レビューする Pull request を探し、その行からレビュー用の worktree とセッションを用意する。github-implement は worktree を作った実装者がその Issue と Pull request を開くためのもので、こちらは手元にその Pull request の worktree が無いレビューする人のためのもの。working server の git と gh を使う。プラグインの API 1.11（ページのパネル）に対応した Gasho サーバーと gasho-daemon が要る。
 
 - ページの上の段に、自分にレビューを頼まれた開いている Pull request（GitHub 全体。`review-requested:@me`）を、下の段に、対象リポジトリの Pull request を出す。対象リポジトリは、ヘッダーの「対象リポジトリ」から working server ごとに選ぶ（1台に30まで）。選べるのは、Gasho がセッションを起動できるフォルダー（Claude Code が信頼しているフォルダー）にある GitHub のリポジトリで、選んだものは working server のこのプラグイン専用のフォルダー（`~/.local/share/gasho/plugin-data/github-review/watched.json`）に覚える
 - 検索欄は1つで、GitHub の Pull request の一覧と同じ書き方（`is:`・`author:`・`label:` など）で上下の段を絞り込む。最初は `is:open`。`sort:` を書かなければ新しく開いた順に並べる。行には、GitHub の一覧と同じく、状態のアイコン（Draft を含む）・題・ラベル・チェックの結果・番号と作者と開いた時刻・レビューの状態・コメントの数を出す。段ごとに50件まで出し、それより多いときは件数を出す。clone が Claude Code の信頼しているフォルダーに無いリポジトリの Pull request は、worktree を作れないので出さない（段の件数も、出す行の数）
@@ -16,7 +16,7 @@
   - マージ可能: 印が `mergeable` で、`sha` が今の head と同じ
   - 要修正: 印が `changes` で、`sha` が今の head と同じ
   - 再レビューが要る: 印の `sha` が今の head と違う（レビューのあとに push があった）。セッションが作業中なら「レビュー中」を出す
-- 行（か題）を押すと、パソコンでは、セッションの横のパネルと同じく、画面の右端にその Pull request のサイドパネルを開く（幅は画面の40%で、380〜620px。もう一度押すか、✕ か Esc で閉じる）。一覧とパネルは、それぞれスクロールする。スマホでは、Pull request のページ（`#/p/github-review/pr?repo=OWNER/REPO&number=N`）に移り、戻ると一覧に戻る。中身は、レビューの状態とボタン、レビュー結果のコメント、チェックの結果、本文、最新の30件のコメントで、変更されたファイル・commit・レビューのコメントなどは GitHub で開くリンクから見る。daemon の `detail` で、1分おきに読み直す
+- 行（か題）を押すと、その Pull request のパネル（`pr`）を開く。Gasho のページのパネル（API 1.11）なので、セッションのパネルと同じく、パソコンではページの右に開き（左の端をドラッグして幅を変えられ、✕ か Esc で閉じる。開いている行をもう一度押しても閉じる）、スマホではページの代わりに開いて、上のバーの ← で一覧に戻る。URL は `#/p/github-review/review/p/pr/number=N&repo=OWNER%2FREPO`。中身は、レビューの状態とボタン、レビュー結果のコメント、チェックの結果、本文、最新の30件のコメントで、変更されたファイル・commit・レビューのコメントなどは GitHub で開くリンクから見る。daemon の `detail` で、1分おきに読み直す
 - 「マージ可能」の行とサイドパネルに「マージしてもらう」を、「要修正」の行とサイドパネルに「差し戻す」を出す。押すと、その Pull request の worktree で最後に使った Gasho のセッションに指示を送る（無ければ起動してから送る。作業中なら、Gasho が終わるまで入力を待つ）。worktree が複数の working server にあるときは、メニューで選ぶ
   - 「マージしてもらう」は、確かめてから送る。Agent は、base とのコンフリクトがあれば base を取り込んで（rebase ではなく merge）解決して push し、チェックが通るのを待ち、approve してから、`gh pr merge --match-head-commit` でマージする。コンフリクトの解決で中身が変わったときは、マージせずに、その旨をコメントする（push で head が変わるので「再レビューが要る」に戻る）。マージのあと、設定で選んでいれば、GitHub の head のブランチを消す（fork のブランチは消さない。ローカルのブランチと worktree は「片付ける」で消す）
   - fork の Pull request で head に push できない（maintainer の変更を許していない）ときは、コンフリクトがあれば「マージしてもらう」を押せなくし、理由を出す

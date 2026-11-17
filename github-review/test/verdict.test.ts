@@ -232,13 +232,3 @@ test("gh: the side panel reads the body, the latest comments with the verdict am
   ]);
   assert.equal(parseDetail(JSON.stringify({ data: { repository: { pullRequest: null } } })), undefined);
 });
-
-test("panel: as wide as Gasho's side panel of a session, 40% of the window within 380-620px, leaving the list 140px", async () => {
-  const { panelWidth } = await import("../src/web/media.ts");
-  assert.equal(panelWidth(1440, 1192), 576);
-  assert.equal(panelWidth(2560, 2312), 620);
-  assert.equal(panelWidth(800, 552), 380);
-  // A window this narrow leaves the list its 140px only by a narrower panel… but never below 380.
-  assert.equal(panelWidth(768, 500), 380);
-  assert.equal(panelWidth(1200, 600), 460);
-});
