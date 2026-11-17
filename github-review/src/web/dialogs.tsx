@@ -1,5 +1,5 @@
-// What the page asks and tells around the rows' buttons: whether Claude Code may trust a folder before a session
-// starts there, whether to remove a review worktree, whether to ask the Agent to merge or to send it back (and to
+// What the page asks and tells around the rows' buttons: whether to start a session in a fork's code, whether Claude
+// Code may trust a folder before a session starts there, whether to remove a review worktree, whether to ask the Agent to merge or to send it back (and to
 // remove its review worktree once that is done), and a notice at the bottom of what a button is doing or did.
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
@@ -8,8 +8,8 @@ import { useEffect, useState } from "react";
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
-import { canPush } from "../types.ts";
-import { sessionsIn, type Item, type Notice, type Spot } from "./actions";
+import { canPush, PROJECT_FILES } from "../types.ts";
+import { sessionsIn, type ForkQuestion, type Item, type Notice, type Spot } from "./actions";
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
 
@@ -43,6 +43,54 @@ export function TrustDialog({ question, onAnswer }: { question: { path: string; 
             </Button>
           </div>
         </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/**
+ * Before a session starts in a fork's code: Claude Code asks nothing there (it trusts the worktree as it trusts the
+ * primary checkout), so the person is shown which of PROJECT_FILES the worktree has, and may leave it unstarted.
+ */
+export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | undefined; onAnswer: (yes: boolean) => void }) {
+  const pr = question?.pr;
+  const files = question?.files ?? [];
+  return (
+    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
+      <Dialog.Portal>
+        {/* The portal lands outside the plugin's part of the page, where its CSS would not apply. */}
+        <div data-gasho-plugin="github-review" style={{ display: "contents" }}>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">fork のコードでセッションを起動しますか</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                #{pr?.number}「{pr?.title}」は、{pr?.author ? `${pr.author} の ` : ""}fork からの Pull request です。Claude Code はこのフォルダーを確かめずに信頼し、fork が置いた設定（.claude/ の hooks はコマンドを実行します）や CLAUDE.md を読みます。
+              </Dialog.Description>
+            </div>
+            <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>
+            {files.length > 0 ? (
+              <div className="space-y-1 text-xs text-amber-700 dark:text-amber-300">
+                <p>この worktree にあるもの。中身を確かめてから起動してください。</p>
+                <ul className="list-disc space-y-0.5 pl-5 font-mono">
+                  {files.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">{PROJECT_FILES.join("・")} はありません。</p>
+            )}
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" onClick={() => onAnswer(false)}>
+                起動しない
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
+                起動する
+              </Button>
+            </div>
+          </Dialog.Content>
+        </div>
       </Dialog.Portal>
     </Dialog.Root>
   );

@@ -226,9 +226,9 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
       <div className="flex flex-wrap justify-end gap-1.5">
         <AgentAsk item={item} />
         {fresh ? (
-          <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(s, tools))} />
+          <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(item, s, tools))} />
         ) : (
-          <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(s, tools))} />
+          <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(item, s, tools))} />
         )}
         {review.length > 0 && <SpotButton label="片付ける" icon={<Trash2 />} spots={review} disabled={off} onPick={(s) => run(pr.url, () => removeWorktree(item, s, tools))} />}
       </div>
@@ -263,13 +263,13 @@ export function AgentAsk({ item }: { item: Item }) {
       onPick={(s) =>
         run(pr.url, async () => {
           if (ask.kind === "fix") {
-            await askAgent(s, ask.label, askInstruction(ask.kind, pr, mark, shared.merge), askEffort(ask.kind), tools);
+            await askAgent(item, s, ask.label, askInstruction(ask.kind, pr, mark, shared.merge), askEffort(ask.kind), tools);
             return;
           }
           const kind = ask.kind;
           const answer = await tools.actions.askAgentFor({ kind, item, spot: s });
           if (!answer) return;
-          if (await askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools)) await followCleanup(item, s, kind, answer.cleanup, tools);
+          if (await askAgent(item, s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools)) await followCleanup(item, s, kind, answer.cleanup, tools);
         })
       }
     />

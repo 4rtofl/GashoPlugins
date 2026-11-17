@@ -7,7 +7,7 @@ import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { pageItems } from "../src/items.ts";
 import { listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries } from "../src/daemon/gh.ts";
-import { createWorktree, prWorktree, readClone, removeWorktree, ReviewError, type Clone, type Exec } from "../src/daemon/git.ts";
+import { createWorktree, projectFiles, prWorktree, readClone, removeWorktree, ReviewError, type Clone, type Exec } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
 import { fillTemplate, parseTemplates } from "../src/template.ts";
 import type { Listing, PrRow } from "../src/types.ts";
@@ -84,6 +84,13 @@ test("worktree: a pull request from a fork is checked out at its head, detached;
   assert.equal(await git(dest, "branch", "--show-current"), "");
   // The fork's branch is "main", which says nothing of the primary checkout on main.
   assert.equal(prWorktree(await s.clone(), { number: 8, branch: "main", fork: true }), undefined);
+
+  // What Claude Code would read there, before a session starts in the fork's code.
+  assert.deepEqual(await projectFiles(await s.clone(), 7), { path: dest, files: [] });
+  await fs.mkdir(path.join(dest, ".claude"));
+  await fs.writeFile(path.join(dest, ".mcp.json"), "{}");
+  assert.deepEqual(await projectFiles(await s.clone(), 7), { path: dest, files: [".claude/", ".mcp.json"] });
+  await assert.rejects(projectFiles(await s.clone(), 8), (e: unknown) => e instanceof ReviewError && /review-8/.test(e.message));
 
   await fs.mkdir(path.join(s.root, "r", "review-9"));
   await assert.rejects(createWorktree(exec, await s.clone(), { number: 9, branch: "feat/6-b", fork: false }), (e: unknown) => e instanceof ReviewError && /がもうあります/.test(e.message));
@@ -268,6 +275,13 @@ test("list: a clone whose origin says its owner's old name lists its pull reques
 test("template: the placeholders become the pull request's, once; a setting that is not a list of templates gives none", () => {
   const pr = { number: 3, title: "Fix {url}", branch: "feat/3-x", url: "https://github.com/o/r/pull/3" };
   assert.equal(fillTemplate("#{number} {title} ({branch}) {url} {other}", pr), "#3 Fix {url} (feat/3-x) https://github.com/o/r/pull/3 {other}");
+  // A value never starts what is sent (Claude Code would take "/…" for a command, "!…" for a shell command); the
+  // template's own start, and values elsewhere, are kept.
+  const odd = { ...pr, title: " /clear 直す", branch: "!rm-x" };
+  assert.equal(fillTemplate("{title} をレビュー", odd), "clear 直す をレビュー");
+  assert.equal(fillTemplate("  {branch}\n{title}", odd), "  rm-x\n /clear 直す");
+  assert.equal(fillTemplate("{title}{branch}", { ...odd, title: "!!" }), "rm-x");
+  assert.equal(fillTemplate("/review {title}", odd), "/review  /clear 直す");
   assert.deepEqual(parseTemplates('[{"name":" A ","body":"x"},{"name":"","body":"y"},{"name":"B"},"z"]'), [{ name: "A", body: "x" }]);
   assert.deepEqual(parseTemplates("not json"), []);
   assert.deepEqual(parseTemplates('{"name":"A","body":"x"}'), []);

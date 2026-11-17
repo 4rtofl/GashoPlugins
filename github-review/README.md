@@ -8,6 +8,7 @@
 - 行の「worktree を作る」で、送る指示のテンプレートを選ぶ（いちばん上は「何も送らない」）。primary checkout と同じ親フォルダーに `review-<PR 番号>` を作り、その中でセッションを起動して、選んだテンプレートの指示を送る。セッションの画面には移らずにこのページに留まり、続けてほかの Pull request もレビューに回せる。起動したことを下の通知に出すので、そこの「セッションを開く」で開く。一覧が古くて worktree がもうあったときは、作らずに、そこで最後に使った Gasho のセッション（なければ起動したもの）を通知に出す（指示は送らない）。Claude Code がフォルダーを信頼していないときは、起動する前に確かめる
   - 同じ repo の Pull request は、`git fetch` してから、同じ名前のローカルのブランチを作って origin のブランチを追う（レビューする人が修正を push できる）。その名前のローカルのブランチがもうあれば、origin に無い commit が無いときだけ、origin に合わせて使う
   - fork の Pull request は、`refs/pull/<番号>/head` を取ってきて、detached HEAD にする
+  - fork の Pull request の worktree でセッションを起動する前は、毎回確かめる（「worktree を作る」のほか、「開く」「新たにセッションを作成する」「マージしてもらう」などでセッションを起動するときも。セッションがもうあれば、それを使うので確かめない）。Claude Code は、primary checkout を信頼していれば、その worktree も確かめずに信頼し、fork が置いた `.claude/`（hooks はコマンドを実行する）や `CLAUDE.md` を読むため。確かめるダイアログには、worktree の一番上にある `.claude/`・`CLAUDE.md`・`CLAUDE.local.md`・`.mcp.json` を出す。「起動しない」を選ぶと、worktree は残し、セッションは起動しない
   - その Pull request の worktree（`review-<番号>`、同じ repo の Pull request ならそのブランチの worktree）がもうあれば、作らずに、上の段では「開く」を、下の段では「新たにセッションを作成する」を出す。「開く」は、その worktree で最後に使った Gasho のセッションを開く（なければ起動して開く）。「新たにセッションを作成する」は、その worktree で新しいセッションを起動して開く（worktree は増やさない）。worktree が複数の working server にあるときは、どちらもメニューで選ぶ
   - 同じ名前のフォルダーが、この repo の worktree でないものとしてあれば、作らずに理由を出す
   - テンプレートを送るときは、そのセッションの Effort を Max に切り替えてから送る（Gasho の入力欄の Effort のピッカーと同じく、そのセッションだけ）。切り替えられなかったとき（このモデルでは選べないなど）は、テンプレートはそのまま送り、ページの下に理由と「セッションを開く」を出す。Effort を切り替えられない gasho-daemon（0.6.0 より前）では、切り替えずに送る
@@ -30,7 +31,7 @@
     - 手で「片付ける」などで worktree が無くなったら、覚えていたことは忘れる
   - 自分の Pull request は、GitHub の仕様で approve も request changes もできない。「マージしてもらう」では approve せずにマージし、「差し戻す」の代わりに「修正してもらう」を出して、Agent にその worktree で直して push してもらう
   - 設定の「「マージしてもらう」のマージ方法」（merge・squash・rebase。最初は merge）と「マージしたあと GitHub の head のブランチを消す」（最初は消す）は、すべてのブラウザーで共通
-- テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る
+- テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る。送る発言の先頭に来る値は、先頭の空白と、文字・数字以外の記号を除く（題が `/` で始まると Claude Code のコマンドに、`!` で始まるとシェルのコマンドになるため）。テンプレート自身の先頭の文字は除かない
 - `review-<番号>` の worktree がある行には「片付ける」を出す。押すと確かめてから、worktree とローカルのブランチを消す。未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも無い commit）があれば、消さずに理由を出す。Pull request がマージか閉じられたら、行に「片付けてよい」と出す。マージか閉じられて上下の段から外れた Pull request も、`review-<番号>` の worktree があるあいだは、下の段のその repo の所に出す（対象リポジトリでなくても出し、検索の語では絞り込まない）
 
 ## daemon の部分のメソッド
@@ -42,6 +43,7 @@
 | `detail` | read | `{ repo, number, fresh? }` のサイドパネルの中身（`PrDetail`）。本文・最新の30件のコメント・head のチェックと、この working server の clone と worktree（`pr.place`） |
 | `watch` | write | 対象リポジトリを `{ paths }` に変える。新しく足せるのは `options` にある GitHub の repo だけ |
 | `create` | write | `{ repo, number }` のレビュー用の worktree を作る。もうあれば、その場所を返す（`Created`） |
+| `projectFiles` | read | `{ repo, number }` のレビュー用の worktree の一番上にある `.claude/`・`CLAUDE.md`・`CLAUDE.local.md`・`.mcp.json`（`ProjectFiles`）。fork の Pull request でセッションを起動する前に、ページが確かめるダイアログに出す |
 | `remove` | write | `{ repo, number }` のレビュー用の worktree とローカルのブランチを消す（`Removed`） |
 | `cleanup` | write | `{ repo, number, action }` の「終わったら worktree を片付ける」。`follow`（`kind` は `merge` か `sendBack`）で覚え、`forget` で忘れ、`claim` でページが消す役を取り（`{ claimed }`）、`fail`（`problem`）で消せなかった理由を残す。`list` は、覚えている Pull request の `place.cleanup` に、終わったか（`done`）を付ける |
 

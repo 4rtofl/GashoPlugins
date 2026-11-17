@@ -8,8 +8,8 @@ import { mergeMethodOf } from "../instructions.ts";
 import { parseTemplates } from "../template.ts";
 import type { Place } from "../types.ts";
 import { working } from "../verdict.ts";
-import { cleanUp, type Actions, type Item, type Notice, type Spot, type Tools } from "./actions";
-import { AskDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
+import { cleanUp, type Actions, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "./actions";
+import { AskDialog, ForkDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
 import type { Source } from "./listing";
 import type { RowShared } from "./row";
 
@@ -37,6 +37,7 @@ export function useRowShell({
   const [rawDelete] = useSetting<boolean>("deleteBranch");
   const merge = useMemo(() => ({ method: mergeMethodOf(rawMethod), deleteBranch: rawDelete !== false }), [rawMethod, rawDelete]);
   const [notice, setNotice] = useState<Notice>();
+  const [fork, setFork] = useState<Question<ForkQuestion>>();
   const [trust, setTrust] = useState<Question<{ path: string; warnings: string[] }>>();
   const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot }>>();
   const [asking, setAsking] = useState<Question<{ kind: CleanupKind; item: Item; spot: Spot }, { cleanup: boolean } | undefined>>();
@@ -45,6 +46,7 @@ export function useRowShell({
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
       notify: setNotice,
+      askFork: (q) => new Promise<boolean>((resolve) => setFork({ ...q, answer: resolve })),
       askTrust: (q) => new Promise<boolean>((resolve) => setTrust({ ...q, answer: resolve })),
       askRemove: (q) => new Promise<boolean>((resolve) => setRemoving({ ...q, answer: resolve })),
       askAgentFor: (q) => new Promise<{ cleanup: boolean } | undefined>((resolve) => setAsking({ ...q, answer: resolve })),
@@ -84,6 +86,7 @@ export function useRowShell({
     };
   const overlays = (
     <>
+      <ForkDialog question={fork} onAnswer={answer(fork, () => setFork(undefined))} />
       <TrustDialog question={trust} onAnswer={answer(trust, () => setTrust(undefined))} />
       <RemoveDialog question={removing} onAnswer={answer(removing, () => setRemoving(undefined))} />
       <AskDialog question={asking} merge={merge} onAnswer={answer(asking, () => setAsking(undefined))} />
