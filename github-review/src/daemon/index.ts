@@ -3,11 +3,14 @@
 // the review worktrees with git. gh runs through gasho-daemon (ctx.github); git only in the clones of those folders.
 import path from "node:path";
 import { defineDaemonPlugin, PluginError, type DaemonContext } from "@gasho/plugin-sdk/daemon";
+import { CLEANUP_KINDS, type CleanupKind } from "../cleanup.ts";
+import { Cleanups } from "./cleanups.ts";
 import { ghError, headArgs, parseHead } from "./gh.ts";
 import { createWorktree, removeWorktree, ReviewError, type PrHead } from "./git.ts";
 import { Reviewer } from "./reviewer.ts";
 
 let reviewer: Reviewer | undefined;
+let cleanups: Cleanups | undefined;
 
 function current(): Reviewer {
   if (!reviewer) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
@@ -47,11 +50,14 @@ async function target(params: unknown, ctx: DaemonContext) {
 
 export default defineDaemonPlugin({
   start(ctx) {
-    reviewer = new Reviewer({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log });
+    cleanups = new Cleanups({ file: path.join(ctx.dataDir, "cleanups.json"), log: ctx.log });
+    reviewer = new Reviewer({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log, cleanups });
     void reviewer.load();
+    void cleanups.load();
   },
   stop() {
     reviewer = undefined;
+    cleanups = undefined;
   },
   methods: {
     /** The repositories that can be watched: RepoOption[]. */
@@ -80,6 +86,37 @@ export default defineDaemonPlugin({
     async create(params, ctx) {
       const { clone, head } = await target(params, ctx);
       return createWorktree(ctx.exec, clone, head);
+    },
+    /**
+     * The review worktree of { repo, number } once what was asked of its Agent is done (cleanup.ts), by `action`:
+     * "follow" { kind } — remove it once `kind` ("merge" or "sendBack") is done; "forget" — not to be removed (it was,
+     * or the person no longer wants it); "claim" — a page is about to remove it ({ claimed }: false when another page
+     * is at it, or it failed before); "fail" { problem } — it could not be removed, and why.
+     */
+    async cleanup(params) {
+      if (!cleanups) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
+      const p = objArg(params);
+      const repo = repoArg(p.repo);
+      const number = numberArg(p.number);
+      switch (p.action) {
+        case "follow": {
+          if (!CLEANUP_KINDS.includes(p.kind as CleanupKind)) throw new PluginError("頼んだことの指定が正しくありません。");
+          await cleanups.follow(repo, number, p.kind as CleanupKind);
+          return { ok: true };
+        }
+        case "forget":
+          await cleanups.forget(repo, number);
+          return { ok: true };
+        case "claim":
+          return { claimed: await cleanups.claim(repo, number) };
+        case "fail": {
+          const problem = typeof p.problem === "string" && p.problem.trim() ? p.problem.trim().slice(0, 500) : "片付けられませんでした。";
+          await cleanups.fail(repo, number, problem);
+          return { ok: true };
+        }
+        default:
+          throw new PluginError("片付けの指定が正しくありません。");
+      }
     },
     /** Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed). */
     async remove(params, ctx) {

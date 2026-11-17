@@ -1,7 +1,7 @@
 {
   "id": "remote-control-shell",
   "name": "Remote Control Shell",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "セッションのフォルダーでシェルのコマンドを実行し、出力をパネルで見る（出力は Claude の会話に入らない）",
   "genre": "devtools",
   "api": "1.1",

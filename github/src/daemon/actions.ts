@@ -2,12 +2,12 @@
 // a failed job, the end of its log. `gh run list`, `gh workflow list` and `gh run view` give JSON; a job's log comes
 // from the REST API (`gh api repos/<repo>/actions/jobs/<id>/logs`) as text.
 import type { Job, Run, RunDetail, Runs, RunState, Step, Workflow } from "../types.ts";
-import { arr, githubUrl, num, parseJson, rec, str, type Gh } from "./gh.ts";
+import { arr, cut, githubUrl, num, parseJson, rec, str, type Gh } from "./gh.ts";
 
 /** Runs sent per list. */
 export const RUNS_LIMIT = 50;
 /** Failed jobs whose log is read per run, and lines of it sent. */
-const LOGS_MAX = 3;
+export const LOGS_MAX = 3;
 export const LOG_LINES = 80;
 const LOG_LINE_MAX = 500;
 
@@ -139,9 +139,12 @@ function logLines(log: string): LogLine[] {
   });
 }
 
+const stepStart = (text: string): boolean => text.startsWith("##[group]Run ") || text.startsWith("##[start-action ") || text === "Post job cleanup.";
+
 /**
  * The end of a failed job's log: the part of the step that failed (its lines, by the step's start and end, from its
- * "##[group]Run …" to the cleanup after it), else of the whole log. Timestamps, colors and GitHub's group markers go.
+ * "##[group]Run …" to the next step or the cleanup after its last error), else of the whole log. Timestamps, colors
+ * and GitHub's markers go.
  */
 export function logTail(log: string, failed?: Pick<Step, "startedAt" | "completedAt">, max = LOG_LINES): string[] {
   let lines = logLines(log);
@@ -152,14 +155,18 @@ export function logTail(log: string, failed?: Pick<Step, "startedAt" | "complete
     const inside = lines.filter((l) => l.at >= start && l.at < end + 1000);
     const first = inside.findIndex((l) => l.text.startsWith("##[group]Run "));
     let part = first >= 0 ? inside.slice(first) : inside;
-    const after = part.findIndex((l, i) => i > 0 && (l.text.startsWith("##[group]Run ") || l.text === "Post job cleanup."));
+    // The steps of a composite action start with "##[group]Run " too, and run until the one that fails: the step ends
+    // at the first start after its last error (else after its own start).
+    const lastError = part.findLastIndex((l) => l.text.startsWith("##[error]"));
+    const after = part.findIndex((l, i) => i > Math.max(lastError, 0) && stepStart(l.text));
     if (after > 0) part = part.slice(0, after);
     if (part.some((l) => l.text.trim())) lines = part;
   }
   const shown = lines
-    .filter((l) => l.text !== "##[endgroup]")
+    // Markers of where the steps of a composite action start and end.
+    .filter((l) => l.text !== "##[endgroup]" && !/^##\[(start|end)-action /.test(l.text))
     .map((l) => l.text.replace(/^##\[group\]/, "").replace(/^##\[(error|warning|notice)\]/, (_, k: string) => `${k[0]?.toUpperCase()}${k.slice(1)}: `))
-    .map((t) => (t.length > LOG_LINE_MAX ? `${t.slice(0, LOG_LINE_MAX)}…` : t));
+    .map((t) => cut(t, LOG_LINE_MAX, "…"));
   while (shown.length && !shown[shown.length - 1]?.trim()) shown.pop();
   return shown.slice(-max);
 }
@@ -173,9 +180,9 @@ export async function listRuns(ctx: Gh, repo: string, o: { workflow?: number; br
   if (o.branch) args.push("--branch", o.branch);
   const [runs, workflows] = await Promise.all([
     ctx.github.read(args, { maxAgeSeconds: o.maxAgeSeconds, timeoutMs: 25_000 }),
-    // Workflows change rarely.
+    // Workflows change rarely: kept 5 minutes unless read afresh.
     ctx.github.read(["workflow", "list", "--repo", repo, "--all", "--limit", "200", "--json", "id,name,path,state"], {
-      maxAgeSeconds: Math.max(o.maxAgeSeconds, 300),
+      maxAgeSeconds: o.maxAgeSeconds === 0 ? 0 : Math.max(o.maxAgeSeconds, 300),
       timeoutMs: 25_000,
     }),
   ]);
@@ -204,9 +211,10 @@ export async function viewRun(ctx: Gh, repo: string, id: number, o: { maxAgeSeco
   });
   const run = parseRunDetail(stdout);
   if (!run) throw new Error(`gh returned no run ${id}`);
-  const failed = run.jobs.filter((j) => j.state === "failure" && j.completedAt).slice(0, LOGS_MAX);
+  const failed = run.jobs.filter((j) => j.state === "failure" && j.completedAt);
+  for (const job of failed.slice(LOGS_MAX)) job.logError = `ログは、失敗したジョブのうち最初の ${LOGS_MAX} 件だけ読みます。GitHub で見られます。`;
   await Promise.all(
-    failed.map(async (job) => {
+    failed.slice(0, LOGS_MAX).map(async (job) => {
       try {
         job.log = logTail(await jobLog(ctx, repo, job.id), job.steps.find((s) => s.state === "failure"));
       } catch (e) {

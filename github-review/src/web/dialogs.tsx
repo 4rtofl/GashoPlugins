@@ -1,15 +1,16 @@
 // What the page asks and tells around the rows' buttons: whether Claude Code may trust a folder before a session
-// starts there, whether to remove a review worktree, whether to ask the Agent to merge, and a notice at the bottom of
-// what a button is doing or did.
+// starts there, whether to remove a review worktree, whether to ask the Agent to merge or to send it back (and to
+// remove its review worktree once that is done), and a notice at the bottom of what a button is doing or did.
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect } from "react";
-import { cn } from "@gasho/plugin-sdk";
+import { useEffect, useState } from "react";
+import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
+import type { CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
 import { canPush } from "../types.ts";
 import { sessionsIn, type Item, type Notice, type Spot } from "./actions";
-import { Button, PortalScope } from "./ui/parts";
+import { Button, DrawCheckbox, PortalScope } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
 
 /** Claude Code asks whether to trust a folder before a session starts there: the person answers here. */
@@ -97,61 +98,90 @@ export function RemoveDialog({ question, onAnswer }: { question: { item: Item; s
 
 const METHOD_TEXT: Record<MergeMethod, string> = { merge: "merge（マージコミットを作る）", squash: "squash", rebase: "rebase" };
 
-/** Before the Agent is asked to merge: what it will do, with the settings of the merge. */
-export function MergeDialog({
+/** What the Agent will do for "マージしてもらう" or "差し戻す", as the dialog lists it. */
+export function askSteps(kind: CleanupKind, pr: Item["pr"], merge: { method: MergeMethod; deleteBranch: boolean }): string[] {
+  if (kind === "sendBack") return ["レビュー結果のコメントを元に、request changes のレビューを付けます", "自分では直さず、push もしません"];
+  return [
+    canPush(pr) ? "base とのコンフリクトがあれば取り込んで解決し、push します。解決で中身が変わったときは、マージせずにコメントします" : "base とのコンフリクトがあれば、マージせずに止めます（head に push できないため）",
+    "チェックが通るのを待ちます",
+    pr.own ? "自分の Pull request なので、approve はしません" : "レビューの結果を元に approve します",
+    `${METHOD_TEXT[merge.method]} でマージします`,
+    ...(merge.deleteBranch && !pr.fork ? [`GitHub の head のブランチ（${pr.branch}）を消します`] : []),
+  ];
+}
+
+const ASK_TEXT: Record<CleanupKind, { title: string; ok: string; done: string }> = {
+  merge: { title: "Agent にマージを頼みますか", ok: "マージを頼む", done: "マージされたら" },
+  sendBack: { title: "Agent に差し戻しを頼みますか", ok: "差し戻しを頼む", done: "request changes のレビューが付いたら" },
+};
+
+/**
+ * Before the Agent is asked to merge or to send it back: what it will do (with the settings of the merge), and whether
+ * to remove the review worktree once it is done ("終わったら片付ける", on unless it cannot be: no review worktree, or
+ * Gasho cannot remove it).
+ */
+export function AskDialog({
   question,
   merge,
   onAnswer,
 }: {
-  question: { item: Item; spot: Spot } | undefined;
+  question: { kind: CleanupKind; item: Item; spot: Spot } | undefined;
   merge: { method: MergeMethod; deleteBranch: boolean };
-  onAnswer: (yes: boolean) => void;
+  onAnswer: (answer: { cleanup: boolean } | undefined) => void;
 }) {
   const pr = question?.item.pr;
-  const steps = pr
-    ? [
-        canPush(pr) ? "base とのコンフリクトがあれば取り込んで解決し、push します。解決で中身が変わったときは、マージせずにコメントします" : "base とのコンフリクトがあれば、マージせずに止めます（head に push できないため）",
-        "チェックが通るのを待ちます",
-        pr.own ? "自分の Pull request なので、approve はしません" : "レビューの結果を元に approve します",
-        `${METHOD_TEXT[merge.method]} でマージします`,
-        ...(merge.deleteBranch && !pr.fork ? [`GitHub の head のブランチ（${pr.branch}）を消します`] : []),
-      ]
-    : [];
+  const kind = question?.kind ?? "merge";
+  const text = ASK_TEXT[kind];
+  const wt = question?.spot.worktree;
+  const cannot = !question || !wt ? undefined : !wt.review ? "レビュー用の worktree（review-<番号>）ではないので、片付けません。" : removeWorktreeProblem(question.spot.machine, { path: wt.path, repo: question.spot.primary });
+  const [cleanup, setCleanup] = useState(true);
+  // Every question starts checked.
+  useEffect(() => setCleanup(true), [question]);
+  const steps = pr ? askSteps(kind, pr, merge) : [];
   return (
-    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
+    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(undefined)}>
       <Dialog.Portal>
         <PortalScope>
-          {/* The portal lands outside the plugin's part of the page, where its CSS would not apply. */}
-          <div data-gasho-plugin="github-review" style={{ display: "contents" }}>
-            <Dialog.Overlay className={DIALOG_OVERLAY} />
-            <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
-              <div className="space-y-1.5">
-                <Dialog.Title className="text-base font-semibold tracking-tight">Agent にマージを頼みますか</Dialog.Title>
-                <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-                  #{pr?.number}「{pr?.title}」の worktree のセッションに指示を送ります。セッションが作業中なら、終わってから入力されます。
-                </Dialog.Description>
-              </div>
-              <ol className="list-decimal space-y-1 rounded-lg border border-border bg-background py-2 pr-3 pl-7 text-xs">
-                {steps.map((s) => (
-                  <li key={s}>{s}</li>
-                ))}
-              </ol>
-              <p className="text-[11px] text-muted-foreground">マージ方法とブランチを消すかは、設定で変えられます。</p>
-              <div className="flex justify-end gap-2 border-t border-border pt-4">
-                <Button size="sm" onClick={() => onAnswer(false)}>
-                  やめる
-                </Button>
-                <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
-                  マージを頼む
-                </Button>
-              </div>
-            </Dialog.Content>
-          </div>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">{text.title}</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                #{pr?.number}「{pr?.title}」の worktree のセッションに指示を送ります。セッションが作業中なら、終わってから入力されます。
+              </Dialog.Description>
+            </div>
+            <ol className="list-decimal space-y-1 rounded-lg border border-border bg-background py-2 pr-3 pl-7 text-xs">
+              {steps.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ol>
+            {kind === "merge" && <p className="text-[11px] text-muted-foreground">マージ方法とブランチを消すかは、設定で変えられます。</p>}
+            <DrawCheckbox
+              checked={cleanup && !cannot}
+              onChange={setCleanup}
+              disabled={Boolean(cannot)}
+              label="終わったら worktree を片付ける"
+              description={
+                cannot ??
+                `${text.done}、セッションの作業が終わるのを待って、${wt ? folderName(wt.path) : "worktree"}${wt?.branch ? "とローカルのブランチ" : ""}を消し、中のセッションも終わらせます。未コミットの変更か push していない commit があれば、消さずに行に理由を出します。`
+              }
+            />
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" onClick={() => onAnswer(undefined)}>
+                やめる
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => onAnswer({ cleanup: cleanup && !cannot })}>
+                {text.ok}
+              </Button>
+            </div>
+          </Dialog.Content>
         </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
+
+const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? p;
 
 /** A notice at the bottom of the page (after EasyUI's VelocityToast); it goes after a few seconds once nothing is going on. */
 export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose: () => void }) {

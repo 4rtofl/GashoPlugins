@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkState, ghError, parseGhItemDetail, parseGhItems } from "../src/daemon/gh.ts";
+import { checkState, ghError, listGitHub, parseGhItemDetail, parseGhItems } from "../src/daemon/gh.ts";
 
 test("gh's issue and pull request lists are read, and anything odd is left out", () => {
   const json = JSON.stringify([
@@ -121,7 +121,7 @@ test("one issue is read; a closed one says how, long text is cut, and only the l
     updatedAt: "2026-11-01T00:00:00Z",
     labels: [{ name: "bug", color: "d73a4a" }],
     assignees: [],
-    body: "x".repeat(70_000),
+    body: `${"x".repeat(59_999)}👍🏽${"x".repeat(10_000)}`,
     comments,
   });
   const item = parseGhItemDetail(json, "issues");
@@ -129,12 +129,21 @@ test("one issue is read; a closed one says how, long text is cut, and only the l
   assert.equal(item.state, "closed");
   assert.equal(item.stateReason, "not_planned");
   assert.ok(item.body.length < 61_000 && item.body.includes("GitHub で読んでください"));
+  // Not inside the emoji (which would leave half of it, shown as "�").
+  assert.ok(item.body.startsWith(`${"x".repeat(59_999)}\n`));
   assert.equal(item.comments.length, 200);
   assert.equal(item.comments[0]?.body, "c5");
   assert.equal(item.commentsLeftOut, 5);
   assert.equal(item.reviews, undefined);
   assert.equal(parseGhItemDetail("null", "issues"), undefined);
   assert.equal(parseGhItemDetail(JSON.stringify({ number: 1, title: "t", url: "https://evil.example/x" }), "issues"), undefined);
+});
+
+test("a repository whose issues are turned off has no list of them, and says so", async () => {
+  const repo = { owner: "o", name: "fork", url: "https://github.com/o/fork" };
+  const ctx = { exec: async () => Promise.reject(Object.assign(new Error("Command failed: gh issue list"), { stderr: "the 'o/fork' repository has disabled issues\n" })) };
+  assert.deepEqual(await listGitHub(ctx as never, repo, "issues"), { repo, kind: "issues", items: [], truncated: false, disabled: true });
+  await assert.rejects(listGitHub(ctx as never, repo, "pulls"));
 });
 
 test("checks are summed up by their result", () => {

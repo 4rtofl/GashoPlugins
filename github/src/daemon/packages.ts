@@ -2,11 +2,25 @@
 // so the owner's packages are read with REST, one kind at a time (/orgs/{org}/packages, /user/packages for gh's own
 // login, /users/{user}/packages for another user), and those whose repository is the session's are kept. gh's login
 // needs read:packages; without it, the answer says how to add it.
+// The owner is first read as the repository's, by the name its clone's origin says: after an owner was renamed, that
+// name still finds the repository, but /users/{old login} and /orgs/{old login} find no one.
 import type { Package, PackageDetail, Packages, PackageType, PackageVersion } from "../types.ts";
 import { arr, githubUrl, missingScope, num, parseJson, rec, str, type Gh } from "./gh.ts";
 
 export const PACKAGE_TYPES: readonly PackageType[] = ["npm", "container", "maven", "rubygems", "nuget", "docker"];
 const VERSIONS_MAX = 100;
+/** An owner's packages of a kind: read this many a page, and this many pages at most. */
+const PER_PAGE = 100;
+export const PACKAGE_PAGES = 10;
+
+export const OWNER_QUERY = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { nameWithOwner owner { __typename login } } viewer { login } }";
+
+/** The repository's owner as GitHub names it now, the repository's name now (owner/name), and whose packages these are. */
+export interface Owner {
+  login: string;
+  repo: string;
+  kind: "org" | "me" | "user";
+}
 
 export const packageTypeArg = (v: unknown): PackageType | undefined => (PACKAGE_TYPES as readonly unknown[]).includes(v) ? (v as PackageType) : undefined;
 
@@ -38,9 +52,9 @@ export function parsePackage(raw: unknown, repo?: string): Package | undefined {
   };
 }
 
-/** `/…/packages?package_type=…` output: the packages of `repo`. */
-export function parsePackages(json: string, repo: string): Package[] {
-  return arr(parseJson(json)).flatMap((p) => {
+/** A page of `/…/packages?package_type=…` output (parsed): the packages of `repo`. */
+export function parsePackages(page: unknown, repo: string): Package[] {
+  return arr(page).flatMap((p) => {
     const pkg = parsePackage(p, repo);
     return pkg ? [pkg] : [];
   });
@@ -91,25 +105,53 @@ export function installCommand(pkg: Pick<Package, "type" | "name">, owner: strin
   }
 }
 
-/** Whose packages these are: an organization, gh's own login, or another user. Both answers change rarely. */
-async function ownerKind(ctx: Gh, owner: string, repo: string): Promise<"org" | "me" | "user"> {
-  const o = { repo, maxAgeSeconds: 600, timeoutMs: 20_000 };
-  const [who, me] = await Promise.all([ctx.github.read(["api", `users/${owner}`], o), ctx.github.read(["api", "user"], o)]);
-  if (rec(parseJson(who.stdout)).type === "Organization") return "org";
-  return str(rec(parseJson(me.stdout)).login)?.toLowerCase() === owner.toLowerCase() ? "me" : "user";
+/** The answer of OWNER_QUERY; undefined when it holds no repository. */
+export function parseOwner(json: string): Owner | undefined {
+  const data = rec(rec(parseJson(json)).data);
+  const repository = rec(data.repository);
+  const owner = rec(repository.owner);
+  const login = str(owner.login);
+  const repo = str(repository.nameWithOwner);
+  if (!login || !repo) return undefined;
+  const kind = owner.__typename === "Organization" ? "org" : str(rec(data.viewer).login)?.toLowerCase() === login.toLowerCase() ? "me" : "user";
+  return { login, repo, kind };
+}
+
+/** The owner of `repo` (owner/name, as its origin says). It changes rarely: kept 10 minutes unless read afresh. */
+async function ownerOf(ctx: Gh, repo: string, o: { maxAgeSeconds: number }): Promise<Owner> {
+  const [owner = "", name = ""] = repo.split("/");
+  const { stdout } = await ctx.github.read(["api", "graphql", "-f", `query=${OWNER_QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`], {
+    repo,
+    maxAgeSeconds: o.maxAgeSeconds === 0 ? 0 : 600,
+    timeoutMs: 20_000,
+  });
+  const found = parseOwner(stdout);
+  if (!found) throw new Error(`repository ${repo} not found`);
+  return found;
+}
+
+/** The packages of a kind at `base` (an owner's) that are `repo`'s, page by page. */
+async function packagesOfKind(ctx: Gh, base: string, type: PackageType, repo: string, read: { repo: string; maxAgeSeconds: number }): Promise<Package[]> {
+  const found: Package[] = [];
+  for (let page = 1; page <= PACKAGE_PAGES; page++) {
+    const { stdout } = await ctx.github.read(["api", `${base}?package_type=${type}&per_page=${PER_PAGE}&page=${page}`], { ...read, timeoutMs: 25_000 });
+    const list = arr(parseJson(stdout));
+    found.push(...parsePackages(list, repo));
+    if (list.length < PER_PAGE) break;
+  }
+  return found;
 }
 
 /** The packages of `repo` (owner/name), newest change first. */
 export async function listPackages(ctx: Gh, repo: string, o: { maxAgeSeconds: number }): Promise<Omit<Packages, "repo">> {
-  const [owner = ""] = repo.split("/");
-  const base = packagesBase(owner, await ownerKind(ctx, owner, repo));
+  const owner = await ownerOf(ctx, repo, o);
+  const base = packagesBase(owner.login, owner.kind);
   const errors: string[] = [];
   let missing: Packages["missing"];
   const lists = await Promise.all(
     PACKAGE_TYPES.map(async (type) => {
       try {
-        const { stdout } = await ctx.github.read(["api", `${base}?package_type=${type}&per_page=100`], { repo, maxAgeSeconds: o.maxAgeSeconds, timeoutMs: 25_000 });
-        return parsePackages(stdout, repo);
+        return await packagesOfKind(ctx, base, type, owner.repo, { repo, maxAgeSeconds: o.maxAgeSeconds });
       } catch (e) {
         const scope = missingScope(e);
         if (scope) missing = scope;
@@ -124,16 +166,16 @@ export async function listPackages(ctx: Gh, repo: string, o: { maxAgeSeconds: nu
 
 /** Package `type`/`name` of `repo`'s owner with its versions; undefined when it is not there or not the repository's. */
 export async function readPackage(ctx: Gh, repo: string, type: PackageType, name: string, o: { maxAgeSeconds: number }): Promise<Omit<PackageDetail, "repo"> | undefined> {
-  const [owner = "", repoName = ""] = repo.split("/");
-  const path = `${packagesBase(owner, await ownerKind(ctx, owner, repo))}/${type}/${encodeURIComponent(name)}`;
+  const owner = await ownerOf(ctx, repo, o);
+  const path = `${packagesBase(owner.login, owner.kind)}/${type}/${encodeURIComponent(name)}`;
   const read = { repo, maxAgeSeconds: o.maxAgeSeconds, timeoutMs: 25_000 };
   const [info, versions] = await Promise.all([
     ctx.github.read(["api", path], read),
     ctx.github.read(["api", `${path}/versions?per_page=${VERSIONS_MAX}`], { ...read, maxBuffer: 16 * 1024 * 1024 }),
   ]);
-  const pkg = parsePackage(parseJson(info.stdout), repo);
+  const pkg = parsePackage(parseJson(info.stdout), owner.repo);
   if (!pkg) return undefined;
   const list = parseVersions(versions.stdout);
-  const install = installCommand(pkg, owner, repoName, list[0]);
+  const install = installCommand(pkg, owner.login, owner.repo.split("/")[1] ?? "", list[0]);
   return { package: pkg, versions: list, truncated: list.length >= VERSIONS_MAX, ...(install ? { install } : {}) };
 }

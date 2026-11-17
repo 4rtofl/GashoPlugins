@@ -22,6 +22,7 @@ test("the repository's projects and its owner's others are read (real output)", 
   // The linked one is not listed again among the owner's.
   assert.equal(p.owner.length, 14);
   assert.ok(!p.owner.some((x) => x.number === 4247));
+  // Read by the organization's old login (4rtoflow), as a clone's origin may still say it: the owner is the one now.
   assert.deepEqual(parseProjects(fixture("projects-empty.json")), { linked: [], owner: [], ownerLogin: "4rtofl" });
 });
 
@@ -52,33 +53,39 @@ test("a board is read: its single select fields, the field its board view uses, 
   const status = board.fields[0];
   assert.ok(status && first && status.options.some((o) => o.id === first.values[status.id]));
   assert.ok(next);
+  // Asked by a name GitHub has since changed, the answer names the repository as it is now: its items are its own.
+  assert.equal(parseBoardPage(fixture("board-page.json"), "old-owner/roadmap")?.board.items[0]?.repo, undefined);
   // The same items seen from another repository name theirs.
-  assert.equal(parseBoardPage(fixture("board-page.json"), "o/r")?.board.items[0]?.repo, "github/roadmap");
-  assert.equal(parseBoardPage(JSON.stringify({ data: { repositoryOwner: { projectV2: null } } }), "o/r"), undefined);
+  const elsewhere = JSON.parse(fixture("board-page.json")) as { data: { repository: { nameWithOwner: string } } };
+  elsewhere.data.repository.nameWithOwner = "o/r";
+  assert.equal(parseBoardPage(JSON.stringify(elsewhere), "o/r")?.board.items[0]?.repo, "github/roadmap");
+  assert.equal(parseBoardPage(JSON.stringify({ data: { repository: { nameWithOwner: "o/r", owner: { projectV2: null } } } }), "o/r"), undefined);
 });
 
 test("items: drafts, pull requests' states, archived and unreadable ones", () => {
   const item = (content: unknown, extra: Record<string, unknown> = {}) => ({ id: `I${Math.random()}`, type: "X", isArchived: false, content, fieldValues: { nodes: [] }, ...extra });
   const json = JSON.stringify({
     data: {
-      repositoryOwner: {
-        projectV2: {
-          number: 1,
-          title: "P",
-          url: "https://github.com/orgs/o/projects/1",
-          closed: false,
-          fields: { nodes: [{ __typename: "ProjectV2Field" }, { __typename: "ProjectV2SingleSelectField", id: "F", name: "Stage", options: [{ id: "a", name: "A" }] }] },
-          views: { nodes: [] },
-          items: {
-            pageInfo: { hasNextPage: false, endCursor: null },
-            nodes: [
-              item({ __typename: "DraftIssue", title: "memo", assignees: { nodes: [{ login: "ama" }] } }),
-              item({ __typename: "PullRequest", number: 2, title: "pr", url: "https://github.com/o/r/pull/2", state: "OPEN", isDraft: true, repository: { nameWithOwner: "o/r" } }),
-              item({ __typename: "PullRequest", number: 3, title: "pr", url: "https://github.com/o/r/pull/3", state: "MERGED", repository: { nameWithOwner: "o/r" } }),
-              item({ __typename: "Issue", number: 4, title: "i", url: "https://github.com/o/r/issues/4", state: "CLOSED", stateReason: "NOT_PLANNED", repository: { nameWithOwner: "o/r" } }),
-              item(null),
-              item({ __typename: "Issue", title: "old" }, { isArchived: true }),
-            ],
+      repository: {
+        owner: {
+          projectV2: {
+            number: 1,
+            title: "P",
+            url: "https://github.com/orgs/o/projects/1",
+            closed: false,
+            fields: { nodes: [{ __typename: "ProjectV2Field" }, { __typename: "ProjectV2SingleSelectField", id: "F", name: "Stage", options: [{ id: "a", name: "A" }] }] },
+            views: { nodes: [] },
+            items: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                item({ __typename: "DraftIssue", title: "memo", assignees: { nodes: [{ login: "ama" }] } }),
+                item({ __typename: "PullRequest", number: 2, title: "pr", url: "https://github.com/o/r/pull/2", state: "OPEN", isDraft: true, repository: { nameWithOwner: "o/r" } }),
+                item({ __typename: "PullRequest", number: 3, title: "pr", url: "https://github.com/o/r/pull/3", state: "MERGED", repository: { nameWithOwner: "o/r" } }),
+                item({ __typename: "Issue", number: 4, title: "i", url: "https://github.com/o/r/issues/4", state: "CLOSED", stateReason: "NOT_PLANNED", repository: { nameWithOwner: "o/r" } }),
+                item(null),
+                item({ __typename: "Issue", title: "old" }, { isArchived: true }),
+              ],
+            },
           },
         },
       },
@@ -102,10 +109,12 @@ test("items: drafts, pull requests' states, archived and unreadable ones", () =>
 
 test("a board is read page by page, up to its limit", async () => {
   const pages: (string | undefined)[] = [];
+  const names = new Set<string | undefined>();
   const ctx = {
     github: {
       read: async (args: string[]) => {
         pages.push(args.find((a) => a.startsWith("cursor="))?.slice(7));
+        names.add(args.find((a) => a.startsWith("name="))?.slice(5));
         return { stdout: fixture("board-page.json"), stderr: "" };
       },
     },
@@ -115,6 +124,8 @@ test("a board is read page by page, up to its limit", async () => {
   assert.equal(pages[0], undefined);
   assert.equal(board?.items.length, 6 * BOARD_PAGES);
   assert.equal(board?.truncated, true);
+  // The project is found through the repository, so that an owner's old login still leads to it.
+  assert.deepEqual([...names], ["roadmap"]);
 });
 
 test("without read:project, the answer says how to add it", async () => {
