@@ -46,8 +46,18 @@ npm run build -w git          # git/dist/ に gasho-plugin.json、web.js、web.c
 npm run dev -w git            # 保存するたびにビルドし直す
 npm run check                 # どのプラグインも genres.json のジャンルを書いているか
 npm run typecheck
-npm test
+npm test                      # .ts の処理のテスト（node --test）と、画面の部品のテスト（Vitest）
+npx vitest run github         # 画面の部品のテストを、パスで絞って流す
 ```
+
+`npm test` は、`*/test/*.test.ts` を `node --test` で流し、続けて `*/test/*.test.tsx` を Vitest で流す。`.tsx` のテストは、画面の部品を happy-dom の上に描き、Testing Library で押したり文字を読んだりする。
+
+`@gasho/plugin-sdk` の hooks と部品は、Gasho の画面が実行時に渡すので、テストの中には無い。Vitest は、`@gasho/plugin-sdk` の import を `test/sdk.tsx` に向ける（`vitest.config.ts`）。
+
+- hooks は、テストが `set`（`useMachines`・`useNow`・`useSetting` などが返す値）・`respond`（`useRequest` がメソッドごとに返す値）・`answerCalls`（`useCall` の関数が返す値）で決めた値を返す。決めていない `useRequest` は読み込み中を返す
+- 受けた引数は `sdk` のモック（`sdk.request`・`sdk.call`・`sdk.nav.openPanel` など）に残る。`callsOf`・`lastRequest` で、メソッドごとに取り出せる
+- `Page`・`Panel`・`Tile` などの部品は、受け取った題と中身を描くだけにした。Gasho の見た目や、`Popover` の出る位置は確かめられない
+- 決めた値と記録は、テストごとに `test/setup.ts` が消す
 
 ## 公開する
 
