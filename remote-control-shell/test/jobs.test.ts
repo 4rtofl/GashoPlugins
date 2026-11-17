@@ -1,10 +1,13 @@
 // The daemon part's commands, with real shells (sh) in folders of their own.
 import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { DEFAULT_SETTINGS, Shells, type ShellSettings } from "../src/daemon/jobs.ts";
+import { processStart, statStart } from "../src/daemon/proc.ts";
+import { folderKey, Store, type StoredJob } from "../src/daemon/store.ts";
 import type { ShellJob } from "../src/types.ts";
 
 const root = mkdtempSync(path.join(os.tmpdir(), "rcs-jobs-"));
@@ -218,5 +221,87 @@ test("a folder runs four commands at once at most, and a shell that is not there
     assert.match(job.note ?? "", /シェル（sh）が見つかりません/);
   } finally {
     await bare.shells.stop();
+  }
+});
+
+/** A process group of its own that is none of the plugin's: one that may have got a PID a record keeps. */
+const group = (): ChildProcess => spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+
+/** The signal that ended `p`, null when it exited by itself, or "running" when it still runs after `ms`. */
+function ended(p: ChildProcess, ms: number): Promise<NodeJS.Signals | null | "running"> {
+  if (p.exitCode !== null || p.signalCode !== null) return Promise.resolve(p.signalCode);
+  return Promise.race([new Promise<NodeJS.Signals | null>((r) => p.once("exit", (_code, signal) => r(signal))), sleep(ms).then(() => "running" as const)]);
+}
+
+/** A folder with records written as a plugin process that has gone left them. */
+async function leftBehind(records: Array<Partial<StoredJob> & { id: string }>) {
+  const { folder, dataDir } = setup();
+  const store = new Store(dataDir);
+  const key = folderKey(folder);
+  await store.ensure(key);
+  for (const r of records) {
+    await store.writeJob(key, { command: "sleep 30", cwd: folder, startedAt: 1, state: "running", size: 0, dropped: 0, lines: 0, owner: 0, logFrom: 0, ...r });
+  }
+  return { folder, shells: new Shells({ dataDir }) };
+}
+
+async function exitedPid(): Promise<number> {
+  const p = spawn("true");
+  await ended(p, 5000);
+  assert.ok(p.pid);
+  return p.pid;
+}
+
+test("a process's start reads the same while it runs and not once it has gone; /proc's line is read after the name", async () => {
+  const self = await processStart(process.pid);
+  assert.ok(self);
+  assert.equal(await processStart(process.pid), self);
+  assert.equal(await processStart(await exitedPid()), undefined);
+  assert.equal(statStart("4321 (a) b (c) S 1 4321 4321 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 98765 1000 5"), "98765");
+  assert.equal(statStart("4321 (sh"), undefined);
+});
+
+test("records left running are closed as lost; a group gets SIGKILL only while its PID still names the shell started", async () => {
+  const [taken, oldOwner, oldGroup, shell] = [group(), group(), group(), group()];
+  const dead = await exitedPid();
+  const { folder, shells } = await leftBehind([
+    // The plugin's process and the shell have gone, and other processes got their PIDs: this test's, and a group.
+    { id: "aaaaaa-000001", owner: process.pid, ownerStart: "before", pgid: taken.pid, pgidStart: "before" },
+    // Written by the version that kept no start: nothing tells whose its PIDs are now.
+    { id: "aaaaaa-000002", owner: oldOwner.pid, pgid: oldGroup.pid },
+    // The plugin's process has gone, and the shell it started is still there.
+    { id: "aaaaaa-000003", owner: dead, ownerStart: "before", pgid: shell.pid, pgidStart: await processStart(shell.pid) },
+  ]);
+  try {
+    const v = await shells.watch(folder, { offsets: {}, waitMs: 0 });
+    assert.deepEqual(
+      v.jobs.map((j) => j.state),
+      ["lost", "lost", "lost"],
+    );
+    assert.equal(await ended(shell, 5000), "SIGKILL");
+    for (const p of [taken, oldOwner, oldGroup]) assert.equal(await ended(p, 300), "running");
+    assert.deepEqual(await shells.clear(folder, undefined), { removed: 3 });
+  } finally {
+    for (const p of [taken, oldOwner, oldGroup, shell]) p.kill("SIGKILL");
+    await shells.stop();
+  }
+});
+
+test("a record another process of the plugin runs stays running, and gets a signal only while its PID names the shell started", async () => {
+  const [taken, shell] = [group(), group()];
+  const self = await processStart(process.pid);
+  const { folder, shells } = await leftBehind([
+    { id: "aaaaaa-000001", owner: process.pid, ownerStart: self, pgid: taken.pid, pgidStart: "before" },
+    { id: "aaaaaa-000002", owner: process.pid, ownerStart: self, pgid: shell.pid, pgidStart: await processStart(shell.pid) },
+  ]);
+  try {
+    assert.equal((await shells.status(folder)).running, 2);
+    await assert.rejects(shells.signal(folder, "aaaaaa-000001", "KILL"), /確かめられない/);
+    await shells.signal(folder, "aaaaaa-000002", "INT");
+    assert.equal(await ended(shell, 5000), "SIGINT");
+    assert.equal(await ended(taken, 300), "running");
+  } finally {
+    for (const p of [taken, shell]) p.kill("SIGKILL");
+    await shells.stop();
   }
 });

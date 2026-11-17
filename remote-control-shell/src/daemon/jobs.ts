@@ -4,7 +4,8 @@
 // working folder belong to the session folder, so that a session started again in the same folder finds them.
 //
 // Records found running for another process of this plugin (the old version, during a hot reload) are shown as that
-// process writes them; once it has gone, any of them it left running are ended here.
+// process writes them; once it has gone, any of them it left running are ended here. A record's PIDs are trusted only
+// while they name the processes it was written for (proc.ts): another process may have got them since.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
@@ -14,6 +15,7 @@ import { StringDecoder } from "node:string_decoder";
 import { PluginError } from "@gasho/plugin-sdk/daemon";
 import type { OutputAnswer, OutputPiece, ShellJob, ShellView, StatusAnswer } from "../types.ts";
 import { OutputBuffer } from "./output.ts";
+import { processStart, sameProcess } from "./proc.ts";
 import { pickShell, shellArgs, shellEnv, type ShellChoice, type Startup } from "./shell.ts";
 import { folderKey, Store, type StoredJob } from "./store.ts";
 
@@ -82,16 +84,6 @@ function isFile(p: string): boolean {
   }
 }
 
-function alive(pid: number | undefined): boolean {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
 function killGroup(pgid: number | undefined, signal: NodeJS.Signals): boolean {
   if (!pgid) return false;
   try {
@@ -103,10 +95,15 @@ function killGroup(pgid: number | undefined, signal: NodeJS.Signals): boolean {
 }
 
 /** A record as the panel gets it. */
-const publicJob = ({ owner: _owner, pgid: _pgid, logFrom: _logFrom, ...job }: StoredJob): ShellJob => job;
+const publicJob = ({ owner: _owner, ownerStart: _ownerStart, pgid: _pgid, pgidStart: _pgidStart, logFrom: _logFrom, ...job }: StoredJob): ShellJob => job;
 
 class Job {
   meta: StoredJob;
+  /**
+   * Run by this process (not by another version of the plugin). A record read from its file never is: the process that
+   * wrote it may have had the PID this one has.
+   */
+  readonly mine: boolean;
   /** Its output in memory: while it runs here, or once read from its file. */
   out?: OutputBuffer;
   child?: ChildProcess;
@@ -120,8 +117,9 @@ class Job {
   readonly ended: Promise<void>;
   private settle: () => void = () => undefined;
 
-  constructor(meta: StoredJob) {
+  constructor(meta: StoredJob, mine = false) {
     this.meta = meta;
+    this.mine = mine;
     this.ended = new Promise<void>((resolve) => {
       this.settle = resolve;
     });
@@ -130,11 +128,6 @@ class Job {
 
   get running(): boolean {
     return this.meta.state === "running";
-  }
-
-  /** Run by this process (not by another version of the plugin). */
-  get mine(): boolean {
-    return this.meta.owner === process.pid;
   }
 
   done(): void {
@@ -243,6 +236,8 @@ export class Shells {
   private readonly folders = new Map<string, Promise<Folder>>();
   private readonly loaded = new Map<string, Folder>();
   private readonly cached: Job[] = [];
+  /** When this process started, kept in its records with its PID. */
+  private readonly ownerStart: Promise<string | undefined> = processStart(process.pid);
   private waiting = 0;
   private stopping = false;
 
@@ -257,7 +252,7 @@ export class Shells {
 
   async run(folderPath: string, input: RunInput, settings: ShellSettings): Promise<ShellJob> {
     if (this.stopping) throw new PluginError("Remote Control Shell が止まるところなので、実行できません。");
-    const f = await this.folder(folderPath);
+    const [f, ownerStart] = await Promise.all([this.folder(folderPath), this.ownerStart]);
     let command = input.command;
     let cwd = f.cwd;
     if (input.again !== undefined) {
@@ -296,8 +291,9 @@ export class Shells {
       dropped: 0,
       lines: 0,
       owner: process.pid,
+      ...(ownerStart ? { ownerStart } : {}),
       logFrom: 0,
-    });
+    }, true);
     job.out = new OutputBuffer(settings.maxOutput);
     f.jobs.push(job);
     f.lastStarted = id;
@@ -318,7 +314,8 @@ export class Shells {
       return publicJob(job.meta);
     }
     job.child = child;
-    if (child.pid !== undefined) job.meta.pgid = child.pid;
+    const pgid = child.pid;
+    if (pgid !== undefined) job.meta.pgid = pgid;
     const out = new StringDecoder("utf8");
     const err = new StringDecoder("utf8");
     child.stdout?.on("data", (b: Buffer) => this.received(f, job, out.write(b)));
@@ -330,20 +327,35 @@ export class Shells {
       this.received(f, job, out.end() + err.end());
       this.end(f, job, { code, signal });
     });
-    void f.write(() => this.store.writeJob(f.key, job.meta), this.log);
+    void f.write(async () => {
+      const pgidStart = await processStart(pgid);
+      if (pgidStart) job.meta.pgidStart = pgidStart;
+      await this.store.writeJob(f.key, job.meta);
+    }, this.log);
     f.bump();
     return publicJob(job.meta);
   }
 
-  /** Sends SIGINT (as Ctrl+C does) or SIGKILL to a running command's process group. */
+  /**
+   * Sends SIGINT (as Ctrl+C does) or SIGKILL to a running command's process group. One another process of the plugin
+   * runs gets it only while its PID still names the shell that was started.
+   */
   async signal(folderPath: string, id: string, which: "INT" | "KILL"): Promise<ShellJob> {
     const f = await this.folder(folderPath);
     const job = f.find(id);
     if (!job) throw new PluginError("この記録は見つかりません。");
-    if (job.running) {
-      const signal: NodeJS.Signals = which === "KILL" ? "SIGKILL" : "SIGINT";
+    const signal: NodeJS.Signals = which === "KILL" ? "SIGKILL" : "SIGINT";
+    if (job.running && job.mine) {
       job.sent = signal;
       if (!killGroup(job.meta.pgid, signal)) job.child?.kill(signal);
+    } else if (job.running) {
+      await this.settleForeign(f);
+      if (job.running) {
+        if (!(await sameProcess(job.meta.pgid, job.meta.pgidStart))) {
+          throw new PluginError("このコマンドのプロセスが、起動したときと同じものだと確かめられないため、止める合図を送りませんでした。");
+        }
+        killGroup(job.meta.pgid, signal);
+      }
     }
     return publicJob(job.meta);
   }
@@ -639,7 +651,9 @@ export class Shells {
 
   /**
    * Records another process of the plugin runs (the old version, during a hot reload): shown as that process writes
-   * them. Once it has gone, any of them still running are ended here, with the output that reached their file.
+   * them. Once it has gone, any of them still running are ended here, with the output that reached their file; their
+   * group gets SIGKILL only while its PID still names the shell that was started, and nothing when that cannot be told
+   * (README.md「プラグインが止まるとき」).
    */
   private async settleForeign(f: Folder): Promise<void> {
     if (this.stopping || f.settling) return;
@@ -654,8 +668,8 @@ export class Shells {
           job.out = undefined;
           changed = true;
         }
-        if (!job.running || alive(job.meta.owner)) continue;
-        killGroup(job.meta.pgid, "SIGKILL");
+        if (!job.running || (await sameProcess(job.meta.owner, job.meta.ownerStart))) continue;
+        if (await sameProcess(job.meta.pgid, job.meta.pgidStart)) killGroup(job.meta.pgid, "SIGKILL");
         const text = await this.store.readLog(f.key, job.meta.id);
         const size = job.meta.logFrom + text.length;
         job.meta = { ...job.meta, state: "lost", endedAt: Date.now(), size, dropped: job.meta.logFrom };
