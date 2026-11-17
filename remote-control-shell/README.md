@@ -2,7 +2,7 @@
 
 Remote Control Shell は、セッションのヘッダーの「シェル」から右にパネルを開き、そのセッションのフォルダーでシェルのコマンドを実行するプラグインである。出力は、コマンドが動いているあいだから少しずつパネルに出る。入力欄から「!」で送るコマンドと違って、コマンドは Claude が作業しているあいだもすぐに動き、その出力は Claude の会話に入らない。
 
-この文書は、このプラグインの仕様である。プラグインの仕組みと API は、Gasho の [docs/plugins.md](https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md) にある。いまのプラグインの API で作れる範囲に収め、Gasho の本体は変えない。`gasho-plugin.json` の `api` は、`ctx.dataDir` を使うので 1.1 にした。
+この文書は、このプラグインの仕様である。プラグインの仕組みと API は、Gasho の [docs/plugins.md](https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md) にある。いまのプラグインの API で作れる範囲に収め、Gasho の本体は変えない。`gasho-plugin.json` の `api` は、`ctx.dataDir` を使うので 1.1 にした。
 
 ## 決めたこと
 
