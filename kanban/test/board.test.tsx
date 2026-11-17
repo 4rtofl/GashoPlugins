@@ -1,0 +1,94 @@
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+import { answerCalls, lastRequest, machine, NOW, respond, sdk, set } from "../../test/sdk.tsx";
+import { KanbanPage } from "../src/web/board.tsx";
+import type { Board } from "../src/types.ts";
+
+const board = (over: Partial<Board> = {}): Board => ({
+  watched: ["/work/app"],
+  repos: [{ repo: "4rtofl/app", primary: { path: "/work/app", branch: "main" }, worktrees: [{ branch: "feat/1-x", path: "/work/issue-1-x" }], prs: [], closed: [] }],
+  errors: [],
+  updatedAt: NOW - 30_000,
+  ...over,
+});
+
+describe("KanbanPage", () => {
+  it("asks for the board every minute, and every 2 seconds while the working server reads the repositories", () => {
+    set({ machines: [machine()] });
+    respond({ board: { data: board() } });
+    render(<KanbanPage params={{}} />);
+    expect(lastRequest("board")?.options?.refreshSeconds).toBe(60);
+    act(() => respond({ board: { data: board({ checking: true }) } }));
+    expect(lastRequest("board")?.options?.refreshSeconds).toBe(2);
+  });
+
+  it("says the board stopped being read when its last reading is old", () => {
+    set({ machines: [machine()] });
+    respond({ board: { data: board({ updatedAt: NOW - 6 * 60_000 }) } });
+    render(<KanbanPage params={{}} />);
+    expect(screen.getByText(/から更新されていない$/)).toBeTruthy();
+  });
+
+  it("reads the repositories again on 「今すぐ見直す」, and names the working server when that fails", async () => {
+    set({ machines: [machine()] });
+    respond({ board: { data: board() } });
+    answerCalls({ refresh: { ok: false, error: "gh が見つかりません" } });
+    render(<KanbanPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "今すぐ見直す" }));
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("カンバンを読み込めなかった working server があります")).toBeTruthy();
+    expect(within(alert).getByText("mac：gh が見つかりません")).toBeTruthy();
+    expect(sdk.call).toHaveBeenCalledWith({ machine: "m1", method: "refresh" });
+    expect(sdk.reload).toHaveBeenCalledWith("board");
+  });
+
+  it("names a working server whose daemon part does not run, and asks it for nothing", () => {
+    set({ machines: [machine()], daemon: { ready: false, reason: "gasho-daemon が古すぎます。" } });
+    render(<KanbanPage params={{}} />);
+    expect(screen.getByText("カンバンを使えない working server があります")).toBeTruthy();
+    expect(screen.getByText("mac：gasho-daemon が古すぎます。")).toBeTruthy();
+    expect(sdk.request).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "見る repo を選ぶ" })).toHaveProperty("disabled", true);
+  });
+
+  it("keeps the board for an offline working server that watched repositories, rather than asking to choose some", () => {
+    set({ machines: [machine({ connected: false })], pluginState: { lastWatched: { m1: 2 } } });
+    render(<KanbanPage params={{}} />);
+    expect(screen.getByText("オフラインの working server があります")).toBeTruthy();
+    expect(screen.getByText("mac の repo のカードは、つながるまで出しません。")).toBeTruthy();
+    expect(screen.queryByText("見る repo を選んでください")).toBeNull();
+    expect(screen.getByRole("region", { name: "自分の番：0 枚" })).toBeTruthy();
+  });
+
+  it("asks the person whether to trust a card's folder, then starts the session there and opens it", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    respond({ board: { data: board() } });
+    sdk.launchSession.mockReturnValueOnce({ ok: false, error: "trust", needsTrust: true, trustWarnings: [".claude/settings.json に hooks があります"] });
+    render(<KanbanPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
+    expect(within(dialog).getByText("/work/issue-1-x")).toBeTruthy();
+    expect(within(dialog).getByText(".claude/settings.json に hooks があります")).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
+
+    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
+    expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/issue-1-x", trust: true });
+    expect(screen.getByRole("status")).toHaveProperty("textContent", expect.stringContaining("issue-1-x でセッションを起動しました。"));
+  });
+
+  it("starts nothing when the person does not trust the folder", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    respond({ board: { data: board() } });
+    sdk.launchSession.mockReturnValue({ ok: false, error: "trust", needsTrust: true });
+    render(<KanbanPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+    await userEvent.click(await screen.findByRole("button", { name: "やめる" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(sdk.launchSession).toHaveBeenCalledTimes(1);
+    expect(sdk.nav.openSession).not.toHaveBeenCalled();
+  });
+});
