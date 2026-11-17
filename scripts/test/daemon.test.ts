@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -15,11 +16,14 @@ test("every plugin's daemon part loads, with its import.meta.glob, and defines t
   assert.ok(ids.includes("github-implement") && ids.includes("kanban"));
   for (const id of ids) await loadDaemon(id);
 
-  // The operations of github-implement and the board plugins of kanban are what their import.meta.glob found.
+  // The operations of github-implement, and the files of kanban/plugins/ that kanban writes in the working server's folder
+  // (read as text, with ?raw), are what their import.meta.glob found.
   const implement = await loadDaemon("github-implement");
   await assert.rejects(implement.call("read", { op: "comment" }, fakeContext().ctx), { message: "操作「comment」は write で呼んでください。" });
-  const boards = (await import(pathToFileURL(path.join(ROOT, "kanban/src/daemon/board-plugins.ts")).href)) as { BOARD_FETCHERS: Map<string, unknown> };
-  assert.deepEqual([...boards.BOARD_FETCHERS.keys()], ["example"]);
+  const boards = (await import(pathToFileURL(path.join(ROOT, "kanban/src/daemon/board-plugins.ts")).href)) as { PLACED: Record<string, string>; SAMPLE: Record<string, string> };
+  assert.equal(boards.PLACED["types.ts"], fs.readFileSync(path.join(ROOT, "kanban/plugins/types.ts"), "utf8"));
+  assert.ok(!Object.keys(boards.PLACED).some((f) => f.includes("/")));
+  assert.equal(boards.SAMPLE["example/index.ts"], fs.readFileSync(path.join(ROOT, "kanban/plugins/example/index.ts"), "utf8"));
 });
 
 test("a daemon part whose methods are not those of its gasho-plugin.json is not loaded", async () => {
