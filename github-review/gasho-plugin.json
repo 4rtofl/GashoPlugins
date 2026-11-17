@@ -1,7 +1,7 @@
 {
   "id": "github-review",
   "name": "GitHub Review",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "レビューを頼まれた Pull request と、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
   "genre": "workflow",
   "api": "1.3",
@@ -11,6 +11,7 @@
   "methods": {
     "options": { "kind": "read", "timeoutSeconds": 60 },
     "list": { "kind": "read", "timeoutSeconds": 60 },
+    "detail": { "kind": "read", "timeoutSeconds": 30 },
     "watch": { "kind": "write", "timeoutSeconds": 60 },
     "create": { "kind": "write", "timeoutSeconds": 120 },
     "remove": { "kind": "write", "timeoutSeconds": 60 }
@@ -22,7 +23,25 @@
       "maxLength": 10000,
       "default": "[{\"name\":\"レビューする\",\"body\":\"{url} の Pull request #{number}「{title}」をレビューしてください。ブランチは {branch} です。\"}]",
       "label": "worktree を作ったセッションに送る指示のテンプレート（JSON）",
-      "description": "下の欄で足す・直す・消す。worktree を作るときに選ぶ。本文の {number}・{title}・{branch}・{url} は Pull request の値に置き換わる"
+      "description": "下の欄で足す・直す・消す。worktree を作るときに選ぶ。本文の {number}・{title}・{branch}・{url} は Pull request の値に置き換わる。送るときは、レビューの結果を印付きのコメントで投稿する指示を終わりに足す"
+    },
+    "mergeMethod": {
+      "type": "select",
+      "scope": "server",
+      "default": "merge",
+      "label": "「マージしてもらう」のマージ方法",
+      "options": [
+        { "value": "merge", "label": "merge（マージコミットを作る）" },
+        { "value": "squash", "label": "squash" },
+        { "value": "rebase", "label": "rebase" }
+      ]
+    },
+    "deleteBranch": {
+      "type": "boolean",
+      "scope": "server",
+      "default": true,
+      "label": "「マージしてもらう」で、マージしたあと GitHub の head のブランチを消す",
+      "description": "fork の Pull request のブランチは消さない。ローカルのブランチと worktree は「片付ける」で消す"
     }
   }
 }
