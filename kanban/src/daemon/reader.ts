@@ -33,7 +33,7 @@ const FETCH_TIMEOUT_MS = 60_000;
 /** What `fetch` gives goes to the web part with the board, as JSON (all of it must stay well under 16 MB); what it keeps, too. */
 const FETCH_MAX_BYTES = 256 * 1024;
 
-/** A board plugin's name: a folder of kanban/plugins/. Only kept here; the web part looks it up in its build. */
+/** A board plugin's name: a folder of the board plugins' folder. Only kept here; the web part gets their code itself. */
 const pluginName = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 100 && !v.includes("/");
 
 /** The board plugins of `v` ({ path: name }) for the repositories of `paths`; anything else is left out. */
@@ -41,9 +41,6 @@ function pluginsOf(v: unknown, paths: readonly string[]): Record<string, string>
   if (typeof v !== "object" || v === null) return {};
   return Object.fromEntries(Object.entries(v).filter(([p, name]) => paths.includes(p) && pluginName(name)));
 }
-
-/** The `fetch` of the board plugins built in that have one, by their folder's name. */
-export type BoardFetchers = ReadonlyMap<string, Fetch>;
 
 /** What a board plugin's `fetch` last did for a repository. */
 interface Fetched {
@@ -114,8 +111,8 @@ export interface ReaderDeps {
   exec: Exec;
   /** gh, run by gasho-daemon (ctx.github.read). */
   github: GitHubRead;
-  /** The board plugins' `fetch` (none in the tests that do not need them). */
-  fetchers?: BoardFetchers;
+  /** The `fetch` of the board plugin `name`, when it has one (none in the tests that do not need them). */
+  fetcher?: (name: string) => Fetch | undefined;
   /** The folder of what they keep (FetchStore): a folder for each plugin, a file for each repository. */
   storeDir: string;
   /** The folders Gasho can start sessions in (ctx.folders). */
@@ -135,6 +132,8 @@ export class Reader {
   private material = new Map<string, RepoMaterial>();
   private errors = new Map<string, string>();
   private fetched = new Map<string, Fetched>();
+  /** Repositories whose board plugin's code changed: their `fetch` runs in the next reading. */
+  private refetch = new Set<string>();
   /** `fetch` waits until then: few GraphQL points were left. */
   private fetchPausedUntil = 0;
   private updatedAt: number | undefined;
@@ -238,6 +237,30 @@ export class Reader {
     return this.snapshot();
   }
 
+  /**
+   * The code of the board plugins `names` changed (saved in their folder): the repositories that chose one of them with a
+   * `fetch` are read again, for what the new `fetch` gives.
+   */
+  pluginsChanged(names: ReadonlySet<string>): void {
+    const due = this.watched.filter((p) => names.has(this.plugins[p] ?? "") && this.fetcher(this.plugins[p]));
+    for (const p of due) this.refetch.add(p);
+    // Only while the board shows somewhere (it was read lately); else in the next reading.
+    if (due.length > 0 && this.now() - this.startedAt < 2 * READ_EVERY_MS) void this.read();
+  }
+
+  /**
+   * The watched repository whose primary checkout is `primary` (a real path, as in the board), as last read, with its
+   * board plugin and what its `fetch` gave: for writing its cards out.
+   */
+  repo(primary: string): { material: RepoMaterial; plugin?: string; fetched?: unknown } | undefined {
+    const p = this.watched.find((w) => this.material.get(w)?.primary.path === primary);
+    const material = p === undefined ? undefined : this.material.get(p);
+    if (p === undefined || !material) return undefined;
+    const plugin = this.plugins[p];
+    const fetched = this.fetched.get(p)?.value;
+    return { material, ...(plugin ? { plugin } : {}), ...(fetched !== undefined ? { fetched } : {}) };
+  }
+
   /** Stops reading (the process is being stopped). */
   stop(): void {
     this.stopped = true;
@@ -253,14 +276,14 @@ export class Reader {
   }
 
   private fetcher(name: string | undefined): Fetch | undefined {
-    return name === undefined ? undefined : this.deps.fetchers?.get(name);
+    return name === undefined ? undefined : this.deps.fetcher?.(name);
   }
 
   /** Whether the board plugin of `p` has a `fetch` to run in this reading. */
   private fetchDue(p: string, fresh: boolean): boolean {
     if (!this.fetcher(this.plugins[p])) return false;
     const f = this.fetched.get(p);
-    return fresh || !f || this.now() - f.at >= FETCH_EVERY_MS;
+    return fresh || !f || this.refetch.has(p) || this.now() - f.at >= FETCH_EVERY_MS;
   }
 
   /** Whether `fetch` may run: not while fewer than FETCH_RESERVE_POINTS GraphQL points are left (`gh api rate_limit` costs none). */
@@ -355,6 +378,7 @@ export class Reader {
         if (!fetching || !fetch || name === undefined || !this.fetchDue(p, fresh)) continue;
         const last = this.fetched.get(p);
         const at = this.startedAt;
+        this.refetch.delete(p);
         const done = await openStore(this.deps.storeDir, name, p, this.deps.log)
           .then((store) => runFetch(fetch, material, { github: { read: gh }, exec: this.deps.exec, store }))
           .then(
