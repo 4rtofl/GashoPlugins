@@ -31,7 +31,7 @@ const exec: Exec = async (command, args, o = {}) => {
 const git = async (cwd: string, ...args: string[]) =>
   (await run("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "init.defaultBranch=main", ...args])).stdout.trim();
 
-/** A repository "o/r" with a bare origin, branches feat/5-a and feat/6-b, a pull request #7 from a fork (refs/pull/7/head) and a clone at <root>/r/main. */
+/** A repository "o/r" with a bare origin, branches feat/5-a and feat/6-b, pull requests #7 and #8 from forks (refs/pull/<N>/head) and a clone at <root>/r/main. */
 async function setup(): Promise<{ root: string; primary: string; clone: () => Promise<Clone>; sha: (ref: string) => Promise<string> }> {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "github-review-")));
   roots.push(root);
@@ -51,9 +51,11 @@ async function setup(): Promise<{ root: string; primary: string; clone: () => Pr
     await commit(b);
     await git(seed, "push", "origin", b);
   }
-  await git(seed, "checkout", "-b", "fork-work", "main");
-  await commit("from a fork");
-  await git(seed, "push", "origin", "HEAD:refs/pull/7/head");
+  for (const n of [7, 8]) {
+    await git(seed, "checkout", "-b", `fork-${n}`, "main");
+    await commit(`from fork ${n}`);
+    await git(seed, "push", "origin", `HEAD:refs/pull/${n}/head`);
+  }
   const primary = path.join(root, "r", "main");
   await fs.mkdir(path.dirname(primary));
   await run("git", ["clone", origin, primary]);
@@ -75,13 +77,22 @@ test("worktree: a pull request of the repository gets review-<number> on a local
   assert.deepEqual(await createWorktree(exec, await s.clone(), { number: 5, branch: "feat/5-a", fork: false }), { path: dest, created: false, branch: "feat/5-a" });
 });
 
-test("worktree: a pull request from a fork is checked out at its head, detached; a folder of that name that is no worktree is left alone", async () => {
+test("worktree: a pull request from a fork is checked out at its head, detached, though another fetch writes FETCH_HEAD meanwhile; a folder of that name that is no worktree is left alone", async () => {
   const s = await setup();
-  const made = await createWorktree(exec, await s.clone(), { number: 7, branch: "main", fork: true });
+  // Another pull request's worktree being made in the same clone, or an editor's fetch, right after this one's.
+  const racing: Exec = async (command, args, o) => {
+    const out = await exec(command, args, o);
+    if (args.includes("fetch") && args.includes("refs/pull/7/head")) await git(s.primary, "fetch", "origin", "refs/pull/8/head");
+    return out;
+  };
+  const made = await createWorktree(racing, await s.clone(), { number: 7, branch: "main", fork: true, head: await s.sha("refs/pull/7/head") });
   const dest = path.join(s.root, "r", "review-7");
   assert.deepEqual(made, { path: dest, created: true });
   assert.equal(await git(dest, "rev-parse", "HEAD"), await s.sha("refs/pull/7/head"));
   assert.equal(await git(dest, "branch", "--show-current"), "");
+  // A head the fetch does not bring (pushed over after GitHub was read) makes nothing.
+  await assert.rejects(createWorktree(exec, await s.clone(), { number: 8, branch: "main", fork: true, head: "1".repeat(40) }), (e: unknown) => e instanceof ReviewError && /読んだあとに変わりました/.test(e.message));
+  await assert.rejects(fs.lstat(path.join(s.root, "r", "review-8")));
   // The fork's branch is "main", which says nothing of the primary checkout on main.
   assert.equal(prWorktree(await s.clone(), { number: 8, branch: "main", fork: true }), undefined);
 
@@ -118,22 +129,30 @@ test("remove: not while something would be lost; then the worktree and its local
   await assert.rejects(removeWorktree(exec, await s.clone(), pr), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
   await git(dest, "push", "origin", "HEAD:feat/5-a");
 
-  // Merged and deleted on GitHub, and pruned here: only the pull request's head says the commits were pushed.
+  // Merged and deleted on GitHub, and pruned here: only the pull request's head says the reviewer's commit was pushed
+  // (the one the worktree was made at counts as pushed).
   const head = await s.sha("feat/5-a");
   await git(s.root, "--git-dir", path.join(s.root, "origin.git"), "branch", "-D", "feat/5-a");
   await git(s.primary, "fetch", "--prune", "origin");
-  await assert.rejects(removeWorktree(exec, await s.clone(), pr), (e: unknown) => e instanceof ReviewError && /push していない commit が 2 個/.test(e.message));
+  await assert.rejects(removeWorktree(exec, await s.clone(), pr), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
   assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr, head }), { path: dest, branch: "feat/5-a" });
   await assert.rejects(fs.lstat(dest));
   assert.equal(await git(s.primary, "branch", "--list", "feat/5-a"), "");
 
-  // A fork's pull request that got a commit after its worktree was made: the new head is fetched, and the commits before it count as pushed.
-  const fork = { number: 7, branch: "main", fork: true };
+  // A fork's pull request whose worktree the reviewer moved to a later head, and that got a commit after that: the new
+  // head is fetched, and the commits before it count as pushed.
+  const old = await s.sha("refs/pull/7/head");
+  const fork = { number: 7, branch: "main", fork: true, head: old };
   const { path: forkDest } = await createWorktree(exec, await s.clone(), fork);
   const origin = path.join(s.root, "origin.git");
-  const old = await s.sha("refs/pull/7/head");
-  const next = await git(origin, "commit-tree", await s.sha(`${old}^{tree}`), "-p", old, "-m", "more from the fork");
-  await git(origin, "update-ref", "refs/pull/7/head", next);
+  const push = async (parent: string) => {
+    const oid = await git(origin, "commit-tree", await s.sha(`${old}^{tree}`), "-p", parent, "-m", "more from the fork");
+    await git(origin, "update-ref", "refs/pull/7/head", oid);
+    return oid;
+  };
+  await git(forkDest, "fetch", "origin", await push(old));
+  await git(forkDest, "checkout", "--detach", "FETCH_HEAD");
+  const next = await push(await s.sha("refs/pull/7/head"));
   await git(s.primary, "remote", "set-url", "origin", path.join(s.root, "nowhere.git"));
   await assert.rejects(removeWorktree(exec, await s.clone(), { ...fork, head: next }), (e: unknown) => e instanceof ReviewError && /head を取ってこられなかった/.test(e.message));
   await git(s.primary, "remote", "set-url", "origin", origin);
@@ -143,6 +162,62 @@ test("remove: not while something would be lost; then the worktree and its local
   await git(s.primary, "worktree", "add", path.join(s.root, "r", "issue-6"), "-b", "feat/6-b", "origin/feat/6-b");
   assert.deepEqual(prWorktree(await s.clone(), { number: 6, branch: "feat/6-b" }), { path: path.join(s.root, "r", "issue-6"), branch: "feat/6-b", review: false });
   await assert.rejects(removeWorktree(exec, await s.clone(), { number: 6, branch: "feat/6-b", fork: false }), ReviewError);
+});
+
+test("remove: after its author rebased and force-pushed, the commit the worktree was made at counts as pushed, and the reviewer's own commits still do not", async () => {
+  const s = await setup();
+  const origin = path.join(s.root, "origin.git");
+  const rebase = async (ref: string) => {
+    const old = await s.sha(ref);
+    const next = await git(origin, "commit-tree", await s.sha(`${old}^{tree}`), "-p", await s.sha("main"), "-m", "rebased");
+    await git(origin, "update-ref", ref, next);
+    return next;
+  };
+
+  const fork = { number: 7, branch: "main", fork: true, head: await s.sha("refs/pull/7/head") };
+  const { path: forkDest } = await createWorktree(exec, await s.clone(), fork);
+  const next = await rebase("refs/pull/7/head");
+  await fs.writeFile(path.join(forkDest, "review.txt"), "mine\n");
+  await git(forkDest, "add", ".");
+  await git(forkDest, "commit", "-m", "mine");
+  await assert.rejects(removeWorktree(exec, await s.clone(), { ...fork, head: next }), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
+  await git(forkDest, "reset", "--hard", "HEAD~1");
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...fork, head: next }), { path: forkDest });
+
+  // Of the same repository, with origin's branch fetched after the force-push.
+  const pr = { number: 6, branch: "feat/6-b", fork: false };
+  const { path: dest } = await createWorktree(exec, await s.clone(), pr);
+  const head = await rebase("refs/heads/feat/6-b");
+  await git(s.primary, "fetch", "origin");
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr, head }), { path: dest, branch: "feat/6-b" });
+});
+
+test("worktree: a review worktree whose folder is gone does not open, and is made again or removed, unless that would lose a commit", async () => {
+  const s = await setup();
+  const fork = async (number: number) => ({ number, branch: "main", fork: true, head: await s.sha(`refs/pull/${number}/head`) });
+  const pr7 = await fork(7);
+  const { path: dest } = await createWorktree(exec, await s.clone(), pr7);
+  await fs.rm(dest, { recursive: true });
+  assert.deepEqual(prWorktree(await s.clone(), pr7), { path: dest, review: true, missing: true });
+  assert.deepEqual(await createWorktree(exec, await s.clone(), pr7), { path: dest, created: true });
+  assert.equal(await git(dest, "rev-parse", "HEAD"), pr7.head);
+
+  // A commit made in it is only on its HEAD, which git forgets with it.
+  const pr8 = await fork(8);
+  const { path: dest8 } = await createWorktree(exec, await s.clone(), pr8);
+  await fs.writeFile(path.join(dest8, "review.txt"), "mine\n");
+  await git(dest8, "add", ".");
+  await git(dest8, "commit", "-m", "mine");
+  await fs.rm(dest8, { recursive: true });
+  await assert.rejects(createWorktree(exec, await s.clone(), pr8), (e: unknown) => e instanceof ReviewError && /作り直しません.*push していない commit が 1 個/.test(e.message));
+  await assert.rejects(removeWorktree(exec, await s.clone(), pr8), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
+
+  const pr = { number: 5, branch: "feat/5-a", fork: false };
+  const { path: dest5 } = await createWorktree(exec, await s.clone(), pr);
+  await fs.rm(dest5, { recursive: true });
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), pr), { path: dest5, branch: "feat/5-a" });
+  assert.equal(await git(s.primary, "branch", "--list", "feat/5-a"), "");
+  assert.doesNotMatch(await git(s.primary, "worktree", "list"), /review-5/);
 });
 
 test("gh: the watched repositories are split into searches GitHub takes, each with the search words and the newest first", () => {

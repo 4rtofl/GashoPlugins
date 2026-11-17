@@ -24,6 +24,8 @@ export interface PrWorktree {
   branch?: string;
   /** review-<number> beside the primary checkout: one made for the review, which "片付ける" removes. */
   review: boolean;
+  /** Its folder is gone, though git still has it: it does not open, and is made again or removed. */
+  missing?: boolean;
 }
 
 /** Where a pull request is on a working server: the clone of its repository, and its worktree there. */

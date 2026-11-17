@@ -1,7 +1,8 @@
 // A pull request's row, with what GitHub's list of pull requests shows (its state, title, labels, checks, number,
 // author, when it was opened, its review decision and its comments), the worktrees it has on the working servers, and
 // its buttons: "worktree を作る" (with the template to send) when it has none, "開く" (or, in the lower part of the page,
-// "新たにセッションを作成する") and "片付ける" when it has one.
+// "新たにセッションを作成する") and "片付ける" when it has one. A review worktree whose folder is gone does not open: it
+// is made again or removed.
 import {
   Check,
   ChevronDown,
@@ -115,6 +116,7 @@ export function PrItemRow({ item, now, showRepo, fresh }: { item: Item; now: num
             </span>
             {shared?.machines && <span>（{s.machine.name}）</span>}
             <span className="font-mono">{s.worktree?.branch ?? "detached HEAD"}</span>
+            {s.worktree?.missing && <span className="text-amber-700 dark:text-amber-300">フォルダーがありません</span>}
             {s.worktree?.review && pr.state !== "open" && (
               <Badge tone="success" dot className="h-5 px-2 text-[11px]">
                 {pr.state === "merged" ? "マージされたので片付けてよい" : "閉じられたので片付けてよい"}
@@ -142,9 +144,10 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
   const { tools, run } = shared;
   const { pr, spots } = item;
   const off = shared.busy.has(pr.url);
-  const placed = spots.filter((s) => s.worktree);
+  const placed = spots.filter((s) => s.worktree && !s.worktree.missing);
+  const review = spots.filter((s) => s.worktree?.review);
+  const removeButton = review.length > 0 && <SpotButton label="片付ける" icon={<Trash2 />} spots={review} disabled={off} onPick={(s) => run(pr.url, () => removeWorktree(item, s, tools))} />;
   if (placed.length > 0) {
-    const review = placed.filter((s) => s.worktree?.review);
     // A worktree with no Gasho session opens only where Gasho can start one.
     const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
     return (
@@ -154,11 +157,16 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
         ) : (
           <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(s, tools))} />
         )}
-        {review.length > 0 && <SpotButton label="片付ける" icon={<Trash2 />} spots={review} disabled={off} onPick={(s) => run(pr.url, () => removeWorktree(item, s, tools))} />}
+        {removeButton}
       </div>
     );
   }
-  return <CreateMenu item={item} disabled={off || spots.length === 0} />;
+  return (
+    <div className="flex gap-1.5">
+      <CreateMenu item={item} disabled={off || spots.length === 0} />
+      {removeButton}
+    </div>
+  );
 }
 
 const cannotLaunch = "この working server では、Gasho からセッションを起動できません。";
