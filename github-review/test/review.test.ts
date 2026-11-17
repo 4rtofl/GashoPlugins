@@ -6,8 +6,9 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { pageItems } from "../src/items.ts";
-import { listArgs, parseList, requestedQuery, watchedQueries } from "../src/daemon/gh.ts";
+import { listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries } from "../src/daemon/gh.ts";
 import { createWorktree, prWorktree, readClone, removeWorktree, ReviewError, type Clone, type Exec } from "../src/daemon/git.ts";
+import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
 import { fillTemplate, parseTemplates } from "../src/template.ts";
 import type { Listing, PrRow } from "../src/types.ts";
 
@@ -203,6 +204,65 @@ test("gh: each part of the answer comes back to its part of the query, with what
     [[[12, "merged"]]],
   );
   assert.deepEqual(answer.errors, ["Could not resolve to a PullRequest with the number of 99."]);
+});
+
+test("gh: the names GitHub has now come back by the name each repository was asked with; one GitHub does not find has none", () => {
+  const args = namesArgs(["Old/r", "o/gone"]);
+  const query = args[args.indexOf("-f") + 1] ?? "";
+  assert.match(query, /r1: repository\(owner: \$o1, name: \$n1\) \{ nameWithOwner \}/);
+  assert.ok(args.includes("o0=Old") && args.includes("n0=r") && args.includes("o1=o") && args.includes("n1=gone"));
+  const names = parseNames(JSON.stringify({ data: { r0: { nameWithOwner: "new/r" }, r1: null }, errors: [{ message: "Could not resolve to a Repository" }] }), ["Old/r", "o/gone"]);
+  assert.deepEqual([...names], [["Old/r", "new/r"]]);
+});
+
+test("list: a clone whose origin says its owner's old name lists its pull requests by the name GitHub has now, with where each is here", async () => {
+  const s = await setup();
+  await git(s.primary, "remote", "set-url", "origin", "https://github.com/old/r.git");
+  await git(s.primary, "worktree", "add", "--detach", path.join(s.root, "r", "review-12"), "HEAD");
+  const file = path.join(s.root, "watched.json");
+  await fs.writeFile(file, JSON.stringify({ paths: [s.primary] }));
+
+  const pr = (number: number, state = "OPEN") => ({ number, title: `t${number}`, url: `https://github.com/new/r/pull/${number}`, state, headRefName: `feat/${number}`, repository: { nameWithOwner: "new/r" } });
+  const asked: string[][] = [];
+  let found = true;
+  const github: GitHubRead = async (args) => {
+    asked.push(args);
+    const query = args[args.indexOf("-f") + 1] ?? "";
+    if (!query.includes("search(")) return { stdout: JSON.stringify({ data: { r0: found ? { nameWithOwner: "new/r" } : null } }) };
+    // GitHub's search finds nothing by the old name.
+    const watched = args.find((a) => a.startsWith("w0=")) ?? "";
+    return {
+      stdout: JSON.stringify({
+        data: {
+          req: { issueCount: 1, nodes: [pr(5)] },
+          w0: { issueCount: watched.includes("repo:new/r ") ? 2 : 0, nodes: watched.includes("repo:new/r ") ? [pr(5), pr(6)] : [] },
+          l0: args.includes("o0=new") ? { p12: pr(12, "MERGED") } : null,
+        },
+      }),
+    };
+  };
+  let at = 0;
+  const reviewer = new Reviewer({ exec, folders: () => [s.primary], file, log: () => {}, now: () => at });
+  const listing = await reviewer.list(github, "", false);
+  assert.deepEqual(listing.errors, []);
+  assert.deepEqual(listing.requested.map((p) => [p.repo, p.number, p.place?.primary]), [["new/r", 5, s.primary]]);
+  assert.deepEqual(
+    listing.repos.map((r) => [r.repo, r.watched, r.prs.map((p) => [p.number, p.place?.worktree?.review ?? false])]),
+    [["new/r", true, [[5, false], [6, false], [12, true]]]],
+  );
+  assert.equal(pageItems([{ machine: "m", listing }]).requested.length, 1);
+
+  // The name is read once, then again only when it is an hour old.
+  const names = () => asked.filter((a) => !(a[a.indexOf("-f") + 1] ?? "").includes("search(")).length;
+  assert.equal(names(), 1);
+  assert.equal((await reviewer.cloneOf(github, "NEW/r"))?.path, s.primary);
+  assert.equal(names(), 1);
+  // One GitHub does not find keeps its origin's name.
+  at = 60 * 60_000;
+  found = false;
+  assert.equal(await reviewer.cloneOf(github, "new/r"), undefined);
+  assert.equal((await reviewer.cloneOf(github, "old/r"))?.path, s.primary);
+  assert.equal(names(), 2);
 });
 
 test("template: the placeholders become the pull request's, once; a setting that is not a list of templates gives none", () => {
