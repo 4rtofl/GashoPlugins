@@ -23,12 +23,12 @@ import {
 } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { createContext, useContext, type MouseEvent, type ReactNode } from "react";
-import { cn } from "@gasho/plugin-sdk";
+import { cn, relativeTime } from "@gasho/plugin-sdk";
 import { askEffort, askInstruction, type MergeMethod } from "../instructions.ts";
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
 import { askOf, type AskKind, type ReviewProgress } from "../verdict.ts";
-import { askAgent, createWorktree, newSessionIn, openedText, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
+import { askAgent, createWorktree, followCleanup, newSessionIn, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
 import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
@@ -92,6 +92,11 @@ export function ProgressBadge({ progress }: { progress: ReviewProgress }) {
 }
 
 const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? p;
+
+const CLEANUP_HINT: Record<"merge" | "sendBack", string> = {
+  merge: "マージされて、セッションの作業が終わったら、worktree とその中のセッションを片付けます",
+  sendBack: "request changes のレビューが付いて、セッションの作業が終わったら、worktree とその中のセッションを片付けます",
+};
 
 /** A click on the row itself, not on one of its links, buttons or menus. */
 const onRowItself = (e: MouseEvent): boolean => !(e.target as Element).closest("a, button, [role=menu], [role=menuitem], [role=dialog]");
@@ -168,13 +173,29 @@ export function PrItemRow({ item, now, showRepo, fresh }: { item: Item; now: num
             </span>
             {shared?.machines && <span>（{s.machine.name}）</span>}
             <span className="font-mono">{s.worktree?.branch ?? "detached HEAD"}</span>
-            {s.worktree?.review && pr.state !== "open" && (
-              <Badge tone="success" dot className="h-5 px-2 text-[11px]">
-                {pr.state === "merged" ? "マージされたので片付けてよい" : "閉じられたので片付けてよい"}
+            {s.worktree?.review && s.cleanup && !s.cleanup.problem ? (
+              <Badge tone="neutral" dot className="h-5 px-2 text-[11px]" title={CLEANUP_HINT[s.cleanup.kind]}>
+                {s.cleanup.done ? "終わったので片付けます" : "終わったら片付けます"}
               </Badge>
+            ) : (
+              s.worktree?.review &&
+              pr.state !== "open" && (
+                <Badge tone="success" dot className="h-5 px-2 text-[11px]">
+                  {pr.state === "merged" ? "マージされたので片付けてよい" : "閉じられたので片付けてよい"}
+                </Badge>
+              )
             )}
           </p>
         ))}
+        {placed.map(
+          (s) =>
+            s.cleanup?.problem && (
+              <p key={`${s.machine.id}-cleanup`} className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                {shared?.machines ? `${s.machine.name}：` : ""}
+                {s.cleanup.problem}
+              </p>
+            ),
+        )}
         {ask?.blocked && placed.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{ask.blocked}</p>}
       </div>
       <div className="ml-auto flex shrink-0 items-start gap-3">
@@ -241,8 +262,14 @@ export function AgentAsk({ item }: { item: Item }) {
       usable={canOpen}
       onPick={(s) =>
         run(pr.url, async () => {
-          if (ask.kind === "merge" && !(await tools.actions.askMerge({ item, spot: s }))) return;
-          await askAgent(s, ask.label, askInstruction(ask.kind, pr, mark, shared.merge), askEffort(ask.kind), tools);
+          if (ask.kind === "fix") {
+            await askAgent(s, ask.label, askInstruction(ask.kind, pr, mark, shared.merge), askEffort(ask.kind), tools);
+            return;
+          }
+          const kind = ask.kind;
+          const answer = await tools.actions.askAgentFor({ kind, item, spot: s });
+          if (!answer) return;
+          if (await askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools)) await followCleanup(item, s, kind, answer.cleanup, tools);
         })
       }
     />
@@ -338,4 +365,10 @@ function CreateMenu({ item, disabled }: { item: Item; disabled: boolean }) {
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
+}
+
+/** "totosuki が 3日前に開いた": who opened a pull request, and when. */
+export function openedText(pr: Pick<PrRow, "author" | "createdAt">, now: number): string {
+  const when = pr.createdAt ? relativeTime(Date.parse(pr.createdAt), now) : undefined;
+  return [pr.author ? `${pr.author} が` : undefined, when ? `${when}に開いた` : "開いた"].filter(Boolean).join(" ");
 }
