@@ -104,3 +104,29 @@ export function askOf(pr: { own?: boolean; fork?: boolean; canModify?: boolean; 
   }
   return undefined;
 }
+
+/** What a row's button asked the Agent, on the page: of the verdict on `sha`, at `at` (ms since the epoch). */
+export interface Asked {
+  kind: AskKind;
+  sha: string;
+  at: number;
+}
+
+/** A session's state may come this long after it was sent something. */
+export const ASK_SETTLE_MS = 20_000;
+
+/**
+ * Whether what the row's button asks is being done, so that the row shows that in place of the button: it was asked
+ * of the verdict there is now (on the page, `asked`, or kept to remove the worktree after, `followed`), and a session
+ * in the worktree works, or it was asked a moment ago. A session at work on the review itself is not it.
+ */
+export function askRunning(
+  ask: Ask | undefined,
+  mark: { sha: string } | undefined,
+  { working, asked, followed, now }: { working: boolean; asked?: Asked | undefined; followed?: AskKind | undefined; now: number },
+): boolean {
+  if (!ask || !mark) return false;
+  const mine = asked && asked.kind === ask.kind && asked.sha === mark.sha ? asked : undefined;
+  if (mine && now - mine.at < ASK_SETTLE_MS) return true;
+  return working && (mine !== undefined || followed === ask.kind);
+}

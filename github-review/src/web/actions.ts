@@ -62,11 +62,13 @@ export interface Tools {
 }
 
 /** Where the review of a pull request is: from its mark, its head, and the sessions at work in its worktrees. */
-export function progressOf({ pr, spots }: Item): ReviewProgress | undefined {
-  return reviewProgress(
-    pr,
-    spots.some((s) => s.worktree && working(s.machine.sessions, s.worktree.path)),
-  );
+export function progressOf(item: Item): ReviewProgress | undefined {
+  return reviewProgress(item.pr, workingIn(item));
+}
+
+/** A session in one of a pull request's worktrees works on something (verdict.ts working). */
+export function workingIn({ spots }: Item): boolean {
+  return spots.some((s) => s.worktree && working(s.machine.sessions, s.worktree.path));
 }
 
 const lastUsed = (s: SessionInfo): number => s.lastActivityAt ?? s.startedAt ?? 0;

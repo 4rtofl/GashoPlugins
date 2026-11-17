@@ -15,6 +15,7 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
+  LoaderCircle,
   MessageSquare,
   ScanSearch,
   Trash2,
@@ -29,8 +30,9 @@ import { cn, relativeTime } from "@gasho/plugin-sdk";
 import { askEffort, askInstruction, type MergeMethod } from "../instructions.ts";
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
-import { askOf, type AskKind, type ReviewProgress } from "../verdict.ts";
-import { askAgent, createWorktree, followCleanup, newSessionIn, reviewIn, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
+import { askOf, askRunning, type AskKind, type ReviewProgress } from "../verdict.ts";
+import { askAgent, createWorktree, followCleanup, newSessionIn, reviewIn, openWorktree, progressOf, removeWorktree, sessionsIn, workingIn, type Item, type Spot, type Tools } from "./actions";
+import { markAsked, useAsked } from "./asked";
 import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
@@ -278,16 +280,39 @@ const cannotLaunch = "この working server では、Gasho からセッション
 
 const ASK_ICONS: Record<AskKind, ReactNode> = { merge: <GitMerge />, sendBack: <Undo2 />, fix: <Wrench /> };
 
-/** "マージしてもらう", "差し戻す" or "修正してもらう": sends the Agent in the worktree what the verdict calls for. */
+/** What the row shows in place of its button while the Agent does what it asked. */
+const RUNNING: Record<AskKind, { text: string; hint: string }> = {
+  merge: { text: "マージしてもらっています", hint: "「マージしてもらう」を頼み、worktree のセッションが作業しています" },
+  sendBack: { text: "差し戻してもらっています", hint: "「差し戻す」を頼み、worktree のセッションが作業しています" },
+  fix: { text: "修正してもらっています", hint: "「修正してもらう」を頼み、worktree のセッションが作業しています" },
+};
+
+/**
+ * "マージしてもらう", "差し戻す" or "修正してもらう": sends the Agent in the worktree what the verdict calls for. Once
+ * it is asked, a badge says it is being done in place of the button, until the session there is at rest.
+ */
 export function AgentAsk({ item }: { item: Item }) {
   const shared = useContext(RowContext);
+  const asked = useAsked();
   const { pr, spots } = item;
   const ask = askOf(pr, progressOf(item));
   const placed = spots.filter((s) => s.worktree);
   if (!shared || !ask || !pr.mark || placed.length === 0) return null;
   const { tools, run } = shared;
   const mark = pr.mark;
+  const followed = placed.find((s) => s.worktree?.review && s.cleanup && !s.cleanup.problem)?.cleanup?.kind;
+  if (askRunning(ask, mark, { working: workingIn(item), asked: asked.get(pr.url), followed, now: Date.now() })) {
+    const r = RUNNING[ask.kind];
+    return (
+      <Badge tone="neutral" role="status" className="h-8 px-3" title={r.hint}>
+        <LoaderCircle className="size-3.5 shrink-0 text-muted-foreground motion-safe:animate-spin" />
+        {r.text}
+      </Badge>
+    );
+  }
   const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
+  const asking = (s: Spot, kind: AskKind) => askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools);
+  const sent = (kind: AskKind) => markAsked(pr.url, { kind, sha: mark.sha, at: Date.now() });
   return (
     <SpotButton
       label={ask.label}
@@ -299,14 +324,15 @@ export function AgentAsk({ item }: { item: Item }) {
       usable={canOpen}
       onPick={(s) =>
         run(pr.url, async () => {
-          if (ask.kind === "fix") {
-            await askAgent(s, ask.label, askInstruction(ask.kind, pr, mark, shared.merge), askEffort(ask.kind), tools);
+          const kind = ask.kind;
+          if (kind === "fix") {
+            if (await asking(s, kind)) sent(kind);
             return;
           }
-          const kind = ask.kind;
           const answer = await tools.actions.askAgentFor({ kind, item, spot: s });
-          if (!answer) return;
-          if (await askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools)) await followCleanup(item, s, kind, answer.cleanup, tools);
+          if (!answer || !(await asking(s, kind))) return;
+          sent(kind);
+          await followCleanup(item, s, kind, answer.cleanup, tools);
         })
       }
     />

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
 import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING } from "../src/instructions.ts";
-import { askOf, latestMark, readMark, reviewProgress, sameHead, withoutMark, working, type ReviewMark } from "../src/verdict.ts";
+import { ASK_SETTLE_MS, askOf, askRunning, latestMark, readMark, reviewProgress, sameHead, withoutMark, working, type ReviewMark } from "../src/verdict.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER = "fedcba9876543210fedcba9876543210fedcba98";
@@ -246,4 +246,25 @@ test("gh: the side panel reads the body, the latest comments with the verdict am
     { name: "ci/legacy", state: "failure", url: "https://ci.example.com/1", description: "壊れた" },
   ]);
   assert.equal(parseDetail(JSON.stringify({ data: { repository: { pullRequest: null } } })), undefined);
+});
+
+test("ask running: once asked, the row shows it is being done while a session in the worktree works", () => {
+  const merge = askOf({}, "mergeable");
+  const mark = { sha: SHA };
+  const asked = { kind: "merge" as const, sha: SHA, at: 1_000_000 };
+  const later = asked.at + ASK_SETTLE_MS;
+  // A moment after it was asked, before the session's state comes.
+  assert.equal(askRunning(merge, mark, { working: false, asked, now: asked.at + 1000 }), true);
+  assert.equal(askRunning(merge, mark, { working: true, asked, now: later }), true);
+  // Done: the button comes back (a merge that did not happen can be asked again).
+  assert.equal(askRunning(merge, mark, { working: false, asked, now: later }), false);
+  // A session at work on the review itself, with nothing asked.
+  assert.equal(askRunning(merge, mark, { working: true, now: later }), false);
+  // Asked of another verdict, or something else.
+  assert.equal(askRunning(merge, { sha: OTHER }, { working: true, asked, now: later }), false);
+  assert.equal(askRunning(askOf({}, "changes"), mark, { working: true, asked, now: asked.at }), false);
+  // Kept to remove the worktree after (asked on another page, or before the page was opened again).
+  assert.equal(askRunning(merge, mark, { working: true, followed: "merge", now: later }), true);
+  assert.equal(askRunning(merge, mark, { working: false, followed: "merge", now: later }), false);
+  assert.equal(askRunning(undefined, mark, { working: true, asked, now: asked.at }), false);
 });
