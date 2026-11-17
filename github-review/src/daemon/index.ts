@@ -63,6 +63,11 @@ export default defineDaemonPlugin({
       const p = objArg(params);
       return current().list((args, o) => ctx.github.read(args, o), p.query, p.fresh === true);
     },
+    /** What the side panel shows of { repo, number } (PrDetail); { fresh: true } reads without what gasho-daemon kept of gh. */
+    async detail(params, ctx) {
+      const p = objArg(params);
+      return current().detail((args, o) => ctx.github.read(args, o), repoArg(p.repo), numberArg(p.number), p.fresh === true);
+    },
     /** Watches { paths } (primary checkouts from `options`) from now on; returns them. */
     async watch(params) {
       return current().watch(objArg(params).paths);
