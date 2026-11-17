@@ -375,10 +375,19 @@ test("a board plugin's fetch runs commands and gets what it kept the time before
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-/** Waits until `ok` holds, for the folder's watcher. */
-async function until(ok: () => boolean, ms = 5000): Promise<void> {
-  for (const end = Date.now() + ms; !ok(); ) {
+/**
+ * Waits until `ok` holds, for the folder's watcher, saving with `save` every second meanwhile: on macOS the watcher
+ * starts a moment after fs.watch returns, and under load it did not hear a file saved in between.
+ */
+async function until(ok: () => boolean, save: () => Promise<void>, ms = 30_000): Promise<void> {
+  const end = Date.now() + ms;
+  let next = 0;
+  while (!ok()) {
     if (Date.now() > end) throw new Error("timed out");
+    if (Date.now() >= next) {
+      await save();
+      next = Date.now() + 1000;
+    }
     await new Promise((r) => setTimeout(r, 20));
   }
 }
@@ -481,15 +490,19 @@ test("saving a file of the board plugins' folder reads them again, and says whic
   });
   const folder = new BoardFolder({ dir, placed: {}, sample: {}, log: () => undefined });
   const changes: string[][] = [];
-  const first = await folder.start((_, changed) => changes.push([...changed].sort()));
-  assert.deepEqual(first.plugins.map((p) => p.name), ["a", "b"]);
-  await fs.writeFile(path.join(dir, "a/lib.ts"), 'export const column = "agent";\n');
-  await until(() => changes.length > 0);
-  assert.deepEqual(changes, [["a"]]);
-  // The cards written out are not read.
-  await writeFiles(dir, { "cards/o__r.json": "{}" });
-  await new Promise((r) => setTimeout(r, 600));
-  assert.equal(changes.length, 1);
-  folder.stop();
-  await fs.rm(dir, { recursive: true, force: true });
+  try {
+    const first = await folder.start((_, changed) => changes.push([...changed].sort()));
+    assert.deepEqual(first.plugins.map((p) => p.name), ["a", "b"]);
+    // Saved until heard: saving the same text again, while the reading of the first goes on or after it, is no change.
+    await until(() => changes.length > 0, () => fs.writeFile(path.join(dir, "a/lib.ts"), 'export const column = "agent";\n'));
+    assert.deepEqual(changes, [["a"]]);
+    // The cards written out are not read.
+    await writeFiles(dir, { "cards/o__r.json": "{}" });
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(changes.length, 1);
+  } finally {
+    // An open watcher keeps this file's node running.
+    folder.stop();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
