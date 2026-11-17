@@ -4,8 +4,8 @@
 // when the same query was read within 30 seconds, so however many browsers look, GitHub is read about once a minute.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
-import { ghError, listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
+import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
+import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
 import { prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, type Clone, type Exec } from "./git.ts";
 
 export type GitHubRead = (args: string[], o?: { maxAgeSeconds?: number; timeoutMs?: number; maxBuffer?: number }) => Promise<{ stdout: string }>;
@@ -29,8 +29,8 @@ export interface ReviewerDeps {
   now?: () => number;
 }
 
-/** A pull request as the page gets it: without its head commit, with where it is here. */
-function row({ head: _, ...pr }: ParsedPr, place: Place | undefined): PrRow {
+/** A pull request as the page gets it, with where it is here. */
+function row(pr: ParsedPr, place: Place | undefined): PrRow {
   return { ...pr, ...(place ? { place } : {}) };
 }
 
@@ -161,6 +161,30 @@ export class Reviewer {
     const option = (await this.named(github, await this.repoOptions())).filter((o) => o.github && sameRepo(o.github, repo));
     const chosen = option.find((o) => this.watched.includes(o.path)) ?? option[0];
     return chosen?.github ? readClone(this.deps.exec, { path: chosen.path, github: chosen.github }) : undefined;
+  }
+
+  /**
+   * What the side panel shows of `repo`#`number` (the name GitHub has now), with where it is here. `fresh`: without
+   * what gasho-daemon kept of gh.
+   */
+  async detail(github: GitHubRead, repo: string, number: number, fresh: boolean): Promise<PrDetail> {
+    let json: string;
+    try {
+      json = (await github(detailArgs(repo, number), { timeoutMs: 20_000, maxBuffer: 8 * 1024 * 1024, ...(fresh ? { maxAgeSeconds: 0 } : {}) })).stdout;
+    } catch (e) {
+      throw new ReviewError(ghError(e));
+    }
+    const d = parseDetail(json);
+    if (!d) throw new ReviewError(`${repo} に Pull request #${number} はありません。`);
+    const clone = await this.cloneOf(github, d.pr.repo).catch((e: unknown) => {
+      this.deps.log(`github-review: could not read the clone of ${d.pr.repo}`, e);
+      return undefined;
+    });
+    if (clone) {
+      const worktree = prWorktree(clone, d.pr);
+      d.pr.place = { primary: clone.path, ...(worktree ? { worktree } : {}) };
+    }
+    return d;
   }
 
   /**

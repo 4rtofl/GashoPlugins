@@ -1,10 +1,13 @@
 // What the page asks and tells around the rows' buttons: whether Claude Code may trust a folder before a session
-// starts there, whether to remove a review worktree, and a notice at the bottom of what a button is doing or did.
+// starts there, whether to remove a review worktree, whether to ask the Agent to merge, and a notice at the bottom of
+// what a button is doing or did.
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect } from "react";
 import { cn } from "@gasho/plugin-sdk";
+import type { MergeMethod } from "../instructions.ts";
+import { canPush } from "../types.ts";
 import { sessionsIn, type Item, type Notice, type Spot } from "./actions";
 import { Button } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
@@ -88,11 +91,67 @@ export function RemoveDialog({ question, onAnswer }: { question: { item: Item; s
   );
 }
 
+const METHOD_TEXT: Record<MergeMethod, string> = { merge: "merge（マージコミットを作る）", squash: "squash", rebase: "rebase" };
+
+/** Before the Agent is asked to merge: what it will do, with the settings of the merge. */
+export function MergeDialog({
+  question,
+  merge,
+  onAnswer,
+}: {
+  question: { item: Item; spot: Spot } | undefined;
+  merge: { method: MergeMethod; deleteBranch: boolean };
+  onAnswer: (yes: boolean) => void;
+}) {
+  const pr = question?.item.pr;
+  const steps = pr
+    ? [
+        canPush(pr) ? "base とのコンフリクトがあれば取り込んで解決し、push します。解決で中身が変わったときは、マージせずにコメントします" : "base とのコンフリクトがあれば、マージせずに止めます（head に push できないため）",
+        "チェックが通るのを待ちます",
+        pr.own ? "自分の Pull request なので、approve はしません" : "レビューの結果を元に approve します",
+        `${METHOD_TEXT[merge.method]} でマージします`,
+        ...(merge.deleteBranch && !pr.fork ? [`GitHub の head のブランチ（${pr.branch}）を消します`] : []),
+      ]
+    : [];
+  return (
+    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
+      <Dialog.Portal>
+        {/* The portal lands outside the plugin's part of the page, where its CSS would not apply. */}
+        <div data-gasho-plugin="github-review" style={{ display: "contents" }}>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">Agent にマージを頼みますか</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                #{pr?.number}「{pr?.title}」の worktree のセッションに指示を送ります。セッションが作業中なら、終わってから入力されます。
+              </Dialog.Description>
+            </div>
+            <ol className="list-decimal space-y-1 rounded-lg border border-border bg-background py-2 pr-3 pl-7 text-xs">
+              {steps.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ol>
+            <p className="text-[11px] text-muted-foreground">マージ方法とブランチを消すかは、設定で変えられます。</p>
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" onClick={() => onAnswer(false)}>
+                やめる
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
+                マージを頼む
+              </Button>
+            </div>
+          </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 /** A notice at the bottom of the page (after EasyUI's VelocityToast); it goes after a few seconds once nothing is going on. */
 export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose: () => void }) {
   useEffect(() => {
     if (!notice || notice.busy) return;
-    const t = setTimeout(onClose, 6000);
+    const t = setTimeout(onClose, notice.action ? 10_000 : 6000);
     return () => clearTimeout(t);
     // Restarts only for a new notice.
   }, [notice]);
@@ -113,6 +172,18 @@ export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose
         >
           {notice.busy && <LoaderCircle className="size-4 shrink-0 text-muted-foreground motion-safe:animate-spin" />}
           <span className="min-w-0">{notice.text}</span>
+          {notice.action && (
+            <button
+              type="button"
+              onClick={() => {
+                notice.action?.run();
+                onClose();
+              }}
+              className="shrink-0 cursor-pointer text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {notice.action.label}
+            </button>
+          )}
           {!notice.busy && (
             <button type="button" onClick={onClose} aria-label="閉じる" className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground">
               <X className="size-3.5" />
