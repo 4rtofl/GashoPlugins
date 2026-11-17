@@ -43,7 +43,8 @@ function Home({ machine, worktree }: WorktreeViewProps) {
   // and the forms stay, with what is typed in them. A form shows only once the daemon part was ready on this screen.
   const last = useRef<{ branch: string | undefined; items: WorktreeItems }>(undefined);
   if (r.data) last.current = { branch: worktree.branch, items: r.data };
-  const items = r.data ?? (last.current?.branch === worktree.branch ? last.current.items : undefined);
+  const kept = last.current;
+  const items = r.data ?? (kept && kept.branch === worktree.branch ? kept.items : undefined);
   const wasReady = useRef(false);
   if (daemon.ready) wasReady.current = true;
   const added = new Set(items?.added.map((i) => i.number));
