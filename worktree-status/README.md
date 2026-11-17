@@ -4,7 +4,7 @@
 
 Better WorktreeList の「作業中・待機中」は、セッションの動きから見出しが自動で決まる。このプラグインは、Orca のワークスペースの一覧のように、作業がどこまで進んだかを自分で決めて、worktree を見出しに入れる。
 
-プラグインの API 1.9 に対応した Gasho が要る（Gasho の PR #70）。サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）の `useOnMove` と、すべてのブラウザーで共通の値（`useSharedState`）を使う。Gasho の [docs/plugins.md](https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md) に書いてある。
+プラグインの API 1.9 に対応した Gasho が要る（Gasho の PR #70）。サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）の `useOnMove` と、すべてのブラウザーで共通の値（`useSharedState`）を使う。Gasho の [docs/plugins.md](https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md) に書いてある。
 
 ## 決めたこと
 
