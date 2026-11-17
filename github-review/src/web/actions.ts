@@ -2,10 +2,12 @@
 // send the chosen template, staying on the page (the notice offers to open the session); open the worktree it has (its
 // Gasho session, or one started there), or start a new session there and open it; remove its review worktree; and send
 // the Agent in its worktree what "マージしてもらう", "差し戻す" or "修正してもらう" asks, and remove its review worktree
-// once a merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when). The daemon
-// part does the git; the page asks the person before trusting a folder, before removing, and before asking for a merge
-// or a send-back.
+// once a merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when). Before
+// sending, it switches the session's effort level (max for the review, medium to merge or send back). The daemon part
+// does the git; the page asks the person before trusting a folder, before removing, and before asking for a merge or a
+// send-back.
 import {
+  type EffortLevel,
   type MachineInfo,
   type Navigation,
   type SessionInfo,
@@ -16,7 +18,7 @@ import {
 } from "@gasho/plugin-sdk";
 import { changesProblem, type CleanupKind } from "../cleanup.ts";
 import type { Item as AnyItem, Spot as AnySpot } from "../items.ts";
-import { markInstruction } from "../instructions.ts";
+import { effortFor, markInstruction, REVIEW_EFFORT } from "../instructions.ts";
 import { fillTemplate, type Template } from "../template.ts";
 import type { Created, Place, PrRow, Removed } from "../types.ts";
 import { reviewProgress, working, type ReviewProgress } from "../verdict.ts";
@@ -107,9 +109,9 @@ function sentNotice(machine: MachineInfo, sessionId: string, text: string, t: To
 
 /**
  * Makes the review worktree of a pull request on a working server, starts a session there and sends the template (none
- * for "何も送らない"). When the worktree turns out to be there already, it takes the Gasho session used last there (or
- * starts one) and sends nothing. Either way the page stays, so the person can go on to other pull requests; the notice
- * offers to open the session.
+ * for "何も送らない") at the effort level of a review. When the worktree turns out to be there already, it takes the
+ * Gasho session used last there (or starts one) and sends nothing. Either way the page stays, so the person can go on to
+ * other pull requests; the notice offers to open the session, and says why when the effort level could not be switched.
  */
 export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<void> {
   const { machine } = spot;
@@ -135,10 +137,23 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
   if (template) {
     t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
     // The verdict's mark is asked for after the template, whatever it says.
-    const sent = await t.send({ machine: machine.id, sessionId, text: `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}` });
+    const sent = await t.send({
+      machine: machine.id,
+      sessionId,
+      text: `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}`,
+      ...effortFor(machine, REVIEW_EFFORT),
+    });
     if (!sent.ok) {
       t.actions.notify({
         text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`,
+        tone: "danger",
+        action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
+      });
+      return;
+    }
+    if (sent.data.warning) {
+      t.actions.notify({
+        text: `「${template.name}」を送りました。${sent.data.warning}`,
         tone: "danger",
         action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
       });
@@ -169,9 +184,10 @@ export async function newSessionIn(spot: Spot, t: Tools): Promise<void> {
 
 /**
  * Sends the Agent in a pull request's worktree on a working server what a row's button asks (`text`), in the Gasho
- * session used last there, or one started there. A session at work gets it once it is done (Gasho keeps it till then).
+ * session used last there, or one started there, switching its effort level first (none: it keeps its own). A session
+ * at work gets it once it is done (Gasho keeps it till then).
  */
-export async function askAgent(spot: Spot, label: string, text: string, t: Tools): Promise<boolean> {
+export async function askAgent(spot: Spot, label: string, text: string, effort: EffortLevel | undefined, t: Tools): Promise<boolean> {
   const dir = spot.worktree?.path;
   if (!dir) return false;
   const { machine } = spot;
@@ -179,13 +195,20 @@ export async function askAgent(spot: Spot, label: string, text: string, t: Tools
   const sessionId = session?.sessionId ?? (await start(machine, dir, t));
   if (!sessionId) return false;
   t.actions.notify({ text: `「${label}」を送っています…`, busy: true });
-  const sent = await t.send({ machine: machine.id, sessionId, text });
+  const sent = await t.send({ machine: machine.id, sessionId, text, ...effortFor(machine, effort) });
   if (!sent.ok) {
     t.actions.notify({ text: `「${label}」を送れませんでした：${sent.error}`, tone: "danger" });
     return false;
   }
   const later = session && session.status !== "idle";
-  sentNotice(machine, sessionId, later ? `「${label}」を送りました。セッションの作業が終わってから入力されます。` : `「${label}」をセッションに送りました。`, t);
+  const notice = later ? `「${label}」を送りました。セッションの作業が終わってから入力されます。` : `「${label}」をセッションに送りました。`;
+  if (sent.data.warning) {
+    t.actions.notify({
+      text: notice + sent.data.warning,
+      tone: "danger",
+      action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
+    });
+  } else sentNotice(machine, sessionId, notice, t);
   return true;
 }
 

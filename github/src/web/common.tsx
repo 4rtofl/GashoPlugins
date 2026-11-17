@@ -12,6 +12,7 @@ import {
   useCall,
   useNavigation,
   useRequest,
+  type CallResult,
   type MachineInfo,
   type Params,
   type RequestOptions,
@@ -41,7 +42,9 @@ export function PanelRepoTabs({ session, params, panel }: { session: SessionInfo
 
 /**
  * A read of the daemon part. `refresh` (the reload button) asks with `fresh`, so that gh reads GitHub again rather than
- * gasho-daemon answering from what it kept, then reads the request again (now answered with that).
+ * gasho-daemon answering from what it kept, then reads the request again (now answered with that). When GitHub could
+ * not be read again, the request is left as it was (with the time it was read) and `error` says so, until it is read
+ * again or the params change.
  */
 export function useRead<T>(machine: MachineInfo, session: SessionInfo, method: string, params: Record<string, unknown> | undefined, options?: RequestOptions) {
   const r = useRequest<T>(
@@ -50,17 +53,28 @@ export function useRead<T>(machine: MachineInfo, session: SessionInfo, method: s
   );
   const call = useCall();
   const [refreshing, setRefreshing] = useState(false);
+  const [failed, setFailed] = useState<{ key: string; at?: number; error: string }>();
+  const key = JSON.stringify(params ?? null);
   const refresh = async () => {
     if (!params) return;
     setRefreshing(true);
+    let result: CallResult<T>;
     try {
-      await call({ machine: machine.id, sessionId: session.sessionId, method, params: { ...params, fresh: true } });
+      result = await call<T>({ machine: machine.id, sessionId: session.sessionId, method, params: { ...params, fresh: true } });
+    } catch (e) {
+      result = { ok: false, error: e instanceof Error ? e.message : String(e) };
     } finally {
       setRefreshing(false);
+    }
+    if (result.ok) {
+      setFailed(undefined);
       r.reload();
+    } else {
+      setFailed({ key, at: r.at, error: result.error });
     }
   };
-  return { ...r, loading: r.loading || refreshing, refresh };
+  const refreshError = failed && failed.key === key && failed.at === r.at ? `再読み込みできませんでした：${failed.error}` : undefined;
+  return { ...r, error: refreshError ?? r.error, loading: r.loading || refreshing, refresh };
 }
 
 /** The panel header's buttons: open on GitHub, and read again. */
