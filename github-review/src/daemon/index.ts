@@ -39,7 +39,7 @@ async function target(params: unknown, ctx: DaemonContext) {
     throw new ReviewError(ghError(e));
   }
   if (!pr) throw new ReviewError(`${repo} に Pull request #${number} はありません。`);
-  const clone = await current().cloneOf(repo);
+  const clone = await current().cloneOf((args, o) => ctx.github.read(args, o), repo);
   if (!clone) throw new ReviewError(`この working server の、Claude Code が信頼しているフォルダーに、${repo} の clone がありません。`);
   const head: PrHead = { number, branch: pr.branch, fork: pr.fork === true, ...(pr.head ? { head: pr.head } : {}) };
   return { clone, head };
