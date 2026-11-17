@@ -35,7 +35,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run typecheck
-      - run: npm test
+      # The tests of the .ts files (node --test), then those of the plugins' screens, drawn in happy-dom (vitest.config.ts).
+      - run: npm run test:node
+      - run: npm run test:web
       - run: npm run build
       - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: node scripts/release.ts

@@ -47,11 +47,13 @@ npm run build -w git          # git/dist/ に gasho-plugin.json、web.js、web.c
 npm run dev -w git            # 保存するたびにビルドし直す
 npm run check                 # どのプラグインも genres.json のジャンルを書いているか
 npm run typecheck
-npm test                      # .ts の処理のテスト（node --test）と、画面の部品のテスト（Vitest）
+npm test                      # npm run test:node と npm run test:web を順に流す
+npm run test:node             # .ts の処理のテスト（node --test）
+npm run test:web              # 画面の部品のテスト（Vitest）
 npx vitest run github         # 画面の部品のテストを、パスで絞って流す
 ```
 
-`npm test` は、`*/test/*.test.ts` を `node --test` で流し、続けて `*/test/*.test.tsx` を Vitest で流す。`.tsx` のテストは、画面の部品を happy-dom の上に描き、Testing Library で押したり文字を読んだりする。
+`npm run test:node` は `*/test/*.test.ts` を `node --test` で流し、`npm run test:web` は `*/test/*.test.tsx` を Vitest で流す。GitHub Actions も、この 2 つを別の step で流す。`.tsx` のテストは、画面の部品を happy-dom の上に描き、Testing Library で押したり文字を読んだりする。
 
 `@gasho/plugin-sdk` の hooks と部品は、Gasho の画面が実行時に渡すので、テストの中には無い。Vitest は、`@gasho/plugin-sdk` の import を `test/sdk.tsx` に向ける（`vitest.config.ts`）。
 

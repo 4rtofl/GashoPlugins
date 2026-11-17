@@ -21,7 +21,9 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces --if-present && tsc -p scripts && tsc -p test",
-    "test": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\" \"kanban/plugins/*/*.test.ts\" && vitest run",
+    "test": "npm run test:node && npm run test:web",
+    "test:node": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\" \"kanban/plugins/*/*.test.ts\"",
+    "test:web": "vitest run",
     "check": "node scripts/check.ts"
   },
   "devDependencies": {
