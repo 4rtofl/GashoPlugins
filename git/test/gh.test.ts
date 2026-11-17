@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkState, ghError, parseGhItemDetail, parseGhItems } from "../src/daemon/gh.ts";
+import { CallError, execError, fakeContext, loadDaemon, type FakeSession } from "../../test/daemon.ts";
 
 test("gh's issue and pull request lists are read, and anything odd is left out", () => {
   const json = JSON.stringify([
@@ -144,4 +145,44 @@ test("checks are summed up by their result", () => {
   assert.equal(checkState({ status: "QUEUED" }), "pending");
   assert.equal(checkState({ state: "SUCCESS" }), "success");
   assert.equal(checkState({ state: "EXPECTED" }), "pending");
+});
+
+const daemon = await loadDaemon("git");
+const repo = (name: string) => ({ owner: "o", name, url: `https://github.com/o/${name}` });
+const session: FakeSession = { cwd: "/w/app", github: repo("app"), repos: [{ path: "lib", github: repo("lib") }, { path: "local" }] };
+
+test("gh reads the repository of the session's folder, or of the one inside it the screen names; what else the screen sends is refused before gh runs", async () => {
+  const { ctx, calls } = fakeContext({ session, run: () => "[]" });
+  await daemon.call("list", { kind: "pulls", repo: "lib" }, ctx);
+  await daemon.call("item", { kind: "issues", number: 3 }, ctx).catch(() => undefined);
+  assert.deepEqual(
+    calls.map((c) => c.args[c.args.indexOf("--repo") + 1]),
+    ["o/lib", "o/app"],
+  );
+
+  const refused: [unknown, RegExp, FakeSession | undefined][] = [
+    [{ kind: "commits" }, /一覧の種類/, session],
+    [{ kind: "pulls", repo: "elsewhere" }, /このリポジトリは見つかりません/, session],
+    [{ kind: "pulls", repo: "local" }, /GitHub にありません/, session],
+    [{ kind: "pulls", repo: 5 }, /リポジトリの指定/, session],
+    [{ kind: "pulls" }, /このセッションは見つかりません/, undefined],
+  ];
+  for (const [params, reason, s] of refused) {
+    const f = fakeContext({ ...(s ? { session: s } : {}) });
+    await assert.rejects(daemon.call("list", params, f.ctx), (e) => e instanceof CallError && e.user && reason.test(e.message), JSON.stringify(params));
+    assert.deepEqual(f.calls, []);
+  }
+  for (const number of [0, 1.5, "3", 2e9]) {
+    const f = fakeContext({ session });
+    await assert.rejects(daemon.call("item", { kind: "issues", number }, f.ctx), /番号が正しくありません/);
+    assert.deepEqual(f.calls, []);
+  }
+});
+
+test("a failure of gh reaches the screen as what went wrong", async () => {
+  const failed = execError({ stderr: "HTTP 404: Not Found (https://api.github.com/repos/o/app)\n" });
+  const { ctx } = fakeContext({ session, run: () => failed });
+  for (const [method, params] of [["list", { kind: "issues" }], ["item", { kind: "pulls", number: 3 }]] as const) {
+    await assert.rejects(daemon.call(method, params, ctx), (e) => e instanceof CallError && e.user && e.message === ghError(failed));
+  }
 });

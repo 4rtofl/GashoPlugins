@@ -11,6 +11,7 @@ import { createWorktree, prWorktree, readClone, removeWorktree, ReviewError, typ
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
 import { fillTemplate, parseTemplates } from "../src/template.ts";
 import type { Listing, PrRow } from "../src/types.ts";
+import { CallError, execError, fakeContext, loadDaemon, type Run } from "../../test/daemon.ts";
 
 const run = promisify(execFile);
 
@@ -312,4 +313,35 @@ test("page: a pull request listed by several working servers shows once, with wh
   );
   assert.equal("place" in (page.requested[0]?.pr ?? {}), false);
   assert.equal(page.requestedMore, 4);
+});
+
+test("create and remove: the pull request is read from GitHub now, and nothing runs in git without it and a clone here", async () => {
+  const daemon = await loadDaemon("github-review");
+  const pull = { number: 3, title: "t", url: "https://github.com/o/r/pull/3", state: "OPEN", headRefName: "feat/3-x", repository: { nameWithOwner: "o/r" } };
+  const answer = (pullRequest: object | null) => JSON.stringify({ data: { repository: { pullRequest } } });
+  const started = async (run: Run) => {
+    const f = fakeContext({ run, folders: [] });
+    await daemon.start(f.ctx);
+    return f;
+  };
+  const refused = async (run: Run, params: unknown, reason: RegExp) => {
+    const f = await started(run);
+    try {
+      for (const method of ["create", "remove"]) {
+        await assert.rejects(daemon.call(method, params, f.ctx), (e) => e instanceof CallError && e.user && reason.test(e.message), `${method} ${JSON.stringify(params)}`);
+      }
+      // Only gh read GitHub: no git, in no folder.
+      assert.ok(f.calls.every((c) => c.via === "github.read"));
+      return f.calls;
+    } finally {
+      await daemon.stop();
+    }
+  };
+  assert.deepEqual(await refused(() => answer(pull), { repo: "--repo=x/y", number: 3 }, /リポジトリの指定/), []);
+  assert.deepEqual(await refused(() => answer(pull), { repo: "o/r", number: 0 }, /番号が正しくありません/), []);
+  await refused(() => answer(null), { repo: "o/r", number: 3 }, /o\/r に Pull request #3 はありません/);
+  await refused(() => execError({ stderr: "HTTP 502: Bad Gateway\n" }), { repo: "o/r", number: 3 }, /GitHub/);
+  const calls = await refused(() => answer(pull), { repo: "o/r", number: 3 }, /信頼しているフォルダーに、o\/r の clone がありません/);
+  // The branch and head come from GitHub as it is now, never from what gasho-daemon kept.
+  assert.equal((calls[0]?.options as { maxAgeSeconds?: number }).maxAgeSeconds, 0);
 });

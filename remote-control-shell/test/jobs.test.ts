@@ -6,6 +6,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { DEFAULT_SETTINGS, Shells, type ShellSettings } from "../src/daemon/jobs.ts";
 import type { ShellJob } from "../src/types.ts";
+import { CallError, fakeContext, loadDaemon } from "../../test/daemon.ts";
 
 const root = mkdtempSync(path.join(os.tmpdir(), "rcs-jobs-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -195,6 +196,34 @@ test("gasho-daemon's own variables do not reach a command", async () => {
     assert.ok(text.split("\n").includes(`PWD=${folder}`), text);
   } finally {
     await shells.stop();
+  }
+});
+
+test("what the panel sends is checked before a shell runs, and a record's id never names a file outside the plugin's folder", async () => {
+  const daemon = await loadDaemon("remote-control-shell");
+  const { folder, dataDir } = setup();
+  const { ctx } = fakeContext({ session: { cwd: folder, repos: [{ path: "lib" }] }, dataDir });
+  await daemon.start(ctx);
+  try {
+    const refused: [string, unknown, RegExp][] = [
+      ["run", { command: "  " }, /コマンドを入れてください/],
+      ["run", { command: "x".repeat(16_001) }, /コマンドが長すぎます（16,000文字まで）/],
+      ["run", { command: "echo a\0b" }, /NUL/],
+      ["run", { again: "../../x-000001" }, /記録の指定/],
+      ["signal", { job: "aaaaaa-000001", signal: "TERM" }, /合図の指定/],
+      ["signal", { job: "../aaaaaa-000001", signal: "KILL" }, /記録の指定/],
+      ["output", { job: "aaaaaa-000001/../../x" }, /記録の指定/],
+      ["clear", { job: "." }, /記録の指定/],
+      ["chdir", { repo: "elsewhere" }, /このリポジトリは見つかりません/],
+    ];
+    for (const [method, params, reason] of refused) {
+      await assert.rejects(daemon.call(method, params, ctx), (e) => e instanceof CallError && e.user && reason.test(e.message), `${method} ${JSON.stringify(params)}`);
+    }
+    await assert.rejects(daemon.call("run", { command: "true" }, fakeContext({ dataDir }).ctx), /このセッションは見つかりません/);
+    const view = (await daemon.call("watch", { offsets: { "../x": 0 }, waitMs: 0 }, ctx)) as { jobs: unknown[] };
+    assert.deepEqual(view.jobs, []);
+  } finally {
+    await daemon.stop();
   }
 });
 
