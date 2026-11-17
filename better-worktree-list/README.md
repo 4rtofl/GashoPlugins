@@ -4,7 +4,7 @@
 
 いまの Gasho のサイドバーは、どのリポジトリの worktree も1列に並べる。リポジトリが多いと、どの worktree がどのリポジトリのものか、どれで Claude が作業しているかが、一目では分からない。このプラグインは、worktree の行とセッション画面の上のタブはそのままに、行をカテゴリに分けて出す。
 
-プラグインの API 1.8 に対応した Gasho が要る（Gasho の PR #62）。サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を使う。Gasho の [docs/plugins.md](https://github.com/4rtoflow/Gasho/blob/main/docs/plugins.md) に書いてある。
+プラグインの API 1.8 に対応した Gasho が要る（Gasho の PR #62）。サイドバーの worktree の一覧の分け方（P18、`worktreeGroupings`）を使う。Gasho の [docs/plugins.md](https://github.com/4rtofl/Gasho/blob/main/docs/plugins.md) に書いてある。
 
 ## 決めたこと
 

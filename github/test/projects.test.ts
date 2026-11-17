@@ -22,7 +22,7 @@ test("the repository's projects and its owner's others are read (real output)", 
   // The linked one is not listed again among the owner's.
   assert.equal(p.owner.length, 14);
   assert.ok(!p.owner.some((x) => x.number === 4247));
-  assert.deepEqual(parseProjects(fixture("projects-empty.json")), { linked: [], owner: [], ownerLogin: "4rtoflow" });
+  assert.deepEqual(parseProjects(fixture("projects-empty.json")), { linked: [], owner: [], ownerLogin: "4rtofl" });
 });
 
 test("a board is read: its single select fields, the field its board view uses, and its items (real output)", () => {

@@ -8,14 +8,15 @@
     "better-worktree-list",
     "git",
     "github",
-    "github-almighty",
+    "github-implement",
     "github-review",
     "kanban",
     "pondering",
     "remote-control-shell",
     "session-list-rewind",
     "usage",
-    "vscode-dark-2026"
+    "vscode-dark-2026",
+    "worktree-status"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
@@ -24,7 +25,7 @@
     "check": "node scripts/check.ts"
   },
   "devDependencies": {
-    "@gasho/plugin-sdk": "npm:@4rtoflow/gasho-plugin-sdk@^1.11.0",
+    "@gasho/plugin-sdk": "npm:@4rtofl/gasho-plugin-sdk@^1.13.0",
     "@types/node": "^24.0.0",
     "@types/react": "19.3.0",
     "lucide-react": "^1.72.0",

@@ -179,6 +179,35 @@ export function ghError(e: unknown): string {
   return `GitHub から読み込めませんでした：${(first ?? "原因が分かりません").slice(0, 200)}`;
 }
 
+/**
+ * The query that reads the names GitHub has now for repositories named as their clones' origin says. A repository
+ * whose owner or name changed since (an organization renamed, say) still answers to the old name, but GitHub's search
+ * takes only the new one, and the pull requests it gives say only the new one.
+ */
+export function namesArgs(repos: readonly string[]): string[] {
+  const decls: string[] = [];
+  const fields: string[] = [];
+  const vars: string[] = [];
+  repos.forEach((r, i) => {
+    const [owner, name] = r.split("/") as [string, string];
+    decls.push(`$o${i}: String!`, `$n${i}: String!`);
+    fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { nameWithOwner }`);
+    vars.push("-f", `o${i}=${owner}`, "-f", `n${i}=${name}`);
+  });
+  return ["api", "graphql", "-f", `query=query(${decls.join(", ")}) { ${fields.join(" ")} }`, ...vars];
+}
+
+/** The answer of namesArgs' query: each repository GitHub found, by the name it was asked with. */
+export function parseNames(json: string, repos: readonly string[]): Map<string, string> {
+  const data = (JSON.parse(json) as { data?: Record<string, unknown> | null }).data ?? {};
+  const out = new Map<string, string>();
+  repos.forEach((r, i) => {
+    const name = str((data[`r${i}`] as { nameWithOwner?: unknown } | null)?.nameWithOwner);
+    if (name && /^[^/\s]+\/[^/\s]+$/.test(name)) out.set(r, name);
+  });
+  return out;
+}
+
 /** The query that reads one pull request's head before its worktree is made or removed. */
 export function headArgs(repo: string, number: number): string[] {
   const [owner, name] = repo.split("/") as [string, string];

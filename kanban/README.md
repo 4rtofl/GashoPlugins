@@ -1,6 +1,6 @@
 # カンバン（kanban）
 
-サイドバーの「カンバン」で、選んだ repo の worktree と自分の Pull request を、5つの列（自分の番、エージェント作業中、GitHub 待ち、レビュー待ち、完了）のボードに並べる。Gasho の PR #8（元は [4rtoflow/Dashboard](https://github.com/4rtoflow/Dashboard)）をプラグインに移したもの。カードをどの列に置くかと、カードのメニューから Claude に送る指示は、人によって進め方が違うので、repo ごとに選んだカンバン用のプラグイン（書き方は [plugins/AGENTS.md](plugins/AGENTS.md)）が決める。カンバン用のプラグインは、カンバンのビルドに入れず、working server の置き場のフォルダーから読み込む（下の「カンバン用のプラグインの置き場」）。プラグインを選んでいない repo のカードは、「自分の番」に並べる。
+サイドバーの「カンバン」で、選んだ repo の worktree と自分の Pull request を、5つの列（自分の番、エージェント作業中、GitHub 待ち、レビュー待ち、完了）のボードに並べる。Gasho の PR #8（元は [4rtofl/Dashboard](https://github.com/4rtofl/Dashboard)）をプラグインに移したもの。カードをどの列に置くかと、カードのメニューから Claude に送る指示は、人によって進め方が違うので、repo ごとに選んだカンバン用のプラグイン（書き方は [plugins/AGENTS.md](plugins/AGENTS.md)）が決める。カンバン用のプラグインは、カンバンのビルドに入れず、working server の置き場のフォルダーから読み込む（下の「カンバン用のプラグインの置き場」）。プラグインを選んでいない repo のカードは、「自分の番」に並べる。
 
 - 見る repo は、「見る repo」から working server ごとに選ぶ（1台に30まで）。選べるのは、Gasho がセッションを起動できるフォルダー（Claude Code が信頼しているフォルダー）にある GitHub の repo で、worktree がいくつあっても、repo ごとに primary checkout の1つにまとめる。選んだ repo には、カードを置く列を決めるカンバン用のプラグインも選べる。選んだ repo とプラグインは、working server のこのプラグイン専用のフォルダー（`~/.local/share/gasho/plugin-data/kanban/watched.json`）に覚える。選び直すと、ホームの「最近の操作」に残る
 - daemon の部分が、repo ごとに `git worktree list` と、working server の gh で自分の Pull request（開いているものと閉じたもの）を読む。gh は、gasho-daemon に実行してもらう（`ctx.github`）。読むのは、どこかのブラウザーでカンバンを開いているあいだだけで、1分に1回まで（画面が1分おきに呼び、前に読み始めてから50秒たっていれば読み直す）。「今すぐ見直す」で、gasho-daemon が覚えている gh の結果を使わずに、すぐに読み直す（10秒以内に読み始めたばかりなら読まない）。読めなかった repo は、前に読めたカードを出したまま、理由を上に出す

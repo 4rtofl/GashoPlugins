@@ -136,8 +136,8 @@ test("git's worktree list, GitHub remotes and gh's pull requests are read, and a
   const porcelain = ["worktree /r/main", "HEAD a", "branch refs/heads/main", "", "worktree /r/wt", "HEAD b", "branch refs/heads/feat/1-x", "", "worktree /r/d", "HEAD c", "detached", ""].join("\n");
   assert.deepEqual(parseWorktrees(porcelain), { primary: { path: "/r/main", branch: "main" }, worktrees: [{ branch: "feat/1-x", path: "/r/wt" }] });
   assert.equal(parseWorktrees("worktree /r/bare.git\nbare\n").primary?.bare, true);
-  assert.equal(parseGitHubUrl("git@github.com:4rtoflow/Gasho.git\n"), "4rtoflow/Gasho");
-  assert.equal(parseGitHubUrl("https://user:token@github.com/4rtoflow/GashoPlugins"), "4rtoflow/GashoPlugins");
+  assert.equal(parseGitHubUrl("git@github.com:4rtofl/Gasho.git\n"), "4rtofl/Gasho");
+  assert.equal(parseGitHubUrl("https://user:token@github.com/4rtofl/GashoPlugins"), "4rtofl/GashoPlugins");
   assert.equal(parseGitHubUrl("https://gitlab.com/a/b.git"), undefined);
   assert.deepEqual(parsePrs([pr({ isDraft: false }), { ...pr(), url: "javascript:alert(1)" }, null]), [pr()]);
   assert.deepEqual(

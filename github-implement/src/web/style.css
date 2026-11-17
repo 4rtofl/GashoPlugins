@@ -1,0 +1,11 @@
+/* The styles of github-implement: the Tailwind classes it uses, in Gasho's theme (see @gasho/plugin-sdk/plugin.css). */
+@import "@gasho/plugin-sdk/plugin.css";
+@source "../";
+
+/* The #numbers of the conversation, in the color of a link (src/web/item/sections/hovercard.tsx). */
+::highlight(github-implement-ref) {
+  color: var(--color-sky-600);
+}
+:is(.dark *)::highlight(github-implement-ref) {
+  color: var(--color-sky-400);
+}

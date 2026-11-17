@@ -13,7 +13,7 @@ test("gh run list's runs are read (real output), and anything odd is left out", 
     number: 82,
     workflow: "Plugins",
     workflowId: 418449472,
-    title: "Merge pull request #90 from 4rtoflow/feat/81-tab-icon",
+    title: "Merge pull request #90 from 4rtofl/feat/81-tab-icon",
     branch: "main",
     event: "push",
     state: "success",
@@ -21,7 +21,7 @@ test("gh run list's runs are read (real output), and anything odd is left out", 
     createdAt: "2026-11-15T12:20:55Z",
     startedAt: "2026-11-15T12:20:55Z",
     updatedAt: "2026-11-15T12:21:25Z",
-    url: "https://github.com/4rtoflow/GashoPlugins/actions/runs/43713374887",
+    url: "https://github.com/4rtofl/GashoPlugins/actions/runs/43713374887",
   });
   assert.deepEqual(parseRuns(JSON.stringify([{ databaseId: 1, url: "javascript:alert(1)" }, { url: "https://github.com/o/r/actions/runs/2" }, null])), []);
   assert.deepEqual(parseRuns("not json"), []);
@@ -55,7 +55,7 @@ test("gh run view's run is read with its jobs and steps (real output)", () => {
   assert.ok(job);
   assert.equal(job.name, "plugins");
   assert.equal(job.state, "failure");
-  assert.match(job.url ?? "", /^https:\/\/github\.com\/4rtoflow\/GashoPlugins\/actions\/runs\/43632505661\/job\/132562013692$/);
+  assert.match(job.url ?? "", /^https:\/\/github\.com\/4rtofl\/GashoPlugins\/actions\/runs\/43632505661\/job\/132562013692$/);
   assert.deepEqual(
     job.steps.filter((s) => s.state !== "success").map((s) => [s.number, s.name, s.state]),
     [
@@ -98,15 +98,15 @@ test("a run is read with the end of its failed jobs' logs; gh without --allow-es
       },
     },
   };
-  const run = await viewRun(ctx as never, "4rtoflow/GashoPlugins", 43632505661, { maxAgeSeconds: 10 });
+  const run = await viewRun(ctx as never, "4rtofl/GashoPlugins", 43632505661, { maxAgeSeconds: 10 });
   assert.equal(run.jobs[0]?.log?.at(-1), "Error: Process completed with exit code 1.");
   assert.deepEqual(asked.slice(1), [
-    ["api", "--allow-escape-sequences", "repos/4rtoflow/GashoPlugins/actions/jobs/132562013692/logs"],
-    ["api", "repos/4rtoflow/GashoPlugins/actions/jobs/132562013692/logs"],
+    ["api", "--allow-escape-sequences", "repos/4rtofl/GashoPlugins/actions/jobs/132562013692/logs"],
+    ["api", "repos/4rtofl/GashoPlugins/actions/jobs/132562013692/logs"],
   ]);
   const gone = await viewRun(
     { github: { read: async (args: string[]) => (args[0] === "run" ? { stdout: fixture("run-failed.json"), stderr: "" } : Promise.reject(Object.assign(new Error("x"), { stderr: "gh: Not Found (HTTP 410)" }))) } } as never,
-    "4rtoflow/GashoPlugins",
+    "4rtofl/GashoPlugins",
     1,
     { maxAgeSeconds: 10 },
   );

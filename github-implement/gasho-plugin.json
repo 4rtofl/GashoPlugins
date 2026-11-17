@@ -1,0 +1,38 @@
+{
+  "id": "github-implement",
+  "name": "GitHub Implement",
+  "version": "1.2.0",
+  "description": "worktree の Issue と Pull request を、セッションと並んだタブで読み、assign・コメント・本文の変更などの操作をする（working server の gh を使う）",
+  "genre": "integration",
+  "api": "1.10",
+  "permissions": ["worktree.remove"],
+  "web": {
+    "js": "web.js",
+    "css": "web.css"
+  },
+  "daemon": {
+    "js": "daemon.js"
+  },
+  "methods": {
+    "read": {
+      "kind": "read",
+      "timeoutSeconds": 30
+    },
+    "write": {
+      "kind": "write",
+      "timeoutSeconds": 60
+    }
+  },
+  "settings": {
+    "refreshSeconds": {
+      "type": "number",
+      "scope": "server",
+      "default": 60,
+      "min": 0,
+      "max": 3600,
+      "step": 10,
+      "label": "GitHub から読み直す間隔（秒）",
+      "description": "ここ 24 時間に開いた worktree の Issue と Pull request を、この間隔で読み直す。読み直すたびに worktree 1 つにつき GitHub の API を 1 点使い、Issue や Pull request が変わったときと、前に読んでから 10 分たったときは最大 4 点使う。上限は 1 時間 5000 点（ほかの gh と分け合う）。worktree が多いときは、下の表を見て間隔を延ばす。0 にすると、タブを開いたときと再読み込みを押したときだけ読む"
+    }
+  }
+}

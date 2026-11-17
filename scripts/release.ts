@@ -174,7 +174,7 @@ const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex")
 function main(): void {
   const root = path.resolve(import.meta.dirname, "..");
   const dry = process.argv.includes("--dry-run");
-  const repo = process.env.GITHUB_REPOSITORY ?? "4rtoflow/GashoPlugins";
+  const repo = process.env.GITHUB_REPOSITORY ?? "4rtofl/GashoPlugins";
   const target = process.env.GITHUB_SHA;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugins-release-"));
   const gh = (args: string[]) => execFileSync("gh", [...args, "--repo", repo], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });

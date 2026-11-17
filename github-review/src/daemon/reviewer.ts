@@ -5,7 +5,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
-import { ghError, listArgs, parseList, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
+import { ghError, listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
 import { prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, type Clone, type Exec } from "./git.ts";
 
 export type GitHubRead = (args: string[], o?: { maxAgeSeconds?: number; timeoutMs?: number; maxBuffer?: number }) => Promise<{ stdout: string }>;
@@ -14,6 +14,8 @@ export type GitHubRead = (args: string[], o?: { maxAgeSeconds?: number; timeoutM
 const OPTIONS_MAX_AGE_MS = 5 * 60_000;
 /** Clones read at the same time (each is `git worktree list`). */
 const PARALLEL = 4;
+/** The names GitHub has for the repositories of the clones' origins are read again when this old. */
+const NAMES_MAX_AGE_MS = 60 * 60_000;
 
 const sameRepo = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
@@ -39,6 +41,8 @@ export class Reviewer {
   private loaded: Promise<void> | undefined;
   private options: { at: number; folders: string; list: RepoOption[] } | undefined;
   private listing: Promise<RepoOption[]> | undefined;
+  /** By the name an origin says (in lower case), the name GitHub has now, and when it was read. */
+  private names = new Map<string, { name: string; at: number }>();
 
   constructor(deps: ReviewerDeps) {
     this.deps = deps;
@@ -99,6 +103,35 @@ export class Reviewer {
     return [...this.watched];
   }
 
+  /**
+   * The repositories with the names GitHub has now: an origin may still say a name from before a repository or its
+   * owner was renamed, which GitHub's search does not take and its pull requests do not say. One GitHub does not find,
+   * or when GitHub cannot be read, keeps its origin's name.
+   */
+  private async named(github: GitHubRead, options: RepoOption[]): Promise<RepoOption[]> {
+    const stale = [...new Set(options.flatMap((o) => (o.github ? [o.github] : [])))].filter((r) => {
+      const n = this.names.get(r.toLowerCase());
+      return !n || this.now() - n.at >= NAMES_MAX_AGE_MS;
+    });
+    if (stale.length > 0) {
+      let json: string | undefined;
+      try {
+        json = (await github(namesArgs(stale), { timeoutMs: 20_000 })).stdout;
+      } catch (e) {
+        // GitHub answers the repositories it finds and fails for the others, with the answer on its output.
+        const out = (e as { stdout?: unknown } | null)?.stdout;
+        if (typeof out === "string" && out.includes('"data"')) json = out;
+        else this.deps.log("github-review: could not read the names of the repositories on GitHub", e);
+      }
+      if (json !== undefined) {
+        const found = parseNames(json, stale);
+        // One GitHub does not find keeps its own name, until it is read again.
+        for (const r of stale) this.names.set(r.toLowerCase(), { name: found.get(r) ?? r, at: this.now() });
+      }
+    }
+    return options.map((o) => (o.github ? { ...o, github: this.names.get(o.github.toLowerCase())?.name ?? o.github } : o));
+  }
+
   /** The clones of the repositories on GitHub, as they are now; a clone git cannot read is left out. */
   private async clones(options: RepoOption[]): Promise<Clone[]> {
     const queue = options.flatMap((o) => (o.github ? [{ path: o.path, github: o.github }] : []));
@@ -122,10 +155,10 @@ export class Reviewer {
     return all.find((c) => this.watched.includes(c.path)) ?? all[0];
   }
 
-  /** The clone of `repo` as it is now, for making or removing a worktree. */
-  async cloneOf(repo: string): Promise<Clone | undefined> {
+  /** The clone of `repo` (the name GitHub has now) as it is now, for making or removing a worktree. */
+  async cloneOf(github: GitHubRead, repo: string): Promise<Clone | undefined> {
     await this.load();
-    const option = (await this.repoOptions()).filter((o) => o.github && sameRepo(o.github, repo));
+    const option = (await this.named(github, await this.repoOptions())).filter((o) => o.github && sameRepo(o.github, repo));
     const chosen = option.find((o) => this.watched.includes(o.path)) ?? option[0];
     return chosen?.github ? readClone(this.deps.exec, { path: chosen.path, github: chosen.github }) : undefined;
   }
@@ -139,10 +172,13 @@ export class Reviewer {
     await this.load();
     const q = typeof words === "string" ? words.trim() : "";
     if (q.length > MAX_QUERY || /[\r\n]/.test(q)) throw new ReviewError(`検索の語が正しくありません（${MAX_QUERY} 文字まで、1 行）。`);
-    const options = await this.repoOptions().catch((e: unknown) => {
-      this.deps.log("github-review: could not list the repositories", e);
-      return this.options?.list ?? [];
-    });
+    const options = await this.named(
+      github,
+      await this.repoOptions().catch((e: unknown) => {
+        this.deps.log("github-review: could not list the repositories", e);
+        return this.options?.list ?? [];
+      }),
+    );
     const clones = await this.clones(options);
     const errors: string[] = [];
     const watchedRepos: string[] = [];
