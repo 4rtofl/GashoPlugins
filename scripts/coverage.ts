@@ -144,6 +144,8 @@ function main(): void {
         "--experimental-test-coverage",
         "--test-coverage-exclude=**/test/**",
         "--test-coverage-exclude=**/node_modules/**",
+        // An exclude given here replaces Node's default one of the test files; those outside test/ are in kanban/plugins/*/.
+        "--test-coverage-exclude=**/*.test.ts",
         "--test-reporter=spec",
         "--test-reporter-destination=stdout",
         "--test-reporter=lcov",
