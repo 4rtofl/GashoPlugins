@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
-import type { GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
+import type { DaemonContext, GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
 import { itemRead, readItems, type Ctx } from "../src/daemon/core.ts";
 import { branchArg, branchNumber, detailArgs, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
-import { editArgs } from "../src/daemon/ops/edit.ts";
+import edit, { editArgs } from "../src/daemon/ops/edit.ts";
 import { stateArgs } from "../src/daemon/ops/state.ts";
 import { numberFrom } from "../src/web/number.ts";
 
@@ -93,6 +93,31 @@ test("a body comes whole, as the edit box starts from it and saves it back", () 
   const item = parseDetail(json, "issues", [comments]);
   assert.equal(item?.body, body);
   assert.ok((item?.comments?.[0]?.body.length ?? 0) < 70_000);
+});
+
+test("an edit that started from another title or body than GitHub's now is refused before anything is written", async () => {
+  const github = { title: "t", body: "b\r\n- [x] done" };
+  const calls: { args: string[]; options?: GitHubReadOptions }[] = [];
+  const writes: string[][] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[], options?: GitHubReadOptions) => (calls.push({ args, ...(options ? { options } : {}) }), { stdout: JSON.stringify(github), stderr: "" }),
+      write: async (args: string[]) => (writes.push(args), { stdout: "", stderr: "" }),
+    },
+    log() {},
+  } as unknown as DaemonContext;
+  await edit.run({ repo: "o/r", kind: "pulls", number: 3, body: "new", was: { body: "b\r\n- [x] done" } }, ctx);
+  // GitHub's body is read anew, not from what gasho-daemon kept.
+  assert.deepEqual(calls, [{ args: ["pr", "view", "3", "--repo", "o/r", "--json", "body"], options: { repo: "o/r", maxAgeSeconds: 0 } }]);
+  await assert.rejects(edit.run({ repo: "o/r", kind: "pulls", number: 3, body: "new", was: { body: "b\r\n- [ ] done" } }, ctx), /本文が変わりました/);
+  await assert.rejects(edit.run({ repo: "o/r", kind: "issues", number: 3, title: "u", was: { title: "s" } }, ctx), /題が変わりました/);
+  // Assignees and labels start from nothing typed: they are written without a read.
+  await edit.run({ repo: "o/r", kind: "issues", number: 3, addLabels: ["bug"] }, ctx);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(writes, [
+    ["pr", "edit", "3", "--repo", "o/r", "--body=new"],
+    ["issue", "edit", "3", "--repo", "o/r", "--add-label=bug"],
+  ]);
 });
 
 test("the parts of detail/ add their fields only for the kinds they name", () => {

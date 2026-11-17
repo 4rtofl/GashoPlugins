@@ -3,7 +3,7 @@
 // as the merge), and the tabs of tabs/ (the conversation, and for a pull request its commits, checks and files). After
 // a change, gasho-daemon drops what it kept of the repository, so reading again shows GitHub as it is now.
 import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
 import { readOp } from "../daemon.ts";
@@ -26,9 +26,11 @@ const SECTIONS = partsOf(import.meta.glob<{ default: ItemSection }>("./sections/
 const NAME: Record<GitHubKind, string> = { issues: "Issue", pulls: "Pull request" };
 
 export function ItemView(props: WorktreeViewProps) {
+  // Gasho keeps one view per worktree, so moving to another number of the same worktree only changes params: the key
+  // makes the screen anew, and nothing typed or asked for one number (a title, a merge's confirmation) shows on another.
   return (
     <ToastProvider>
-      <ItemScreen {...props} />
+      <ItemScreen key={`${props.params.kind}#${props.params.number}`} {...props} />
     </ToastProvider>
   );
 }
@@ -38,7 +40,11 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
   const number = Number(params.number);
   const valid = Number.isInteger(number) && number >= 1 && number <= 1e9;
   const daemon = useDaemonReady(machine.id);
-  const github = worktree.github;
+  // Right after its working server comes back, Gasho sends the worktree without its GitHub repository for a few seconds:
+  // the one known before stays, so that the screen (and what is typed on it) does not go away meanwhile.
+  const lastGithub = useRef(worktree.github);
+  if (worktree.github) lastGithub.current = worktree.github;
+  const github = worktree.github ?? lastGithub.current;
   const repo = github ? `${github.owner}/${github.name}` : undefined;
   const clock = useNow(60_000);
   const options = useRefreshOptions();
@@ -52,7 +58,11 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
   });
   // Not before the read: what GitHub changed since the clock last ticked would read as "in 1 minute".
   const now = Math.max(clock, r.at ?? 0);
-  const item = r.data;
+  // While the daemon part is not ready (the working server offline for a while), nothing is read and r.data is none: the
+  // item read before stays on the screen, and with it what is being typed.
+  const last = useRef<GitHubItemDetail>(undefined);
+  if (r.data) last.current = r.data;
+  const item = r.data ?? last.current;
   const url = item?.url ?? (github && valid ? `${github.url}/${kind === "issues" ? "issues" : "pull"}/${number}` : undefined);
 
   return (
@@ -161,36 +171,55 @@ function Detail() {
 
 function Title() {
   const { item, where, busy, run } = useItem();
-  const [draft, setDraft] = useState<string>();
-  if (draft === undefined) {
+  // What is typed, and GitHub's title when the edit started: the daemon part refuses to save over another one.
+  const [edit, setEdit] = useState<{ draft: string; from: string }>();
+  if (edit === undefined) {
     return (
       <div className="flex items-start gap-2">
         <h2 className="min-w-0 flex-1 text-lg leading-snug font-semibold break-words">{item.title}</h2>
-        <Button variant="ghost" size="icon" onClick={() => setDraft(item.title)} aria-label="題を変える" title="題を変える">
+        <Button variant="ghost" size="icon" onClick={() => setEdit({ draft: item.title, from: item.title })} aria-label="題を変える" title="題を変える">
           <Pencil />
         </Button>
       </div>
     );
   }
-  const save = async () => {
+  const { draft, from } = edit;
+  const changed = from !== item.title;
+  // `base`: GitHub's title the draft is saved over.
+  const save = async (base: string) => {
     const ok = await run({
       id: "title",
       op: "edit",
-      params: { title: draft },
+      params: { title: draft, was: { title: base } },
       summary: `#${where.number} の題を変える`,
       done: "題を変えました",
-      undo: { op: "edit", params: { title: item.title }, summary: `#${where.number} の題を戻す` },
+      undo: { op: "edit", params: { title: base }, summary: `#${where.number} の題を戻す` },
     });
-    if (ok) setDraft(undefined);
+    if (ok) setEdit(undefined);
   };
   return (
     <div className="space-y-2">
-      <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="題" className={INPUT} maxLength={256} />
+      <input value={draft} onChange={(e) => setEdit({ draft: e.target.value, from })} aria-label="題" className={INPUT} maxLength={256} />
+      {changed && (
+        <Alert tone="warning">
+          <p>
+            編集を始めたあとに、GitHub で題が「<span className="break-words">{item.title}</span>」に変わりました。このまま保存すると、その変更は消えます。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="xs" onClick={() => setEdit({ draft: item.title, from: item.title })} disabled={busy !== undefined}>
+              今の題から書き直す
+            </Button>
+            <Button size="xs" onClick={() => void save(item.title)} disabled={busy !== undefined || !draft.trim() || draft === item.title}>
+              自分の題で上書きする
+            </Button>
+          </div>
+        </Alert>
+      )}
       <div className="flex gap-2">
-        <Button variant="primary" onClick={() => void save()} isLoading={busy === "title"} loadingText="保存しています…" disabled={busy !== undefined || !draft.trim() || draft === item.title}>
+        <Button variant="primary" onClick={() => void save(from)} isLoading={busy === "title"} loadingText="保存しています…" disabled={busy !== undefined || changed || !draft.trim() || draft === item.title}>
           保存する
         </Button>
-        <Button onClick={() => setDraft(undefined)} disabled={busy === "title"}>
+        <Button onClick={() => setEdit(undefined)} disabled={busy === "title"}>
           やめる
         </Button>
       </div>
