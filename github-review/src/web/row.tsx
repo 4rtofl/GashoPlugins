@@ -2,7 +2,8 @@
 // author, when it was opened, its review decision and its comments), where the Agent's review of it is (verdict.ts), the
 // worktrees it has on the working servers, and its buttons: "マージしてもらう", "差し戻す" or "修正してもらう" for the
 // verdict, "worktree を作る" (with the template to send) when it has none, "開く" (or, in the lower part of the page,
-// "新たにセッションを作成する") and "片付ける" when it has one. Pressing the row opens its side panel (a page on a phone).
+// "新たにセッションを作成する") and "片付ける" when it has one, and "レビューする" (with the template to send) on my own
+// open one with a worktree. Pressing the row opens its side panel (a page on a phone).
 import {
   Check,
   ChevronDown,
@@ -15,6 +16,7 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
   MessageSquare,
+  ScanSearch,
   Trash2,
   Undo2,
   Wrench,
@@ -28,7 +30,7 @@ import { askEffort, askInstruction, type MergeMethod } from "../instructions.ts"
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
 import { askOf, type AskKind, type ReviewProgress } from "../verdict.ts";
-import { askAgent, createWorktree, followCleanup, newSessionIn, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
+import { askAgent, createWorktree, followCleanup, newSessionIn, reviewIn, openWorktree, progressOf, removeWorktree, sessionsIn, type Item, type Spot, type Tools } from "./actions";
 import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
@@ -230,11 +232,46 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
         ) : (
           <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(item, s, tools))} />
         )}
+        <ReviewMenu item={item} />
         {review.length > 0 && <SpotButton label="片付ける" icon={<Trash2 />} spots={review} disabled={off} onPick={(s) => run(pr.url, () => removeWorktree(item, s, tools))} />}
       </div>
     );
   }
-  return <CreateMenu item={item} disabled={off || spots.length === 0} />;
+  return (
+    <TemplateMenu
+      label="worktree を作る"
+      icon={<FolderGit2 />}
+      spots={spots}
+      disabled={off || spots.length === 0}
+      heading={(s) => (spots.length > 1 ? `${s.machine.name} に作り、送る指示` : "作ってセッションを起動し、送る指示")}
+      none
+      onPick={(s, t) => run(pr.url, () => createWorktree(item, s, t, tools))}
+    />
+  );
+}
+
+/**
+ * "レビューする" on my own open pull request with a worktree (the one I made it in, so "worktree を作る" is not there):
+ * a new session in it gets the template. Off while a session there works, as its review would not show apart.
+ */
+export function ReviewMenu({ item }: { item: Item }) {
+  const shared = useContext(RowContext);
+  const { pr, spots } = item;
+  const placed = spots.filter((s) => s.worktree);
+  if (!shared || !pr.own || pr.state !== "open" || placed.length === 0 || shared.templates.length === 0) return null;
+  const { tools, run } = shared;
+  const reviewing = progressOf(item) === "reviewing";
+  return (
+    <TemplateMenu
+      label="レビューする"
+      icon={<ScanSearch />}
+      spots={placed}
+      disabled={shared.busy.has(pr.url) || reviewing}
+      {...(reviewing ? { title: "worktree のセッションが作業しています" } : {})}
+      heading={(s) => (placed.length > 1 ? `${s.machine.name} の worktree で新しいセッションを起動し、送る指示` : "worktree で新しいセッションを起動し、送る指示")}
+      onPick={(s, t) => t && run(pr.url, () => reviewIn(item, s, t, tools))}
+    />
+  );
 }
 
 const cannotLaunch = "この working server では、Gasho からセッションを起動できません。";
@@ -325,17 +362,34 @@ function SpotButton({
   );
 }
 
-/** "worktree を作る": the template to send to the session started there, on each working server with a clone. */
-function CreateMenu({ item, disabled }: { item: Item; disabled: boolean }) {
+/** A menu of the templates to send to a session started on each working server (`none`: "何も送らない" first). */
+function TemplateMenu({
+  label,
+  icon,
+  spots,
+  disabled,
+  title,
+  heading,
+  none,
+  onPick,
+}: {
+  label: string;
+  icon: ReactNode;
+  spots: Spot[];
+  disabled: boolean;
+  title?: string;
+  heading: (s: Spot) => string;
+  none?: boolean;
+  onPick: (s: Spot, t: Template | undefined) => void;
+}) {
   const shared = useContext(RowContext);
   if (!shared) return null;
-  const { tools, templates, run } = shared;
-  const { pr, spots } = item;
+  const choices = none ? [undefined, ...shared.templates] : shared.templates;
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <Button size="sm" variant="primary" leftIcon={<FolderGit2 />} disabled={disabled}>
-          worktree を作る
+        <Button size="sm" variant="primary" leftIcon={icon} disabled={disabled} title={title}>
+          {label}
           <ChevronDown className="ml-0.5 inline size-3.5" />
         </Button>
       </DropdownMenu.Trigger>
@@ -345,17 +399,11 @@ function CreateMenu({ item, disabled }: { item: Item; disabled: boolean }) {
             <DropdownMenu.Group key={s.machine.id}>
               {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
               <DropdownMenu.Label className="px-2.5 pt-1 pb-1.5 text-[11px] text-muted-foreground">
-                {spots.length > 1 ? `${s.machine.name} に作り、送る指示` : "作ってセッションを起動し、送る指示"}
+                {heading(s)}
                 {!s.machine.canLaunch && <span className="block text-amber-700 dark:text-amber-300">{cannotLaunch}</span>}
               </DropdownMenu.Label>
-              {[undefined, ...templates].map((t, j) => (
-                <DropdownMenu.Item
-                  key={j}
-                  disabled={!s.machine.canLaunch}
-                  onSelect={() => run(pr.url, () => createWorktree(item, s, t, tools))}
-                  className={cn(MENU_ITEM, !t && "text-muted-foreground")}
-                  title={t?.body}
-                >
+              {choices.map((t, j) => (
+                <DropdownMenu.Item key={j} disabled={!s.machine.canLaunch} onSelect={() => onPick(s, t)} className={cn(MENU_ITEM, !t && "text-muted-foreground")} title={t?.body}>
                   {t ? t.name : "何も送らない"}
                 </DropdownMenu.Item>
               ))}

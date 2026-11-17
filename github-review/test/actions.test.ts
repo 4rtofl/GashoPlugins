@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
-import { createWorktree, newSessionIn, openWorktree, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "../src/web/actions.ts";
+import { createWorktree, newSessionIn, openWorktree, reviewIn, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "../src/web/actions.ts";
 import type { Created, ProjectFiles } from "../src/types.ts";
 
 const PR = { repo: "o/r", number: 5, title: "直す", url: "https://github.com/o/r/pull/5", branch: "feat/5-fix" } as Item["pr"];
@@ -174,12 +174,14 @@ test("create: a fork's pull request starts and gets the template once the person
   assert.match(f.sent[0] ?? "", /^s-new: #5 をレビュー\n/);
 });
 
-test("open, new session and the Agent's buttons: a session started later in a fork's worktree is asked about too, one there already is not", async () => {
+test("open, new session, レビューする: a session started later in a fork's worktree is asked about too, one there already is not", async () => {
   const f = fake({ fork: { files: [], start: false } });
   await openWorktree(f.item, f.spot, f.tools);
   await newSessionIn(f.item, f.spot, f.tools);
-  assert.equal(f.asked.length, 2);
+  await reviewIn(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.equal(f.asked.length, 3);
   assert.deepEqual(f.launched, []);
+  assert.deepEqual(f.sent, []);
   assert.deepEqual(f.opened, []);
 
   const g = fake({ fork: { files: [], start: false }, sessions: [{ sessionId: "s-last", cwd: DIR, managed: true }] });
