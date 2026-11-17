@@ -1,6 +1,8 @@
 // GitHub Projects of a repository: those linked to it and the other ones of its owner (one GraphQL query), and one of
 // them as a board: its single select fields (what the columns can be made of) and its items with the options chosen in
 // them, read 100 at a time. gh's login needs read:project; without it, the answer says how to add it.
+// The owner is read as the repository's: `repository(owner:, name:)` still finds a repository by the name its clone's
+// origin says after its owner was renamed, while `repositoryOwner(login:)` finds no one by the old login.
 import type { Board, BoardField, BoardItem, ProjectRef, Projects } from "../types.ts";
 import { arr, githubUrl, missingScope, num, parseJson, rec, str, type Gh } from "./gh.ts";
 
@@ -13,33 +15,36 @@ const PROJECT_FIELDS = "number title url closed shortDescription updatedAt items
 export const PROJECTS_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
     projectsV2(first: ${PROJECTS_MAX}, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { ${PROJECT_FIELDS} } }
-  }
-  repositoryOwner(login: $owner) {
-    login
-    ... on ProjectV2Owner {
-      projectsV2(first: ${PROJECTS_MAX}, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { ${PROJECT_FIELDS} } }
+    owner {
+      login
+      ... on ProjectV2Owner {
+        projectsV2(first: ${PROJECTS_MAX}, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { ${PROJECT_FIELDS} } }
+      }
     }
   }
 }`;
 
-export const BOARD_QUERY = `query($owner: String!, $number: Int!, $cursor: String) {
-  repositoryOwner(login: $owner) {
-    ... on ProjectV2Owner {
-      projectV2(number: $number) {
-        number title url closed shortDescription
-        fields(first: 50) { nodes { __typename ... on ProjectV2SingleSelectField { id name options { id name color } } } }
-        views(first: 20) { nodes { layout verticalGroupByFields(first: 1) { nodes { ... on ProjectV2SingleSelectField { id } } } } }
-        items(first: 100, after: $cursor) {
-          pageInfo { hasNextPage endCursor }
-          nodes {
-            id type isArchived
-            content {
-              __typename
-              ... on Issue { number title url state stateReason repository { nameWithOwner } assignees(first: 5) { nodes { login } } }
-              ... on PullRequest { number title url state isDraft repository { nameWithOwner } assignees(first: 5) { nodes { login } } }
-              ... on DraftIssue { title assignees(first: 5) { nodes { login } } }
+export const BOARD_QUERY = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    owner {
+      ... on ProjectV2Owner {
+        projectV2(number: $number) {
+          number title url closed shortDescription
+          fields(first: 50) { nodes { __typename ... on ProjectV2SingleSelectField { id name options { id name color } } } }
+          views(first: 20) { nodes { layout verticalGroupByFields(first: 1) { nodes { ... on ProjectV2SingleSelectField { id } } } } }
+          items(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id type isArchived
+              content {
+                __typename
+                ... on Issue { number title url state stateReason repository { nameWithOwner } assignees(first: 5) { nodes { login } } }
+                ... on PullRequest { number title url state isDraft repository { nameWithOwner } assignees(first: 5) { nodes { login } } }
+                ... on DraftIssue { title assignees(first: 5) { nodes { login } } }
+              }
+              fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { optionId field { ... on ProjectV2SingleSelectField { id } } } } }
             }
-            fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { optionId field { ... on ProjectV2SingleSelectField { id } } } } }
           }
         }
       }
@@ -79,8 +84,9 @@ const refs = (conn: unknown): ProjectRef[] =>
 /** The answer of PROJECTS_QUERY: the repository's projects, and its owner's others (open ones first). */
 export function parseProjects(json: string): Omit<Projects, "repo"> {
   const data = rec(rec(parseJson(json)).data);
-  const linked = refs(rec(data.repository).projectsV2);
-  const owner = rec(data.repositoryOwner);
+  const repository = rec(data.repository);
+  const linked = refs(repository.projectsV2);
+  const owner = rec(repository.owner);
   const seen = new Set(linked.map((p) => p.number));
   const others = refs(owner.projectsV2).filter((p) => !seen.has(p.number));
   const openFirst = (a: ProjectRef, b: ProjectRef) => Number(a.closed) - Number(b.closed);
@@ -121,12 +127,17 @@ function parseItem(raw: unknown, repo: string): BoardItem | undefined {
   };
 }
 
-/** A page of BOARD_QUERY's answer: the project (undefined when there is none) and the cursor of the next page. */
+/**
+ * A page of BOARD_QUERY's answer: the project (undefined when there is none) and the cursor of the next page. Items
+ * of `repo` (owner/name, as GitHub names it now when the answer says) do not name their repository.
+ */
 export function parseBoardPage(
   json: string,
   repo: string,
 ): { board: Omit<Board, "repo" | "truncated" | "missing">; next?: string } | undefined {
-  const p = rec(rec(rec(rec(parseJson(json)).data).repositoryOwner).projectV2);
+  const repository = rec(rec(rec(parseJson(json)).data).repository);
+  const p = rec(rec(repository.owner).projectV2);
+  const current = str(repository.nameWithOwner) ?? repo;
   const number = num(p.number);
   const url = githubUrl(p.url);
   if (!number || !url) return undefined;
@@ -161,7 +172,7 @@ export function parseBoardPage(
       fields,
       ...(defaultField ? { defaultField } : {}),
       items: arr(items.nodes).flatMap((n) => {
-        const item = parseItem(n, repo);
+        const item = parseItem(n, current);
         return item ? [item] : [];
       }),
     },
@@ -196,11 +207,11 @@ export async function listProjects(ctx: Gh, repo: string, o: { maxAgeSeconds: nu
 
 /** Project `number` of `repo`'s owner as a board; undefined when there is none. */
 export async function readBoard(ctx: Gh, repo: string, number: number, o: { maxAgeSeconds: number }): Promise<Omit<Board, "repo"> | undefined> {
-  const [owner = ""] = repo.split("/");
+  const [owner = "", name = ""] = repo.split("/");
   let cursor: string | undefined;
   let board: Omit<Board, "repo" | "truncated" | "missing"> | undefined;
   for (let page = 0; page < BOARD_PAGES; page++) {
-    const vars = ["-f", `owner=${owner}`, "-F", `number=${number}`, ...(cursor ? ["-f", `cursor=${cursor}`] : [])];
+    const vars = ["-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, ...(cursor ? ["-f", `cursor=${cursor}`] : [])];
     const r = await graphql(ctx, repo, BOARD_QUERY, vars, o.maxAgeSeconds);
     if (r.missing) return { number, title: "", url: "", closed: false, fields: [], items: [], truncated: false, missing: r.missing };
     const read = parseBoardPage(r.stdout ?? "", repo);

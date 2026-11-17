@@ -8,13 +8,13 @@ Issue と Pull request は、このプラグインではなく Git プラグイ�
 
 セッションのヘッダーの、Git プラグインの「Issues」「Pull requests」の右に、「Actions」「Projects」「Packages」が並ぶ（`order` は 310・320・330）。どれも、セッションのフォルダーかその中のリポジトリが GitHub にあり、working server でこのプラグインが動いているときだけ出る。押すと右にパネルを開く（スマホでは画面に代わって開く）。フォルダーに GitHub のリポジトリが複数あるときは、パネルの上にリポジトリのタブが出る。
 
-パネルの右上には、GitHub で開くボタンと、読み直すボタンがある。読み直すボタンは、gasho-daemon が覚えている答えを使わず、gh に GitHub を読み直させる。
+パネルの右上には、GitHub で開くボタンと、読み直すボタンがある。読み直すボタンは、gasho-daemon が覚えている答えを使わず、gh に GitHub を読み直させる。読み直せなかったときは、前に読んだ内容と読み込んだ時刻をそのまま出し、読み直せなかったことと理由を出す。
 
 ### Actions
 
 - 実行の一覧を、新しいものから 50 件出す。1 件ごとに、題、ワークフローと番号、ブランチ、イベント（push・Pull request・手動・定期など）、結果、所要時間、時刻を出す
 - ワークフローとブランチで絞り込める。ブランチの選択肢は、セッションのブランチと、読んだ実行のブランチ。「このブランチ」を押すと、セッションのブランチ（タブで選んだリポジトリのブランチ）の実行だけになる。絞り込みはパネルの URL に残る
-- 1 回の実行を開くと、ジョブごとに結果と所要時間、ステップの結果と所要時間を出す。失敗したジョブは開いた状態で出し、失敗したステップのログの末尾 80 行を添える（ログは末尾が見える位置で開く）。ログ全体は GitHub で見る
+- 1 回の実行を開くと、ジョブごとに結果と所要時間、ステップの結果と所要時間を出す。失敗したジョブは開いた状態で出し、失敗したステップのログの末尾 80 行を添える（ログは末尾が見える位置で開く）。ログを読むのは、失敗したジョブのうち最初の 3 件までで、ほかのジョブにはそう出す。ログ全体は GitHub で見る
 - 実行中・待ちのものがあるあいだは、一覧も 1 回の実行も 15 秒ごとに読み直す
 
 ### Projects
@@ -40,15 +40,17 @@ Issue と Pull request は、このプラグインではなく Git プラグイ�
 |---|---|---|---|
 | `runs` | `workflow?`（ID）、`branch?` | `Runs` | `gh run list`、`gh workflow list --all` |
 | `run` | `id` | `RunDetail` | `gh run view --json …,jobs`、失敗したジョブは `gh api repos/<repo>/actions/jobs/<id>/logs` |
-| `projects` | なし | `Projects` | `gh api graphql`（`repository.projectsV2` と `repositoryOwner.projectsV2`） |
-| `project` | `number` | `Board` | `gh api graphql`（`projectV2(number)` を 100 件ずつ 5 回まで） |
-| `packages` | なし | `Packages` | `gh api users/<owner>`・`gh api user` で owner の種類を見て、`/orgs/<org>/packages`・`/user/packages`・`/users/<user>/packages` を種類ごとに |
+| `projects` | なし | `Projects` | `gh api graphql`（`repository.projectsV2` と `repository.owner.projectsV2`） |
+| `project` | `number` | `Board` | `gh api graphql`（`repository.owner.projectV2(number)` を 100 件ずつ 5 回まで） |
+| `packages` | なし | `Packages` | `gh api graphql`（`repository { nameWithOwner owner }` と `viewer`）で今の owner とその種類を見て、`/orgs/<org>/packages`・`/user/packages`・`/users/<user>/packages` を種類ごとに 100 件ずつ、100 件に満たないページまで（10 ページまで） |
 | `package` | `type`、`name` | `PackageDetail` | 同じ道筋の `/<type>/<name>` と `/versions` |
 
 GraphQL の `repository.packages` は npm のパッケージを返さないので、パッケージは REST で owner のものを読み、`repository.full_name` がセッションのリポジトリのものだけを残す。1 つのパッケージを開くときも、リポジトリが違えば見つからないと答える。
 
-ジョブのログは、gh 2.8x 以降、色の付いたログを `--allow-escape-sequences` なしでは出さない。daemon の部分はこれを付けて読み、古い gh が知らないフラグだと断ったら、付けずに読み直す。ログのタイムスタンプ、色、GitHub のグループの印は外す。失敗したステップの部分は、ステップの開始と終了の時刻（秒まで）で行を切り出し、その中の「##[group]Run …」から、次のステップか「Post job cleanup.」の前までとする。
+owner は、どれも `repository(owner:, name:)` の答えの owner から読む。owner の名前が変わったあとも、origin が前の名前のままの clone はある（Org を 4rtoflow から 4rtofl に変えたときなど）。`repository(owner:, name:)` は前の名前でもリポジトリを見つけて今の owner を返すが、`repositoryOwner(login:)`・`users/<login>`・`orgs/<login>` は前の名前では見つからない。パッケージのリポジトリも、GitHub が返す今の名前と照らし合わせる。
+
+ジョブのログは、gh 2.8x 以降、色の付いたログを `--allow-escape-sequences` なしでは出さない。daemon の部分はこれを付けて読み、古い gh が知らないフラグだと断ったら、付けずに読み直す。ログのタイムスタンプ、色、GitHub のグループの印は外す。失敗したステップの部分は、ステップの開始と終了の時刻（秒まで）で行を切り出し、その中の「##[group]Run …」から、最後の「##[error]」のあとにある次のステップの始まり（「##[group]Run …」か「##[start-action …]」）か「Post job cleanup.」の前までとする。composite action の中のステップも「##[group]Run …」で始まるので、最後のエラーより前では切らない。「##[start-action …]」「##[end-action …]」の行は出さない。1 行は 500 文字までにし、絵文字の途中では切らない。
 
 ## テスト
 
-`test/` の gh の出力の読み取りは、実際の gh の出力（`test/fixtures/`、2026-11-15 に 4rtofl/GashoPlugins、4rtofl/Gasho、github/roadmap、4rna-y のパッケージで取ったもの）をもとにしている。Org 名が 4rtofl に変わったため、fixtures の中の Org 名は 4rtofl に置き換えてある。
+`test/` の gh の出力の読み取りは、実際の gh の出力（`test/fixtures/`、2026-11-15 に 4rtofl/GashoPlugins、4rtofl/Gasho、github/roadmap、4rna-y のパッケージで取ったもの）をもとにしている。Org 名が 4rtofl に変わったため、fixtures の中の Org 名は 4rtofl に置き換えてある。Projects とボードの答え（`projects-*.json`・`board-page.json`）と `owner-renamed.json` は、2026-11-18 に今の問い合わせで取り直した（`projects-empty.json` と `owner-renamed.json` は、前の Org 名 4rtoflow で問い合わせたもの）。`job-log-composite.txt` は、microsoft/playwright の公開の実行（ジョブ 134085053730）のログを、composite action のステップの前後だけに短くしたもの。
