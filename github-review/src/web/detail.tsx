@@ -24,7 +24,22 @@ const CHECK_LOOKS: Record<CheckRunState, { Icon: LucideIcon; className: string; 
  * `item`: the pull request as the page lists it, with where it is on every working server (absent when the list does
  * not hold it: then it is where `machine` has it). `machine` reads it.
  */
-export function PrDetailView({ repo, number, item, machine, onClose }: { repo: string; number: number; item?: Item; machine: MachineInfo; onClose?: () => void }) {
+export function PrDetailView({
+  repo,
+  number,
+  item,
+  machine,
+  onClose,
+  docked,
+}: {
+  repo: string;
+  number: number;
+  item?: Item;
+  machine: MachineInfo;
+  onClose?: () => void;
+  /** Beside the list, as Gasho's side panel of a session: its heading stays above, and the rest scrolls. */
+  docked?: boolean;
+}) {
   const daemon = useDaemonReady(machine.id);
   const target = daemon.ready ? { machine: machine.id, method: "detail", params: { repo, number } } : undefined;
   const r = useRequest<PrDetail>(target, { staleSeconds: 60, refreshSeconds: 60 });
@@ -46,31 +61,32 @@ export function PrDetailView({ repo, number, item, machine, onClose }: { repo: s
     });
   };
 
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-start gap-2">
-        {pr && <StateIcon pr={pr} />}
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-muted-foreground">
-            {repo} #{number}
-          </p>
-          <h2 className="mt-0.5 text-base font-semibold break-words">{pr?.title ?? <Skeleton className="h-5 w-48" />}</h2>
-        </div>
-        <div className="flex shrink-0 items-center">
-          <a href={pr?.url ?? `https://github.com/${repo}/pull/${number}`} target="_blank" rel="noreferrer" className={ICON_BUTTON} title="GitHub で開く" aria-label="GitHub で開く">
-            <ExternalLink />
-          </a>
-          <button type="button" className={ICON_BUTTON} onClick={refresh} disabled={!target || refreshing} title="読み直す" aria-label="読み直す">
-            <RefreshCw className={cn((refreshing || r.loading) && "motion-safe:animate-spin")} />
-          </button>
-          {onClose && (
-            <button type="button" className={ICON_BUTTON} onClick={onClose} title="閉じる" aria-label="閉じる">
-              <X />
-            </button>
-          )}
-        </div>
+  const heading = (
+    <div className="flex items-start gap-2">
+      {pr && <StateIcon pr={pr} />}
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-muted-foreground">
+          {repo} #{number}
+        </p>
+        <h2 className="mt-0.5 text-base font-semibold break-words">{pr?.title ?? <Skeleton className="h-5 w-48" />}</h2>
       </div>
-
+      <div className="flex shrink-0 items-center">
+        <a href={pr?.url ?? `https://github.com/${repo}/pull/${number}`} target="_blank" rel="noreferrer" className={ICON_BUTTON} title="GitHub で開く" aria-label="GitHub で開く">
+          <ExternalLink />
+        </a>
+        <button type="button" className={ICON_BUTTON} onClick={refresh} disabled={!target || refreshing} title="読み直す" aria-label="読み直す">
+          <RefreshCw className={cn((refreshing || r.loading) && "motion-safe:animate-spin")} />
+        </button>
+        {onClose && (
+          <button type="button" className={ICON_BUTTON} onClick={onClose} title="閉じる" aria-label="閉じる">
+            <X />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+  const content = (
+    <>
       {!daemon.ready && <Alert tone="warning">{daemon.reason ?? `${machine.name} で github-review の daemon の部分が動いていません。`}</Alert>}
       {r.error && (
         <Alert tone="danger">
@@ -88,6 +104,20 @@ export function PrDetailView({ repo, number, item, machine, onClose }: { repo: s
         </div>
       )}
       {d && <Body detail={d} markUrl={shown?.pr.mark?.url} now={now} />}
+    </>
+  );
+  if (docked) {
+    return (
+      <section aria-label={`Pull request #${number}`} className="flex h-full min-h-0 flex-col">
+        <header className="shrink-0 border-b border-border px-4 py-3">{heading}</header>
+        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-4">{content}</div>
+      </section>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-5">
+      {heading}
+      {content}
     </div>
   );
 }

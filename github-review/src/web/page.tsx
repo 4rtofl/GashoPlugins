@@ -3,13 +3,13 @@
 // words of GitHub's list of pull requests. Every working server's daemon part is asked once a minute while the page shows.
 import { MotionConfig } from "framer-motion";
 import { RefreshCw, Search, Settings2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import { cn, Page, useNavigation, useNow, usePluginState, type PageProps } from "@gasho/plugin-sdk";
+import { useEffect, useState, type ReactNode } from "react";
+import { Page, useNavigation, useNow, usePluginState, type PageProps } from "@gasho/plugin-sdk";
 import { MAX_QUERY } from "../types.ts";
 import type { Item } from "./actions";
 import { PrDetailView } from "./detail";
 import { DEFAULT_QUERY, useListings } from "./listing";
-import { DESKTOP, useMediaQuery } from "./media";
+import { DESKTOP, useMediaQuery, usePanelWidth } from "./media";
 import { ReposDialog } from "./repos-dialog";
 import { PrItemRow, RowContext } from "./row";
 import { useRowShell } from "./shell";
@@ -49,114 +49,132 @@ export function ReviewPage(_: PageProps) {
   const selectedItem = selected ? all.find((i) => i.pr.url === selected.url) : undefined;
   const panelMachine = selectedItem?.spots[0]?.machine ?? ready[0];
   const panel = desktop && selected && panelMachine;
+  const { ref: rowRef, width: panelWidth } = usePanelWidth();
+  // Esc closes the panel, as it closes Gasho's (not while a dialog or a menu takes it).
+  useEffect(() => {
+    if (!panel) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector("[role=dialog], [role=menu]")) setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panel]);
   const search = () => {
     const q = draft.trim().slice(0, MAX_QUERY);
     setDraft(q);
     if (q !== query) setQuery(q);
   };
 
+  const list = (
+    <Page
+      title="レビュー"
+      description="レビューを頼まれた Pull request と、対象リポジトリの Pull request。worktree を作ると、その中でセッションを起動して開きます。"
+      actions={
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
+            対象リポジトリ
+          </Button>
+          <Button size="sm" leftIcon={<RefreshCw />} isLoading={refreshing} loadingText="更新中…" disabled={ready.length === 0} onClick={() => setFreshAsk((n) => n + 1)}>
+            更新
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-6">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            search();
+          }}
+        >
+          <div className="flex gap-2">
+            <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm transition-colors focus-within:border-border-hover">
+              <Search className="size-4 shrink-0 text-muted-foreground" />
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                maxLength={MAX_QUERY}
+                placeholder="is:open author:octocat label:bug"
+                aria-label="Pull request を探す"
+                className="min-w-0 flex-1 bg-transparent font-mono text-[13px] outline-none placeholder:text-muted-foreground"
+                spellCheck={false}
+              />
+            </label>
+            <Button type="submit" size="md" className="h-9 w-9 px-0" leftIcon={<Search />} aria-label="検索" title="検索" />
+          </div>
+        </form>
+
+        {ready.length === 0 && (
+          <Alert>
+            <AlertTitle>使える working server がありません</AlertTitle>
+            <AlertDescription>
+              github-review の daemon の部分が動く working server がつながると、Pull request を読みます。
+              {unavailable.map((m) => (
+                <span key={m.id} className="block">
+                  {m.name}：{sources[m.id]?.reason ?? "daemon の部分を使えません。"}
+                </span>
+              ))}
+            </AlertDescription>
+          </Alert>
+        )}
+        {errors.length > 0 && (
+          <Alert tone="warning">
+            <AlertTitle>読めなかったものがあります</AlertTitle>
+            <AlertDescription>
+              {errors.map((e) => (
+                <span key={e} className="block break-words">
+                  {e}
+                </span>
+              ))}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Section title="レビューを頼まれた Pull request" count={page.requested.length} more={page.requestedMore} loading={pending && page.requested.length === 0}>
+          {page.requested.length === 0 ? (
+            <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request はありません。" : "レビューを頼まれた Pull request はありません。"}</Empty>
+          ) : (
+            <Rows items={page.requested} now={now} showRepo />
+          )}
+        </Section>
+
+        <Section title="対象リポジトリの Pull request" count={page.groups.reduce((n, g) => n + g.items.length, 0)} more={page.watchedMore} loading={pending && page.groups.length === 0}>
+          {watched === 0 && page.groups.length === 0 && !pending ? (
+            <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border px-4 py-5">
+              <p className="text-sm text-muted-foreground">対象リポジトリを選ぶと、そのリポジトリの Pull request をここに出します。</p>
+              <Button size="sm" variant="primary" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
+                対象リポジトリを選ぶ
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {page.groups.map((g) => (
+                <div key={g.repo} className="space-y-1.5">
+                  <h3 className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                    {g.repo}
+                    {!g.watched && <span className="font-normal text-muted-foreground">対象リポジトリではありませんが、レビュー用の worktree があります</span>}
+                  </h3>
+                  {g.items.length === 0 ? <Empty>検索の語に合う Pull request はありません。</Empty> : <Rows items={g.items} now={now} fresh />}
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+      </div>
+    </Page>
+  );
+
   return (
     <MotionConfig reducedMotion="user">
       {sourcesEl}
-      <Page
-        title="レビュー"
-        description="レビューを頼まれた Pull request と、対象リポジトリの Pull request。worktree を作ると、その中でセッションを起動して開きます。"
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
-              対象リポジトリ
-            </Button>
-            <Button size="sm" leftIcon={<RefreshCw />} isLoading={refreshing} loadingText="更新中…" disabled={ready.length === 0} onClick={() => setFreshAsk((n) => n + 1)}>
-              更新
-            </Button>
-          </div>
-        }
-      >
-        <RowContext.Provider value={shared}>
-          <div className={cn(panel && "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]")}>
-            <div className="min-w-0 space-y-6">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  search();
-                }}
-              >
-                <div className="flex gap-2">
-                  <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm transition-colors focus-within:border-border-hover">
-                    <Search className="size-4 shrink-0 text-muted-foreground" />
-                    <input
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      maxLength={MAX_QUERY}
-                      placeholder="is:open author:octocat label:bug"
-                      aria-label="Pull request を探す"
-                      className="min-w-0 flex-1 bg-transparent font-mono text-[13px] outline-none placeholder:text-muted-foreground"
-                      spellCheck={false}
-                    />
-                  </label>
-                  <Button type="submit" size="md" className="h-9 w-9 px-0" leftIcon={<Search />} aria-label="検索" title="検索" />
-                </div>
-              </form>
-
-              {ready.length === 0 && (
-                <Alert>
-                  <AlertTitle>使える working server がありません</AlertTitle>
-                  <AlertDescription>
-                    github-review の daemon の部分が動く working server がつながると、Pull request を読みます。
-                    {unavailable.map((m) => (
-                      <span key={m.id} className="block">
-                        {m.name}：{sources[m.id]?.reason ?? "daemon の部分を使えません。"}
-                      </span>
-                    ))}
-                  </AlertDescription>
-                </Alert>
-              )}
-              {errors.length > 0 && (
-                <Alert tone="warning">
-                  <AlertTitle>読めなかったものがあります</AlertTitle>
-                  <AlertDescription>
-                    {errors.map((e) => (
-                      <span key={e} className="block break-words">
-                        {e}
-                      </span>
-                    ))}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              <Section title="レビューを頼まれた Pull request" count={page.requested.length} more={page.requestedMore} loading={pending && page.requested.length === 0}>
-                {page.requested.length === 0 ? (
-                  <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request はありません。" : "レビューを頼まれた Pull request はありません。"}</Empty>
-                ) : (
-                  <Rows items={page.requested} now={now} showRepo />
-                )}
-              </Section>
-
-              <Section title="対象リポジトリの Pull request" count={page.groups.reduce((n, g) => n + g.items.length, 0)} more={page.watchedMore} loading={pending && page.groups.length === 0}>
-                {watched === 0 && page.groups.length === 0 && !pending ? (
-                  <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border px-4 py-5">
-                    <p className="text-sm text-muted-foreground">対象リポジトリを選ぶと、そのリポジトリの Pull request をここに出します。</p>
-                    <Button size="sm" variant="primary" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
-                      対象リポジトリを選ぶ
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {page.groups.map((g) => (
-                      <div key={g.repo} className="space-y-1.5">
-                        <h3 className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
-                          {g.repo}
-                          {!g.watched && <span className="font-normal text-muted-foreground">対象リポジトリではありませんが、レビュー用の worktree があります</span>}
-                        </h3>
-                        {g.items.length === 0 ? <Empty>検索の語に合う Pull request はありません。</Empty> : <Rows items={g.items} now={now} fresh />}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Section>
-            </div>
+      <RowContext.Provider value={shared}>
+        {desktop ? (
+          // As Gasho's screen puts a session and its side panel: the list scrolls on the left, the panel stands at the right
+          // edge, as high as the screen, with its own scroll.
+          <div ref={rowRef} className="absolute inset-0 flex">
+            <div className="min-w-0 flex-1 overflow-y-auto">{list}</div>
             {panel && (
-              <aside aria-label="Pull request" className="sticky top-4 max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-border bg-background p-4 shadow-sm">
+              <aside style={{ width: panelWidth }} className="shrink-0 border-l border-border bg-background">
                 <PrDetailView
                   key={selected.url}
                   repo={selected.repo}
@@ -164,12 +182,15 @@ export function ReviewPage(_: PageProps) {
                   {...(selectedItem ? { item: selectedItem } : {})}
                   machine={panelMachine}
                   onClose={() => setSelected(null)}
+                  docked
                 />
               </aside>
             )}
           </div>
-        </RowContext.Provider>
-      </Page>
+        ) : (
+          list
+        )}
+      </RowContext.Provider>
       <ReposDialog
         open={choosing}
         onClose={() => setChoosing(false)}
