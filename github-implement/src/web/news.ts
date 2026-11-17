@@ -4,20 +4,14 @@
 // tab that opened goes away.
 import { useEffect } from "react";
 import { usePluginState, useRequest, useSetting, type RequestOptions } from "@gasho/plugin-sdk";
-import { newsCount, type ItemNews } from "../news.ts";
-import type { ItemSummary, WorktreeItems } from "../types.ts";
+import { newsCount, watchedItems, type ItemNews } from "../news.ts";
+import type { WorktreeItems } from "../types.ts";
 import { readOp } from "./daemon.ts";
 
 /** Plugin state: owner/name#number of the item whose screen is open. */
 export const OPEN_KEY = "news:open";
 /** Plugin state: grows every time a screen has told the daemon part what it showed. */
 export const SEEN_KEY = "news:seen";
-
-/** What the background reads again (src/daemon/index.ts): the issue the branch is named after and its open pull requests. */
-export function watchedItems(items: WorktreeItems): ItemSummary[] {
-  const seen = new Set<number>();
-  return [...(items.named ? [items.named] : []), ...items.pulls].filter((i) => i.state === "open" && !seen.has(i.number) && Boolean(seen.add(i.number)));
-}
 
 /** "コメント 2・終わったチェック 3" */
 export function newsText(n: ItemNews): string {

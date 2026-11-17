@@ -1,6 +1,6 @@
 // What both parts of github-implement share about an item's news: the latest comment, review and finished check its
 // screen showed while its tab was open (the marks), and what came after them, which the item's worktree tab counts.
-import type { GitHubItemDetail } from "./types.ts";
+import type { GitHubItemDetail, ItemSummary, WorktreeItems } from "./types.ts";
 
 /** The latest comment, review and finished check of an item that its screen showed (ISO 8601 each); absent: none. */
 export interface SeenMarks {
@@ -60,3 +60,13 @@ export function newsOf(item: Read, seen: SeenMarks): ItemNews {
 }
 
 export const newsCount = (n: ItemNews): number => n.comments + n.reviews + n.checks;
+
+/**
+ * The items whose news the worktree tab counts, which the daemon part reads again in the background (src/daemon/index.ts),
+ * so that the screen's reads of them are what gasho-daemon kept of the background's: the issue the branch is named
+ * after and the branch's open pull requests, each once.
+ */
+export function watchedItems(items: WorktreeItems): ItemSummary[] {
+  const seen = new Set<number>();
+  return [...(items.named ? [items.named] : []), ...items.pulls].filter((i) => i.state === "open" && !seen.has(i.number) && Boolean(seen.add(i.number)));
+}

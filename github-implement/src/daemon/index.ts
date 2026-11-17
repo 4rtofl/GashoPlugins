@@ -6,6 +6,7 @@
 // changed or what was read of it is KEEP_MAX_SECONDS old (core.ts).
 import { defineDaemonPlugin, type DaemonStartContext } from "@gasho/plugin-sdk/daemon";
 import { addDetailParts, begin, current, end, keepSeconds, readDetail, readItems, refreshSeconds, SHOWN_WITHIN_MS, takeSettings } from "./core.ts";
+import { watchedItems } from "../news.ts";
 import type { DetailPart } from "./gh.ts";
 import { dispatch, opsByName, type Op } from "./op.ts";
 
@@ -23,12 +24,9 @@ async function round(ctx: DaemonStartContext): Promise<void> {
     if (stopped) return;
     try {
       const items = await readItems(ctx, w.repo, w.branch, w.added, keepSeconds());
-      // What a tab opens first: the issue the branch is named after and its open pull requests.
-      const open = [...(items.named ? [items.named] : []), ...items.pulls].filter((i) => i.state === "open");
-      const seen = new Set<string>();
-      for (const i of open) {
-        if (stopped || seen.has(`${i.kind}${i.number}`)) continue;
-        seen.add(`${i.kind}${i.number}`);
+      // What a tab opens first, and whose news the screen asks for.
+      for (const i of watchedItems(items)) {
+        if (stopped) return;
         await readDetail(ctx, w.repo, i.kind, i.number);
       }
     } catch (e) {

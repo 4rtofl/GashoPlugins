@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import checks from "../src/daemon/detail/checks.ts";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
 import type { GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
@@ -175,4 +176,27 @@ test("the reads of an item use what gasho-daemon kept since its version was read
   await maxAgeOfRead();
   tick(10);
   assert.equal(await maxAgeOfRead(), 10);
+});
+
+test("a check is named with its workflow, keeps its run and job of GitHub Actions to rerun and read the log, and its result in a few words", () => {
+  const job = "https://github.com/o/r/actions/runs/19000000001/job/52000000002";
+  const json = JSON.stringify({
+    number: 3,
+    title: "t",
+    url: "https://github.com/o/r/pull/3",
+    statusCheckRollup: [
+      { __typename: "CheckRun", name: "build", workflowName: "CI", status: "COMPLETED", conclusion: "TIMED_OUT", detailsUrl: job },
+      { __typename: "CheckRun", name: "lint", workflowName: "lint", status: "COMPLETED", conclusion: "NEUTRAL", detailsUrl: "https://github.com/o/r/actions/runs/19000000001" },
+      { __typename: "CheckRun", name: "e2e", status: "QUEUED", conclusion: "", detailsUrl: "javascript:alert(1)" },
+      { __typename: "StatusContext", context: "ci/deploy", state: "ERROR", targetUrl: "https://deploy.example.com/runs/19000000001/job/1" },
+      { __typename: "StatusContext", state: "SUCCESS" },
+    ],
+  });
+  assert.deepEqual(parseDetail(json, "pulls", [checks])?.checks, [
+    { name: "CI / build", state: "failure", url: job, run: 19000000001, job: 52000000002 },
+    // A link to a run but no job, a link that is not https and one off github.com run nothing again.
+    { name: "lint", state: "neutral", url: "https://github.com/o/r/actions/runs/19000000001" },
+    { name: "e2e", state: "pending" },
+    { name: "ci/deploy", state: "failure", url: "https://deploy.example.com/runs/19000000001/job/1" },
+  ]);
 });
