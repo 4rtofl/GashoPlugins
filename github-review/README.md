@@ -10,6 +10,9 @@
   - fork の Pull request は、`refs/pull/<番号>/head` を取ってきて、detached HEAD にする
   - その Pull request の worktree（`review-<番号>`、同じ repo の Pull request ならそのブランチの worktree）がもうあれば、作らずに、上の段では「開く」を、下の段では「新たにセッションを作成する」を出す。「開く」は、その worktree で最後に使った Gasho のセッションを開く（なければ起動して開く）。「新たにセッションを作成する」は、その worktree で新しいセッションを起動して開く（worktree は増やさない）。worktree が複数の working server にあるときは、どちらもメニューで選ぶ
   - 同じ名前のフォルダーが、この repo の worktree でないものとしてあれば、作らずに理由を出す
+- 上の段の見出しの「まとめてレビューさせる」で、送る指示のテンプレートを選ぶ（working server が複数あれば、どれに作るかも選ぶ）。どの working server にも worktree が無い Pull request が対象で、確かめるダイアログで外すものを選べる。始めると、1件ずつ順に「worktree を作る」と同じく worktree を作ってセッションを起動し、指示を送る（同じ clone の git がぶつからないよう、同時には動かさない）。セッションは開かず、ダイアログに1件ごとの結果（できなかったものは理由）を出し、始めたセッションはそこから開ける。ダイアログを閉じても続け、下の通知で進み具合を出す
+  - フォルダーの信頼は、最初の1件で確かめる。そこで信頼すると、そのあとのフォルダーは、Claude Code が警告を出さないものだけ確かめずに信頼する（警告のあるフォルダーは、その都度確かめる）
+  - 作るときに worktree がもうあった Pull request は飛ばす
 - テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る
 - `review-<番号>` の worktree がある行には「片付ける」を出す。押すと確かめてから、worktree とローカルのブランチを消す。未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも無い commit）があれば、消さずに理由を出す。Pull request がマージか閉じられたら、行に「片付けてよい」と出す。マージか閉じられて上下の段から外れた Pull request も、`review-<番号>` の worktree があるあいだは、下の段のその repo の所に出す（対象リポジトリでなくても出し、検索の語では絞り込まない）
 

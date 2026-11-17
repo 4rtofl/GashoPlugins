@@ -1,7 +1,8 @@
 // What the buttons of a pull request's row do: make its review worktree on a working server, start a session there,
 // send the chosen template and open the session; open the worktree it has (its Gasho session, or one started there), or
-// start a new session there and open it; and remove its review worktree. The daemon part does the git; the page asks the person before trusting a folder and
-// before removing.
+// start a new session there and open it; remove its review worktree; and do the first for many pull requests at once
+// ("まとめてレビューさせる"). The daemon part does the git; the page asks the person before trusting a folder and before
+// removing.
 import { relativeTime, type MachineInfo, type Navigation, type SessionInfo, type useCall, type useLaunchSession, type useSendInput } from "@gasho/plugin-sdk";
 import type { Item as AnyItem, Spot as AnySpot } from "../items.ts";
 import { fillTemplate, type Template } from "../template.ts";
@@ -46,19 +47,34 @@ export function sessionsIn(machine: MachineInfo, dir: string): SessionInfo[] {
 
 const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? p;
 
-/** Starts a session in a folder; its id, or undefined (with the reason shown) when it did not start. */
-async function start(machine: MachineInfo, cwd: string, t: Tools): Promise<string | undefined> {
-  const starting: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
-  t.actions.notify(starting);
+/** What starting a session in a folder gave: its id, or why none started (none when the person said no to trusting). */
+type Started = { ok: true; sessionId: string; trusted: boolean } | { ok: false; error?: string };
+
+/**
+ * Starts a session in a folder, asking the person first when Claude Code does not trust it yet. `trustQuietly`: a folder
+ * Claude Code has no warnings about is trusted without asking (the person has said yes once in this run).
+ */
+async function launchIn(machine: MachineInfo, cwd: string, t: Tools, trustQuietly = false): Promise<Started> {
   let r = await t.launch({ machine: machine.id, cwd });
+  let trusted = false;
   if (!r.ok && r.needsTrust) {
-    t.actions.notify(undefined);
-    if (!(await t.actions.askTrust({ path: cwd, warnings: r.trustWarnings ?? [] }))) return undefined;
-    t.actions.notify(starting);
+    const warnings = r.trustWarnings ?? [];
+    if (!(trustQuietly && warnings.length === 0)) {
+      t.actions.notify(undefined);
+      if (!(await t.actions.askTrust({ path: cwd, warnings }))) return { ok: false };
+    }
+    trusted = true;
     r = await t.launch({ machine: machine.id, cwd, trust: true });
   }
+  return r.ok ? { ok: true, sessionId: r.sessionId, trusted } : { ok: false, error: r.error };
+}
+
+/** Starts a session in a folder; its id, or undefined (with the reason shown) when it did not start. */
+async function start(machine: MachineInfo, cwd: string, t: Tools): Promise<string | undefined> {
+  t.actions.notify({ text: `${folderName(cwd)} でセッションを起動しています…`, busy: true });
+  const r = await launchIn(machine, cwd, t);
   if (r.ok) return r.sessionId;
-  t.actions.notify({ text: r.error, tone: "danger" });
+  if (r.error) t.actions.notify({ text: r.error, tone: "danger" });
   return undefined;
 }
 
@@ -104,6 +120,78 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
   }
   t.actions.notify(undefined);
   t.nav.openSession(machine.id, sessionId);
+}
+
+/** Where one pull request of "まとめてレビューさせる" is. */
+export type BatchState = "waiting" | "working" | "done" | "skipped" | "failed";
+
+export interface BatchStep {
+  state: BatchState;
+  /** Why it was skipped or failed. */
+  text?: string;
+  /** The session started for it. */
+  sessionId?: string;
+}
+
+/**
+ * "まとめてレビューさせる": for each pull request in turn (git in one clone at a time), makes its review worktree on the
+ * working server, starts a session there and sends the template, as "worktree を作る" does, without opening the sessions.
+ * A pull request whose worktree turns out to be there already is skipped. Once the person has said yes to trusting a
+ * folder, the next folders Claude Code has no warnings about are trusted without asking again.
+ */
+export async function reviewAll(
+  targets: { item: Item; spot: Spot }[],
+  template: Template,
+  t: Tools,
+  onStep: (url: string, step: BatchStep) => void,
+): Promise<{ done: number; failed: number; skipped: number }> {
+  const count = { done: 0, failed: 0, skipped: 0 };
+  let trustQuietly = false;
+  const machines = new Set<string>();
+  for (const [i, { item, spot }] of targets.entries()) {
+    const { pr } = item;
+    const { machine } = spot;
+    machines.add(machine.id);
+    const end = (step: BatchStep & { state: "done" | "skipped" | "failed" }) => {
+      count[step.state] += 1;
+      onStep(pr.url, step);
+    };
+    onStep(pr.url, { state: "working" });
+    t.actions.notify({ text: `${i + 1} / ${targets.length}：#${pr.number} のレビューを用意しています…`, busy: true });
+    const r = await t.call<Created>({
+      machine: machine.id,
+      method: "create",
+      params: { repo: pr.repo, number: pr.number },
+      summary: `${pr.repo}#${pr.number} のレビュー用の worktree を作る`,
+    });
+    if (!r.ok) {
+      end({ state: "failed", text: r.error });
+      continue;
+    }
+    if (!r.data.created) {
+      end({ state: "skipped", text: `worktree（${folderName(r.data.path)}）がもうあるので、作りませんでした。` });
+      continue;
+    }
+    const started = await launchIn(machine, r.data.path, t, trustQuietly);
+    if (!started.ok) {
+      end({ state: "failed", text: started.error ?? "フォルダーを信頼しなかったので、セッションを起動しませんでした（worktree は作りました）。" });
+      continue;
+    }
+    trustQuietly ||= started.trusted;
+    const sent = await t.send({ machine: machine.id, sessionId: started.sessionId, text: fillTemplate(template.body, pr) });
+    if (!sent.ok) {
+      end({ state: "failed", sessionId: started.sessionId, text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}` });
+      continue;
+    }
+    end({ state: "done", sessionId: started.sessionId });
+  }
+  for (const id of machines) t.actions.reload(id);
+  const rest = [count.skipped > 0 ? `${count.skipped} 件は飛ばしました` : "", count.failed > 0 ? `${count.failed} 件はできませんでした` : ""].filter(Boolean);
+  t.actions.notify({
+    text: `${targets.length} 件のうち ${count.done} 件でレビューを始めました${rest.length > 0 ? `（${rest.join("、")}）` : ""}。`,
+    ...(count.failed > 0 ? { tone: "danger" as const } : {}),
+  });
+  return count;
 }
 
 /** Opens the worktree a pull request has on a working server. */

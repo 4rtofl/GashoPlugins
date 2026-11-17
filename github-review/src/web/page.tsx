@@ -22,7 +22,8 @@ import {
 import { pageItems } from "../items.ts";
 import { parseTemplates } from "../template.ts";
 import { MAX_QUERY, type Listing } from "../types.ts";
-import type { Actions, Item, Notice, Spot, Tools } from "./actions";
+import { reviewAll, type Actions, type BatchStep, type Item, type Notice, type Spot, type Tools } from "./actions";
+import { BatchDialog, BatchMenu, type BatchChoice } from "./batch";
 import { RemoveDialog, Toast, TrustDialog } from "./dialogs";
 import { ReposDialog } from "./repos-dialog";
 import { PrItemRow, RowContext, type RowShared } from "./row";
@@ -108,6 +109,8 @@ export function ReviewPage(_: PageProps) {
   const [trust, setTrust] = useState<{ path: string; warnings: string[]; answer: (yes: boolean) => void }>();
   const [removing, setRemoving] = useState<{ item: Item; spot: Spot; answer: (yes: boolean) => void }>();
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const [batch, setBatch] = useState<{ choice: BatchChoice; steps?: Record<string, BatchStep>; shown: boolean }>();
+  const [batchRunning, setBatchRunning] = useState(false);
 
   const ready = machines.filter((m) => m.connected && sources[m.id]?.ready);
   const lists = ready.flatMap((machine) => {
@@ -133,6 +136,29 @@ export function ReviewPage(_: PageProps) {
     };
     return { call, launch, send, nav, actions };
   }, [call, launch, send, nav, sources]);
+  const unbusy = (urls: string[]) =>
+    setBusy((cur) => {
+      const next = new Set(cur);
+      for (const u of urls) next.delete(u);
+      return next;
+    });
+  /** "まとめてレビューさせる": the rows of the pull requests it does stay off until each is done. */
+  const startBatch = (targets: BatchChoice["targets"]) => {
+    if (!batch || batchRunning) return;
+    const urls = targets.map((x) => x.item.pr.url);
+    setBatch({ ...batch, steps: Object.fromEntries(urls.map((u) => [u, { state: "waiting" }])) });
+    setBatchRunning(true);
+    setBusy((cur) => new Set([...cur, ...urls]));
+    void reviewAll(targets, batch.choice.template, tools, (url, step) => {
+      setBatch((cur) => (cur?.steps ? { ...cur, steps: { ...cur.steps, [url]: step } } : cur));
+      if (step.state !== "working") unbusy([url]);
+    })
+      .catch((e: unknown) => setNotice({ text: e instanceof Error ? e.message : String(e), tone: "danger" }))
+      .finally(() => {
+        setBatchRunning(false);
+        unbusy(urls);
+      });
+  };
   const shared: RowShared = {
     tools,
     templates,
@@ -227,7 +253,21 @@ export function ReviewPage(_: PageProps) {
               </Alert>
             )}
 
-            <Section title="レビューを頼まれた Pull request" count={page.requested.length} more={page.requestedMore} loading={pending && page.requested.length === 0}>
+            <Section
+              title="レビューを頼まれた Pull request"
+              count={page.requested.length}
+              more={page.requestedMore}
+              loading={pending && page.requested.length === 0}
+              action={
+                <BatchMenu
+                  items={page.requested}
+                  machines={ready}
+                  templates={templates}
+                  disabled={batchRunning || page.requested.some((i) => busy.has(i.pr.url))}
+                  onPick={(choice) => setBatch({ choice, shown: true })}
+                />
+              }
+            >
               {page.requested.length === 0 ? (
                 <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request はありません。" : "レビューを頼まれた Pull request はありません。"}</Empty>
               ) : (
@@ -281,18 +321,29 @@ export function ReviewPage(_: PageProps) {
           setRemoving(undefined);
         }}
       />
+      <BatchDialog
+        choice={batch?.shown ? batch.choice : undefined}
+        steps={batch?.steps}
+        running={batchRunning}
+        onStart={startBatch}
+        onOpen={(sessionId) => batch && nav.openSession(batch.choice.machine.id, sessionId)}
+        onClose={() => setBatch((cur) => (cur && batchRunning ? { ...cur, shown: false } : undefined))}
+      />
       <Toast notice={notice} onClose={() => setNotice(undefined)} />
     </MotionConfig>
   );
 }
 
-function Section({ title, count, more, loading, children }: { title: string; count: number; more: number; loading: boolean; children: ReactNode }) {
+function Section({ title, count, more, loading, action, children }: { title: string; count: number; more: number; loading: boolean; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="space-y-2">
-      <h2 className="flex items-baseline gap-2 text-sm font-semibold">
-        {title}
-        {!loading && <span className="text-xs font-normal text-muted-foreground tabular-nums">{count} 件</span>}
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-baseline gap-2 text-sm font-semibold">
+          {title}
+          {!loading && <span className="text-xs font-normal text-muted-foreground tabular-nums">{count} 件</span>}
+        </h2>
+        {!loading && action}
+      </div>
       {loading ? (
         <div className="space-y-2 rounded-xl border border-border p-4">
           <Skeleton className="h-4 w-2/3" />
