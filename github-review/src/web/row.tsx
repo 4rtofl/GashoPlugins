@@ -24,7 +24,7 @@ import {
 import { DropdownMenu } from "radix-ui";
 import { createContext, useContext, type MouseEvent, type ReactNode } from "react";
 import { cn, relativeTime } from "@gasho/plugin-sdk";
-import { askInstruction, type MergeMethod } from "../instructions.ts";
+import { askEffort, askInstruction, type MergeMethod } from "../instructions.ts";
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
 import { askOf, type AskKind, type ReviewProgress } from "../verdict.ts";
@@ -263,13 +263,13 @@ export function AgentAsk({ item }: { item: Item }) {
       onPick={(s) =>
         run(pr.url, async () => {
           if (ask.kind === "fix") {
-            await askAgent(s, ask.label, askInstruction(ask.kind, pr, mark, shared.merge), tools);
+            await askAgent(s, ask.label, askInstruction(ask.kind, pr, mark, shared.merge), askEffort(ask.kind), tools);
             return;
           }
           const kind = ask.kind;
           const answer = await tools.actions.askAgentFor({ kind, item, spot: s });
           if (!answer) return;
-          if (await askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), tools)) await followCleanup(item, s, kind, answer.cleanup, tools);
+          if (await askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools)) await followCleanup(item, s, kind, answer.cleanup, tools);
         })
       }
     />

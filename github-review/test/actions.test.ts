@@ -8,21 +8,24 @@ const PR = { repo: "o/r", number: 5, title: "直す", url: "https://github.com/o
 const DIR = "/w/r/review-5";
 
 /** A fake of what the page gives the row's buttons, keeping what they did. */
-function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "fail"; sessions?: Partial<SessionInfo>[] } = {}) {
+function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "fail" | "warn"; sessions?: Partial<SessionInfo>[] } = {}) {
   const notices: (Notice | undefined)[] = [];
   const opened: string[] = [];
   const sent: string[] = [];
   const launched: string[] = [];
-  const machine = { id: "m1", name: "m1", canLaunch: true, sessions: (opts.sessions ?? []) as SessionInfo[] } as MachineInfo;
+  const efforts: (string | undefined)[] = [];
+  const machine = { id: "m1", name: "m1", canLaunch: true, features: ["effort"], sessions: (opts.sessions ?? []) as SessionInfo[] } as MachineInfo;
   const tools = {
     call: (async () => ({ ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created })) as unknown as Tools["call"],
     launch: (async ({ cwd }: { cwd: string }) => {
       launched.push(cwd);
       return opts.launch === "fail" ? { ok: false, error: "起動できません" } : { ok: true, sessionId: "s-new" };
     }) as unknown as Tools["launch"],
-    send: (async ({ sessionId, text }: { sessionId: string; text: string }) => {
+    send: (async ({ sessionId, text, effort }: { sessionId: string; text: string; effort?: string }) => {
       sent.push(`${sessionId}: ${text}`);
-      return opts.send === "fail" ? { ok: false, error: "送れません" } : { ok: true, data: undefined };
+      efforts.push(effort);
+      if (opts.send === "fail") return { ok: false, error: "送れません" };
+      return { ok: true, data: opts.send === "warn" ? { warning: "Effort を切り替えられませんでした。" } : {} };
     }) as Tools["send"],
     remove: (async () => ({ ok: true })) as unknown as Tools["remove"],
     nav: { openSession: (machine: string, sessionId: string) => opened.push(`${machine}/${sessionId}`) } as unknown as Tools["nav"],
@@ -35,7 +38,7 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
     },
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };
-  return { tools, spot, item: { pr: PR, spots: [spot] } as Item, notices, opened, sent, launched, last: () => notices.at(-1) };
+  return { tools, spot, item: { pr: PR, spots: [spot] } as Item, notices, opened, sent, launched, efforts, last: () => notices.at(-1) };
 }
 
 test("create: starts a session and sends the template, but stays on the page; the notice opens the session", async () => {
@@ -44,6 +47,7 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.deepEqual(f.launched, [DIR]);
   assert.equal(f.sent.length, 1);
   assert.match(f.sent[0] ?? "", /^s-new: #5 をレビュー\n/);
+  assert.deepEqual(f.efforts, ["max"]);
   assert.deepEqual(f.opened, []);
   const n = f.last();
   assert.equal(n?.text, "#5 のセッションを起動し、「レビューする」を送りました。");
@@ -111,4 +115,15 @@ test("open and new session: these buttons still go to the session", async () => 
   await newSessionIn(f.spot, f.tools);
   assert.deepEqual(f.opened, ["m1/s-last", "m1/s-new"]);
   assert.equal(f.last(), undefined);
+});
+
+test("create: when the effort level could not be switched, it says why and stays; the notice opens the session", async () => {
+  const f = fake({ send: "warn" });
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "#{number} をレビュー" }, f.tools);
+  assert.deepEqual(f.opened, []);
+  const n = f.last();
+  assert.equal(n?.text, "「レビューする」を送りました。Effort を切り替えられませんでした。");
+  assert.equal(n?.tone, "danger");
+  n?.action?.run();
+  assert.deepEqual(f.opened, ["m1/s-new"]);
 });
