@@ -31,7 +31,9 @@ beforeEach(() => {
 
 /** The page stays where it is after the session started; the notice at the bottom has the button that opens it. */
 async function openFromNotice() {
-  await userEvent.click(await screen.findByRole("button", { name: "セッションを開く" }));
+  const open = await screen.findByRole("button", { name: "セッションを開く" });
+  expect(sdk.nav.openSession).not.toHaveBeenCalled();
+  await userEvent.click(open);
 }
 
 async function choose(template: string) {
