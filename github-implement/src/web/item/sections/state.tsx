@@ -125,7 +125,8 @@ function StateActions() {
       color: OPEN,
       ...reopenChange(id),
       done: "開き直しました",
-      undo: { op: "state", params: { action: "close", ...(reason ? { reason } : {}) }, summary: `${id} を閉じる` },
+      // gh closes an issue as done or as not planned only: a duplicate is closed again on GitHub.
+      ...(reason !== "duplicate" && { undo: { op: "state", params: { action: "close", ...(reason ? { reason } : {}) }, summary: `${id} を閉じる` } }),
     });
   }
   return (

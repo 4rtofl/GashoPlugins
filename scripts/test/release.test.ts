@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { execError, fakeCommands } from "../../test/daemon.ts";
 import { report } from "../check.ts";
-import { checkPlugins, entryOf, fileOf, readGenres, readPlugins, releaseOf, sameCatalog, type CheckedManifest } from "../release.ts";
+import { checkPlugins, entryOf, fileOf, readGenres, readPlugins, release, releaseOf, sameCatalog, type Catalog, type CheckedManifest } from "../release.ts";
 
 const manifest: CheckedManifest = { id: "hello", name: "Hello", version: "1.2.0", genre: "devtools", api: "1.1", permissions: ["session.input"], daemon: { js: "daemon.js" } };
 const genres = [
@@ -113,4 +116,136 @@ test("in GitHub Actions, each problem is an error annotation on its file", () =>
 test("every plugin of this repository names a genre of genres.json", () => {
   const root = path.resolve(import.meta.dirname, "..", "..");
   assert.deepEqual(checkPlugins(root).problems, []);
+});
+
+/** Writes what `npm run build` would into `folder`/dist: its gasho-plugin.json and web.js. */
+function build(root: string, folder: string, m: object): void {
+  fs.mkdirSync(path.join(root, folder, "dist"), { recursive: true });
+  fs.writeFileSync(path.join(root, folder, "dist", "gasho-plugin.json"), JSON.stringify(m));
+  fs.writeFileSync(path.join(root, folder, "dist", "web.js"), `export default "${folder}";\n`);
+}
+
+const arg = (args: string[], name: string) => args[args.indexOf(name) + 1] ?? "";
+const sha = (data: Buffer) => createHash("sha256").update(data).digest("hex");
+
+/**
+ * gh with the releases of `releases`, the catalog.json of the release "catalog" (`catalog`) and the files of other
+ * releases (`files`). What `release create` and `release upload` were given is read while the file is there.
+ */
+function github(o: { releases: string[]; catalog?: Catalog; files?: Record<string, Buffer> }) {
+  const created = new Map<string, Buffer>();
+  let uploaded: Catalog | undefined;
+  const gh = fakeCommands(({ args }) => {
+    const [, sub, tag] = args;
+    if (sub === "list") return `${o.releases.join("\n")}\n`;
+    if (sub === "download") {
+      const name = arg(args, "--pattern");
+      const data = name === "catalog.json" ? (o.catalog && Buffer.from(JSON.stringify(o.catalog))) : o.files?.[name];
+      if (!data) return execError({ stderr: "no assets match the file pattern" });
+      fs.writeFileSync(path.join(arg(args, "--dir"), name), data);
+      return "";
+    }
+    if (sub === "create") {
+      if (tag !== "catalog") created.set(tag ?? "", fs.readFileSync(args[3] ?? ""));
+      return "";
+    }
+    if (sub === "upload") {
+      uploaded = JSON.parse(fs.readFileSync(args[3] ?? "", "utf8")) as Catalog;
+      return "";
+    }
+    return execError({ stderr: `unknown command "${sub}"` });
+  });
+  return {
+    calls: gh.calls,
+    created,
+    uploaded: () => uploaded,
+    run: (args: string[]) => gh.runSync({ command: "gh", args, via: "exec" }).stdout,
+    /** The gh commands, without --repo (which every one has), with "<tmp>" for release's temporary folder. */
+    commands: () =>
+      gh.calls.map(({ args }) => {
+        assert.deepEqual(args.slice(-2), ["--repo", "o/p"]);
+        return args.slice(0, -2).map((a) => a.replace(/^.*\/gasho-plugins-release-[^/]+/, "<tmp>"));
+      }),
+  };
+}
+
+const hello: CheckedManifest = { ...manifest, description: "あいさつする" };
+const old: CheckedManifest = { ...manifest, id: "old", name: "Old", version: "1.0.0" };
+const oldEntry = entryOf(old, { sha256: "cd".repeat(32), size: 20 });
+const catalogOf = (plugins: ReturnType<typeof entryOf>[]): Catalog => ({ repo: "o/p", updatedAt: "2026-11-14T00:00:00Z", genres: genres.map(({ id, name }) => ({ id, name })), plugins });
+
+test("release publishes a new version with the files of its dist/, and uploads the catalog made again", () => {
+  const root = repo({ hello, old });
+  build(root, "hello", hello);
+  const gh = github({ releases: ["catalog", "old-v1.0.0", "hello-v1.1.0"], catalog: catalogOf([oldEntry]) });
+  const log: string[] = [];
+  release({ root, repo: "o/p", target: "abc123", dry: false, gh: gh.run, log: (line) => log.push(line) });
+
+  assert.deepEqual(gh.commands(), [
+    ["release", "list", "--limit", "1000", "--json", "tagName", "--jq", ".[].tagName"],
+    ["release", "download", "catalog", "--pattern", "catalog.json", "--dir", "<tmp>"],
+    ["release", "create", "hello-v1.2.0", "<tmp>/hello-1.2.0.tgz", "--title", "Hello 1.2.0", "--notes", "あいさつする", "--latest=false", "--target", "abc123"],
+    ["release", "upload", "catalog", "<tmp>/catalog.json", "--clobber"],
+  ]);
+  const archive = gh.created.get("hello-v1.2.0");
+  assert.ok(archive);
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugins-")), "hello.tgz");
+  fs.writeFileSync(file, archive);
+  const files = execFileSync("tar", ["-tzf", file], { encoding: "utf8" }).split("\n");
+  assert.deepEqual(files.filter((f) => f && !f.endsWith("/")).sort(), ["./gasho-plugin.json", "./web.js"]);
+
+  const uploaded = gh.uploaded();
+  assert.deepEqual(uploaded?.plugins, [entryOf(hello, { sha256: sha(archive), size: archive.length }), oldEntry]);
+  assert.deepEqual(uploaded?.genres, catalogOf([]).genres);
+  assert.deepEqual(log.slice(0, 2), ["hello 1.2.0: released as hello-v1.2.0", "old 1.0.0: released before"]);
+});
+
+test("release --dry-run reads GitHub and makes the archive, and changes nothing", () => {
+  const root = repo({ hello, old });
+  build(root, "hello", hello);
+  const gh = github({ releases: ["catalog", "old-v1.0.0"], catalog: catalogOf([oldEntry]) });
+  const log: string[] = [];
+  release({ root, repo: "o/p", dry: true, gh: gh.run, log: (line) => log.push(line) });
+  assert.deepEqual(
+    gh.commands().map((c) => c.slice(0, 2)),
+    [
+      ["release", "list"],
+      ["release", "download"],
+    ],
+  );
+  assert.match(log[0] ?? "", /^hello 1\.2\.0: would release hello-1\.2\.0\.tgz \(\d+ bytes\) as hello-v1\.2\.0$/);
+  assert.match(log.at(-1) ?? "", /^catalog\.json: would be\n\{/);
+});
+
+test("release reads a released version missing from the catalog from its file, and makes the catalog's release when there is none", () => {
+  const root = repo({ hello });
+  const file = Buffer.from("the file released before");
+  const gh = github({ releases: ["hello-v1.2.0"], files: { "hello-1.2.0.tgz": file } });
+  release({ root, repo: "o/p", dry: false, gh: gh.run, log: () => undefined });
+  assert.deepEqual(
+    gh.commands().map((c) => c.slice(0, 3)),
+    [
+      ["release", "list", "--limit"],
+      ["release", "download", "hello-v1.2.0"],
+      ["release", "create", "catalog"],
+      ["release", "upload", "catalog"],
+    ],
+  );
+  // Without GITHUB_SHA, GitHub's default branch.
+  assert.ok(!gh.calls[2]?.args.includes("--target"));
+  assert.deepEqual(gh.uploaded()?.plugins, [entryOf(hello, { sha256: sha(file), size: file.length })]);
+});
+
+test("release uploads no catalog when nothing changed, and stops when dist/ is not the version", () => {
+  const root = repo({ hello, old });
+  const same = github({ releases: ["catalog", "hello-v1.2.0", "old-v1.0.0"], catalog: catalogOf([entryOf(hello, { sha256: "ef".repeat(32), size: 1 }), oldEntry]) });
+  const log: string[] = [];
+  release({ root, repo: "o/p", dry: false, gh: same.run, log: (line) => log.push(line) });
+  assert.equal(same.calls.length, 2);
+  assert.equal(log.at(-1), "catalog.json: no change");
+
+  build(root, "hello", { ...hello, version: "1.1.0" });
+  const gh = github({ releases: ["catalog", "old-v1.0.0"], catalog: catalogOf([oldEntry]) });
+  assert.throws(() => release({ root, repo: "o/p", dry: false, gh: gh.run, log: () => undefined }), /hello\/dist is not hello 1\.2\.0: run npm run build first/);
+  assert.ok(gh.calls.every((c) => c.args[1] === "list" || c.args[1] === "download"));
 });

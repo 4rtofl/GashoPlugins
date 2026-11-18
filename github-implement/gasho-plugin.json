@@ -1,7 +1,7 @@
 {
   "id": "github-implement",
   "name": "GitHub Implement",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "worktree の Issue と Pull request を、セッションと並んだタブで読み、assign・コメント・本文の変更などの操作をする（working server の gh を使う）",
   "genre": "integration",
   "api": "1.10",

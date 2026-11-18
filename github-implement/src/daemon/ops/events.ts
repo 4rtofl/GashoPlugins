@@ -3,7 +3,7 @@
 // the conversation shows, not in the background.
 import type { GitHubEvent } from "../../types.ts";
 import { gh, itemRead } from "../core.ts";
-import { labelColor, login, numberArg, repoArg, str } from "../gh.ts";
+import { closeReason, labelColor, login, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
 const TYPES = ["LABELED_EVENT", "UNLABELED_EVENT", "ASSIGNED_EVENT", "UNASSIGNED_EVENT", "CLOSED_EVENT", "REOPENED_EVENT"];
@@ -22,6 +22,9 @@ export function eventsQueryArgs(repo: string, number: number): string[] {
     `... on PullRequest { timelineItems(last: 100, itemTypes: [${[...TYPES, "MERGED_EVENT"].join(", ")}]) { nodes { ${NODES} ... on MergedEvent { createdAt actor { login } } } } } } } }`;
   return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`];
 }
+
+/** How far apart a merge and the close it comes with may be. */
+const MERGE_CLOSE_MS = 60_000;
 
 const TYPE: Record<string, GitHubEvent["type"]> = {
   LabeledEvent: "labeled",
@@ -53,14 +56,16 @@ export function parseEvents(json: string): GitHubEvent[] {
       const who = login(n.assignee);
       if (who) e.assignee = who;
     }
-    const reason = str(n.stateReason)?.toUpperCase();
-    if (type === "closed" && reason === "NOT_PLANNED") e.stateReason = "not_planned";
-    if (type === "closed" && reason === "COMPLETED") e.stateReason = "completed";
+    const reason = type === "closed" ? closeReason(n.stateReason) : undefined;
+    if (reason) e.stateReason = reason;
     return [e];
   });
-  // A pull request that is merged is closed at the same moment: the merge says it.
-  const merged = new Set(events.filter((e) => e.type === "merged").map((e) => e.at));
-  return events.filter((e) => !(e.type === "closed" && merged.has(e.at)));
+  // A merge closes the pull request too, up to a second before or after it; the merge says it. A merged one is never
+  // reopened after, so the close of the merge is one near it that no reopen comes after.
+  const merges = events.filter((e) => e.type === "merged").map((e) => Date.parse(e.at));
+  const ofMerge = (e: GitHubEvent, i: number) =>
+    e.type === "closed" && merges.some((m) => Math.abs(Date.parse(e.at) - m) <= MERGE_CLOSE_MS) && !events.slice(i + 1).some((later) => later.type === "reopened");
+  return events.filter((e, i) => !ofMerge(e, i));
 }
 
 export default {

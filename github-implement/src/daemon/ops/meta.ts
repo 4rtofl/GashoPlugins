@@ -4,8 +4,12 @@ import { gh, KEEP_MAX_SECONDS } from "../core.ts";
 import { labelColor, login, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
-export const labelsArgs = (repo: string): string[] => ["label", "list", "--repo", repo, "--limit", "200", "--json", "name,color"];
-export const assignableArgs = (repo: string): string[] => ["api", `repos/${repo}/assignees?per_page=100`];
+/** What is read, at most: a repository with as many may have more, which the pickers find by name. */
+const LABELS_MAX = 200;
+const ASSIGNABLE_MAX = 100;
+
+export const labelsArgs = (repo: string): string[] => ["label", "list", "--repo", repo, "--limit", String(LABELS_MAX), "--json", "name,color"];
+export const assignableArgs = (repo: string): string[] => ["api", `repos/${repo}/assignees?per_page=${ASSIGNABLE_MAX}`];
 export const meArgs = ["api", "user"];
 
 export function parseMeta(labelsJson: string, assignableJson: string, meJson: string | undefined): RepoMeta {
@@ -17,7 +21,7 @@ export function parseMeta(labelsJson: string, assignableJson: string, meJson: st
   });
   const assignable = (JSON.parse(assignableJson) as unknown[]).flatMap((u) => (login(u) ? [login(u) as string] : []));
   const me = meJson ? login(JSON.parse(meJson)) : undefined;
-  return { labels, assignable, ...(me ? { me } : {}) };
+  return { labels, ...(labels.length >= LABELS_MAX ? { labelsMore: true } : {}), assignable, ...(assignable.length >= ASSIGNABLE_MAX ? { assignableMore: true } : {}), ...(me ? { me } : {}) };
 }
 
 export default {
