@@ -7,7 +7,7 @@ import { useRef, useState } from "react";
 import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
 import { readOp, useFreshReload } from "../daemon.ts";
-import { itemsTarget, useRefreshOptions } from "../tabs.ts";
+import { itemsTarget, OfflineContext, useRefreshOptions } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
 import { Button, buttonClass } from "../ui/button.tsx";
 import { INPUT } from "../ui/input.ts";
@@ -101,10 +101,12 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
       )}
       {!item && r.loading && <DetailSkeleton />}
       {item && where && (
-        <ItemProvider value={{ machine: machine.id, machineInfo: machine, worktree, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision, reload }}>
-          <Detail />
-          <ItemPalette worktree={worktree} />
-        </ItemProvider>
+        <OfflineContext.Provider value={!daemon.ready}>
+          <ItemProvider value={{ machine: machine.id, machineInfo: machine, worktree, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision, reload }}>
+            <Detail />
+            <ItemPalette worktree={worktree} />
+          </ItemProvider>
+        </OfflineContext.Provider>
       )}
       {r.at && <p className="text-xs text-muted-foreground">{new Date(r.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} に読み込み</p>}
     </div>
