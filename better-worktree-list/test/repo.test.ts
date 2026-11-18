@@ -87,6 +87,19 @@ test("a worktree with its repository's name but not its folder goes in that repo
   assert.equal(named[0]!.launch, alone.key);
   assert.equal(named[0]!.description, undefined);
 
+  // Two repositories of the name: a category of the name, told apart by a fixed word whatever worktree was used last
+  // (one in /u/src would otherwise be told as …/src, as the repository in /u/src is).
+  const upstream = worktree(mac, "/u/src/Gasho", { repo: "/u/src/Gasho", repoName: "Gasho" });
+  const fork = worktree(mac, "/u/fork/Gasho", { repo: "/u/fork/Gasho", repoName: "Gasho" });
+  const inSrc = worktree(mac, "/u/src/old", { repoName: "Gasho" });
+  const elsewhere = worktree(mac, "/var/old/two", { repoName: "Gasho" });
+  for (const last of [inSrc, elsewhere]) {
+    assert.deepEqual(
+      repoCategories(context([mac], [used(last, 300), used(upstream, 200), used(fork, 100)])).map((c) => `${c.title} ${c.description}`),
+      ["Gasho フォルダー不明", "Gasho …/src", "Gasho …/fork"],
+    );
+  }
+
   // Another working server's repository of the name is not it.
   const pc = machine("pc");
   const onPc = worktree(pc, "/tmp/wt/old", { repoName: "Gasho" });

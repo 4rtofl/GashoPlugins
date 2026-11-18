@@ -85,8 +85,12 @@ export function repoCategories(ctx: WorktreeListContext): WorktreeCategory[] {
   const where = new Map<string, string>();
   for (const cs of sameName.values()) {
     if (cs.length < 2) continue;
-    const labels = folderLabels(cs.map((c) => c.folder ?? c.worktrees[0]!.path));
-    cs.forEach((c, i) => where.set(c.id, labels[i]!));
+    // A category of the name alone has no folder of its own: told by a fixed word, not by a worktree in it, which would
+    // change with the one used last and could match another heading's folder.
+    const withFolder = cs.filter((c) => c.folder !== undefined);
+    const labels = folderLabels(withFolder.map((c) => c.folder!));
+    withFolder.forEach((c, i) => where.set(c.id, labels[i]!));
+    for (const c of cs) if (c.folder === undefined) where.set(c.id, "フォルダー不明");
   }
 
   return categories.map((c) => {
