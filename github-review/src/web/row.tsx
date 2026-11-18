@@ -175,7 +175,7 @@ export function PrItemRow({ item, now, showRepo, fresh }: { item: Item; now: num
             </span>
             {shared?.machines && <span>（{s.machine.name}）</span>}
             <span className="font-mono">{s.worktree?.branch ?? "detached HEAD"}</span>
-            {s.worktree?.review && s.cleanup && !s.cleanup.problem ? (
+            {s.cleanup && !s.cleanup.problem ? (
               <Badge tone="neutral" dot className="h-5 px-2 text-[11px]" title={CLEANUP_HINT[s.cleanup.kind]}>
                 {s.cleanup.done ? "終わったので片付けます" : "終わったら片付けます"}
               </Badge>
@@ -221,7 +221,8 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
   const off = shared.busy.has(pr.url);
   const placed = spots.filter((s) => s.worktree);
   if (placed.length > 0) {
-    const review = placed.filter((s) => s.worktree?.review);
+    // Those made for the review, and one of any name that a merge asked to clean up.
+    const review = placed.filter((s) => s.worktree?.review || s.cleanup);
     // A worktree with no Gasho session opens only where Gasho can start one.
     const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
     return (

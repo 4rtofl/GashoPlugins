@@ -171,13 +171,35 @@ export function readPlugins(root: string): { folder: string; manifest: CheckedMa
 
 const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
-function main(): void {
-  const root = path.resolve(import.meta.dirname, "..");
-  const dry = process.argv.includes("--dry-run");
-  const repo = process.env.GITHUB_REPOSITORY ?? "4rtofl/GashoPlugins";
-  const target = process.env.GITHUB_SHA;
+/**
+ * tar's arguments for `out`, the files of `dir`, named alike on every run. GNU tar (GitHub Actions) also sorts them;
+ * the tar of macOS (bsdtar) takes neither --sort nor --owner, and makes only the archive of --dry-run.
+ */
+function tarArgs(gnu: boolean, out: string, dir: string): string[] {
+  return gnu
+    ? ["-czf", out, "-C", dir, "--sort=name", "--owner=0", "--group=0", "--numeric-owner", "."]
+    : ["-czf", out, "-C", dir, "--uid", "0", "--gid", "0", "--numeric-owner", "--no-mac-metadata", "."];
+}
+
+export interface ReleaseOptions {
+  /** The root of the repository of plugins. */
+  root: string;
+  /** owner/name, given to gh as --repo. */
+  repo: string;
+  /** The commit new releases are made at (GITHUB_SHA); without it, GitHub's default branch. */
+  target?: string;
+  /** Says what it would release and how the catalog would be, and changes nothing. */
+  dry: boolean;
+  /** Runs gh with these arguments and gives its stdout; throws when gh fails. */
+  gh: (args: string[]) => string;
+  log: (line: string) => void;
+}
+
+/** Releases the plugins whose version has no release yet, and uploads catalog.json again when it changes. */
+export function release(o: ReleaseOptions): void {
+  const { root, repo, target, dry, log } = o;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugins-release-"));
-  const gh = (args: string[]) => execFileSync("gh", [...args, "--repo", repo], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  const gh = (args: string[]) => o.gh([...args, "--repo", repo]);
   const tryGh = (args: string[]) => {
     try {
       return gh(args);
@@ -185,6 +207,7 @@ function main(): void {
       return undefined;
     }
   };
+  let gnu: boolean | undefined;
   try {
     const releases = new Set(gh(["release", "list", "--limit", "1000", "--json", "tagName", "--jq", ".[].tagName"]).split("\n").filter(Boolean));
     let before: Catalog | undefined;
@@ -201,24 +224,25 @@ function main(): void {
         const known = before?.plugins.find((p) => p.id === m.id && p.version === m.version && p.file === fileOf(m));
         if (known) {
           entries.push(entryOf(m, known));
-          console.log(`${m.id} ${m.version}: released before`);
+          log(`${m.id} ${m.version}: released before`);
           continue;
         }
         gh(["release", "download", releaseOf(m), "--pattern", fileOf(m), "--dir", tmp]);
         const data = fs.readFileSync(path.join(tmp, fileOf(m)));
         entries.push(entryOf(m, { sha256: sha256(data), size: data.length }));
-        console.log(`${m.id} ${m.version}: released before`);
+        log(`${m.id} ${m.version}: released before`);
         continue;
       }
       const dist = path.join(root, folder, "dist");
       const built = JSON.parse(fs.readFileSync(path.join(dist, "gasho-plugin.json"), "utf8")) as Manifest;
       if (built.id !== m.id || built.version !== m.version) throw new Error(`${folder}/dist is not ${m.id} ${m.version}: run npm run build first`);
       const out = path.join(tmp, fileOf(m));
-      execFileSync("tar", ["-czf", out, "-C", dist, "--sort=name", "--owner=0", "--group=0", "--numeric-owner", "."]);
+      gnu ??= execFileSync("tar", ["--version"], { encoding: "utf8" }).includes("GNU tar");
+      execFileSync("tar", tarArgs(gnu, out, dist));
       const data = fs.readFileSync(out);
       entries.push(entryOf(m, { sha256: sha256(data), size: data.length }));
       if (dry) {
-        console.log(`${m.id} ${m.version}: would release ${fileOf(m)} (${data.length} bytes) as ${releaseOf(m)}`);
+        log(`${m.id} ${m.version}: would release ${fileOf(m)} (${data.length} bytes) as ${releaseOf(m)}`);
         continue;
       }
       gh([
@@ -228,18 +252,18 @@ function main(): void {
         "--latest=false",
         ...(target ? ["--target", target] : []),
       ]);
-      console.log(`${m.id} ${m.version}: released as ${releaseOf(m)}`);
+      log(`${m.id} ${m.version}: released as ${releaseOf(m)}`);
     }
 
     const catalog: Catalog = { repo, updatedAt: new Date().toISOString(), genres, plugins: entries.sort((a, b) => (a.id < b.id ? -1 : 1)) };
     if (sameCatalog(before, catalog)) {
-      console.log("catalog.json: no change");
+      log("catalog.json: no change");
       return;
     }
     const file = path.join(tmp, "catalog.json");
     fs.writeFileSync(file, `${JSON.stringify(catalog, null, 2)}\n`);
     if (dry) {
-      console.log(`catalog.json: would be\n${fs.readFileSync(file, "utf8")}`);
+      log(`catalog.json: would be\n${fs.readFileSync(file, "utf8")}`);
       return;
     }
     if (!releases.has(CATALOG_RELEASE)) {
@@ -252,10 +276,19 @@ function main(): void {
       ]);
     }
     gh(["release", "upload", CATALOG_RELEASE, file, "--clobber"]);
-    console.log(`catalog.json: ${catalog.plugins.map((p) => `${p.id} ${p.version}`).join(", ")}`);
+    log(`catalog.json: ${catalog.plugins.map((p) => `${p.id} ${p.version}`).join(", ")}`);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-if (import.meta.main) main();
+if (import.meta.main) {
+  release({
+    root: path.resolve(import.meta.dirname, ".."),
+    repo: process.env.GITHUB_REPOSITORY ?? "4rtofl/GashoPlugins",
+    target: process.env.GITHUB_SHA,
+    dry: process.argv.includes("--dry-run"),
+    gh: (args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }),
+    log: (line) => console.log(line),
+  });
+}

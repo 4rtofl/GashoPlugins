@@ -133,7 +133,7 @@ export function ReviewPage(_: PageProps) {
                 <div key={g.repo} className="space-y-1.5">
                   <h3 className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
                     {g.repo}
-                    {!g.watched && <span className="font-normal text-muted-foreground">対象リポジトリではありませんが、レビュー用の worktree があります</span>}
+                    {!g.watched && <span className="font-normal text-muted-foreground">対象リポジトリではありませんが、Pull request の worktree があります</span>}
                   </h3>
                   {g.items.length === 0 ? <Empty>検索の語に合う Pull request はありません。</Empty> : <Rows items={g.items} now={now} fresh />}
                 </div>

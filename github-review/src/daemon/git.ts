@@ -239,11 +239,12 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
 
 /**
  * Removes the review worktree of a pull request and its local branch: only when nothing in it would be lost, that is,
- * no uncommitted change and no commit that is neither on a branch of a remote nor the pull request's head.
+ * no uncommitted change and no commit that is neither on a branch of a remote nor the pull request's head. `anyName`:
+ * the worktree on its branch counts too, whatever its name (a merge asked to clean it up). Never the primary checkout.
  */
-export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Removed> {
+export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { anyName?: boolean } = {}): Promise<Removed> {
   const wt = prWorktree(clone, pr);
-  if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
+  if (!wt || wt.path === clone.path || !(wt.review || o.anyName)) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
   const changes = (await git(exec, wt.path, ["status", "--porcelain"])).split("\n").filter(Boolean).length;
   if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
   // The pull request's head counts as pushed: its branch may be gone from origin once merged. A head pushed after the

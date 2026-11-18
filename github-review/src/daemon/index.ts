@@ -147,10 +147,14 @@ export default defineDaemonPlugin({
           throw new PluginError("セッションの削除の指定が正しくありません。");
       }
     },
-    /** Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed). */
+    /**
+     * Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed);
+     * a worktree of any other name only when "マージしてもらう" asked for it to be cleaned up.
+     */
     async remove(params, ctx) {
       const { clone, head } = await target(params, ctx);
-      return removeWorktree(ctx.exec, clone, head);
+      const asked = await cleanups?.get(repoArg(objArg(params).repo), head.number);
+      return removeWorktree(ctx.exec, clone, head, { anyName: asked?.kind === "merge" });
     },
   },
 });
