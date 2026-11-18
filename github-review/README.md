@@ -20,6 +20,7 @@
   - `review-<番号>` が、この repo の worktree でないもの（親フォルダーが同じ別の repo の、同じ番号の Pull request の worktree など）としてあれば、`review-<リポジトリ名>-<番号>`（`4rtofl/GashoPlugins` の #12 なら `review-GashoPlugins-12`）に作り、通知にそう出す。それもあれば、作らずに理由を出す
   - 同じ repo の clone が信頼しているフォルダーに2つ以上あるときは、その Pull request の worktree がある clone、無ければ対象リポジトリに選んだ clone、無ければパスの順で最初の clone を使う。一覧で照らし合わせる clone と、worktree を作る・片付ける clone は、いつも同じ
   - テンプレートを送るときは、そのセッションの Effort を Max に切り替えてから送る（Gasho の入力欄の Effort のピッカーと同じく、そのセッションだけ）。切り替えられなかったとき（このモデルでは選べないなど）は、テンプレートはそのまま送り、ページの下に理由と「セッションを開く」を出す。Effort を切り替えられない gasho-daemon（0.6.0 より前）では、切り替えずに送る
+- 自分の開いている Pull request で worktree があるもの（ふつうは、それを作った worktree）には、「worktree を作る」が出ない代わりに「レビューする」を出す。テンプレートを選ぶと、その worktree で新しいセッションを起動し（作ったときのセッションとは別にする）、「worktree を作る」と同じ指示を同じ Effort で送る。このページに留まり、通知の「セッションを開く」で開く。その worktree のセッションが作業しているあいだ（「レビュー中」）は押せない。サイドパネルにも出す
 - worktree を作ってテンプレートを送るときは、テンプレートの終わりに、レビューの結果を Pull request のコメントとして投稿する指示を足す（設定でテンプレートを直しても、判定が取れなくならないように）。コメントは自分の GitHub アカウントで投稿されるので、1行目を「## 🤖 Agent によるレビュー」にし、最後の行に画面に出ない印 `<!-- gasho-review verdict=mergeable sha=<レビューした head の SHA> -->`（`verdict` は `mergeable` か `changes`）を入れてもらう
 - `list` は、Pull request ごとに最新の10件のコメントを読み、自分が書いた印のうち最新のものを行に付ける（問い合わせは2点ほどになる）。また、自分が request changes を付けたかを見るため、request changes のレビューを最新の5件読む。行には、次のどれかを出す
   - レビュー中: worktree のセッションが作業中か応答待ち（送った指示が入力を待っているときも）で、今の head についての印が無い
