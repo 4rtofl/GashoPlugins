@@ -410,7 +410,7 @@ test("a version older than one released already stops it, before anything is rel
   const root = repo({ other: { ...manifest, id: "other", name: "Other" }, hello: manifest });
   build(root, "other");
   commit(root);
-  const released = [
+  const released: Parameters<typeof github>[0] = [
     { tag: "hello-v1.10.0", files: { "hello-1.10.0.tgz": "" } },
     { tag: "hello-v1.2.0-beta.1", files: { "hello-1.2.0-beta.1.tgz": "" } },
   ];
