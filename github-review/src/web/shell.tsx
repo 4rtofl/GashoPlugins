@@ -1,6 +1,7 @@
 // What the review page and the page of one pull request share around the rows' buttons: the tools they use, the
 // templates and the settings of the merge, which rows are at work, and the dialogs and the notice they show; and the
 // removal of the review worktrees whose merge or send-back is done, and of the sessions that have posted their review.
+// The rows "まとめてレビューさせる" has not done yet are at work too (batch-run.ts).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCall, useLaunchSession, useNavigation, useRemoveSession, useRemoveWorktree, removeWorktreeProblem, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../cleanup.ts";
@@ -11,6 +12,7 @@ import type { Place, Removed } from "../types.ts";
 import { working } from "../verdict.ts";
 import { cleanUp, removeFinishedSession, type Actions, type Item, type Notice, type Spot, type Tools } from "./actions";
 import { holdSending, useAsked } from "./asked";
+import { batchBusy, useBatchRun } from "./batch-run";
 import { AskDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
 import type { Source } from "./listing";
 import type { RowShared } from "./row";
@@ -53,6 +55,8 @@ export function useRowShell({
     },
     [],
   );
+  const batch = useBatchRun();
+  const atWork = useMemo(() => new Set([...sending.keys(), ...batchBusy(batch)]), [sending, batch]);
 
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
@@ -72,7 +76,7 @@ export function useRowShell({
     tools,
     templates,
     ...(templatesProblem ? { templatesProblem } : {}),
-    busy: sending,
+    busy: atWork,
     machines: ready.length > 1,
     merge,
     listedAt: (machines) => {
