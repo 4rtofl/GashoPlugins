@@ -25,6 +25,12 @@ export interface ShellJob {
   lines: number;
 }
 
+/** What `run` answers: the record it started, or the one already started for the same request. */
+export interface RunAnswer extends ShellJob {
+  /** Started for the same request before: nothing ran this time. */
+  earlier?: true;
+}
+
 /** A stretch of a command's output: `text` starts `from` characters after the start of the output. */
 export interface OutputPiece {
   from: number;

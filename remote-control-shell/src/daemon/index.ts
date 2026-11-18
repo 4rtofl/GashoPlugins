@@ -41,7 +41,7 @@ export default defineDaemonPlugin({
   methods: {
     /**
      * Runs { command } (or the command of the record { again }) in the working folder: the record, running. With
-     * { request }, the record already started for it, if there is one.
+     * { request }, the record already started for it, if there is one, marked `earlier`.
      */
     async run(params, ctx) {
       const p = fields(params);

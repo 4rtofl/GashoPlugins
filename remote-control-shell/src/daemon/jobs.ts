@@ -13,7 +13,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import type { OutputAnswer, OutputPiece, ShellJob, ShellView, StatusAnswer } from "../types.ts";
+import type { OutputAnswer, OutputPiece, RunAnswer, ShellJob, ShellView, StatusAnswer } from "../types.ts";
 import { OutputBuffer } from "./output.ts";
 import { processStart, sameProcess } from "./proc.ts";
 import { pickShell, shellArgs, shellEnv, type ShellChoice, type Startup } from "./shell.ts";
@@ -261,14 +261,14 @@ export class Shells {
 
   // ---- the methods ----
 
-  async run(folderPath: string, input: RunInput, settings: ShellSettings): Promise<ShellJob> {
+  async run(folderPath: string, input: RunInput, settings: ShellSettings): Promise<RunAnswer> {
     const refuse = () => new PluginError("Remote Control Shell が止まるところなので、実行できません。");
     if (this.stopping) throw refuse();
     const [f, ownerStart] = await Promise.all([this.folder(folderPath), this.ownerStart]);
     // stop() may have begun meanwhile: it ends only the commands it found.
     if (this.stopping) throw refuse();
     const earlier = input.request === undefined ? undefined : f.jobs.find((j) => j.meta.request === input.request);
-    if (earlier) return publicJob(earlier.meta);
+    if (earlier) return { ...publicJob(earlier.meta), earlier: true };
     let command = input.command;
     let cwd = f.cwd;
     if (input.again !== undefined) {

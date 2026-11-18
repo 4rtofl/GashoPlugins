@@ -346,7 +346,7 @@ test("a run sent again with the same request answers the record started for it, 
     // The second comes while the first waits for the folder to be read, as when the first had no answer in time.
     const [a, b] = await Promise.all([shells.run(folder, input, SH), shells.run(folder, input, SH)]);
     first = a.id;
-    assert.equal(b.id, a.id);
+    assert.deepEqual([b.id, a.earlier, b.earlier], [a.id, undefined, true]);
     await settle(shells, folder, a.id);
     assert.equal((await shells.run(folder, input, SH)).id, a.id);
   } finally {

@@ -4,7 +4,7 @@
 import { ArrowUp, CircleCheck, CircleStop, CircleX, CornerDownLeft, Ellipsis, LoaderCircle, Trash2, TriangleAlert, Undo2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
 import { cn, Panel, PANEL_BUTTON, useCall, useDaemonReady, useNow, useSetting, type PanelProps } from "@gasho/plugin-sdk";
-import type { OutputAnswer, ShellJob } from "../types.ts";
+import type { OutputAnswer, RunAnswer, ShellJob } from "../types.ts";
 import { plainText, toLines, type Line, type Style } from "./ansi";
 import { useShell } from "./follow";
 import { commandHistory, commandSummary, duration, folderLabel, insideFolder } from "./format";
@@ -37,7 +37,8 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
   const [logCommands] = useSetting<boolean>("logCommands");
   const [input, setInput] = useState("");
   const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
+  /** A remark under the box: gone after a little while, unless it is to stay until the next command is sent. */
+  const [notice, setNotice] = useState<{ text: string; keep?: boolean }>();
   const [announce, setAnnounce] = useState("");
   /** Commands opened past their last lines: how many lines they show. */
   const [opened, setOpened] = useState<Record<string, number>>({});
@@ -88,7 +89,7 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
   }, [state.jobs, state.windows, opened]);
 
   useEffect(() => {
-    if (!notice) return;
+    if (!notice || notice.keep) return;
     const timer = setTimeout(() => setNotice(undefined), 2500);
     return () => clearTimeout(timer);
   }, [notice]);
@@ -104,17 +105,18 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
 
   const run = async (params: { command: string } | { again: string }, command: string): Promise<boolean> => {
     setError(undefined);
+    setNotice(undefined);
     // The same request until it has an answer: the daemon part answers the record it started for it, if any.
     const key = JSON.stringify(params);
     const request = unanswered.current?.key === key ? unanswered.current.request : newRequest();
     unanswered.current = { key, request };
     const cols = columns(rootRef.current, measureRef.current);
     const send = () =>
-      call<ShellJob>(target("run", { ...params, request, ...(cols ? { cols } : {}) }, logCommands === false ? "コマンドを実行" : commandSummary(command)));
+      call<RunAnswer>(target("run", { ...params, request, ...(cols ? { cols } : {}) }, logCommands === false ? "コマンドを実行" : commandSummary(command)));
     let r = await send();
     let resent = 0;
     for (; resent < RUN_RESENDS && !r.ok && unknownResult(r.error); resent++) {
-      setNotice("working server からの応答が遅れています。実行されたかを確かめています…");
+      setNotice({ text: "working server からの応答が遅れています。実行されたかを確かめています…" });
       r = await send();
     }
     if (resent > 0) setNotice(undefined);
@@ -123,10 +125,14 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
       return false;
     }
     if (unanswered.current?.request === request) unanswered.current = undefined;
+    const { earlier, ...job } = r.data;
     atBottom.current = true;
-    update((s) => addJob(s, r.data));
-    setOpened((o) => ({ ...o, [r.data.id]: PAGE_LINES }));
-    return true;
+    update((s) => addJob(s, job));
+    setOpened((o) => ({ ...o, [job.id]: PAGE_LINES }));
+    if (!earlier) return true;
+    // The command stays in the box: sent again, it runs anew.
+    setNotice({ text: "前に送ったときに実行されていたので、その記録を出しました（今回は実行していません）。もう一度実行するときは、もう一度送ってください。", keep: true });
+    return false;
   };
   const stop = async (job: ShellJob, signal: "INT" | "KILL") => {
     setError(undefined);
@@ -185,7 +191,7 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
         from = r.data.from + r.data.text.length;
       }
     }
-    setNotice((await copyText(plainText(text))) ? "出力をコピーしました。" : "コピーできませんでした。");
+    setNotice({ text: (await copyText(plainText(text))) ? "出力をコピーしました。" : "コピーできませんでした。" });
   };
   const putInput = (command: string) => {
     setInput(command);
@@ -249,7 +255,7 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
               onStop={(signal) => void stop(job, signal)}
               onAgain={() => void run({ again: job.id }, job.command)}
               onPutInput={() => putInput(job.command)}
-              onCopyCommand={async () => setNotice((await copyText(job.command)) ? "コマンドをコピーしました。" : "コピーできませんでした。")}
+              onCopyCommand={async () => setNotice({ text: (await copyText(job.command)) ? "コマンドをコピーしました。" : "コピーできませんでした。" })}
               onCopyOutput={() => void copyOutput(job)}
               onRemove={() => void clear(job)}
             />
@@ -266,7 +272,7 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
           enabled={enabled}
           history={history}
           canStop={running.length > 0}
-          message={error ? { text: error, error: true } : notice ? { text: notice } : undefined}
+          message={error ? { text: error, error: true } : notice ? { text: notice.text } : undefined}
           onRun={(command) => run({ command }, command)}
           onStopNewest={stopNewest}
           onBackHome={() => void backHome()}

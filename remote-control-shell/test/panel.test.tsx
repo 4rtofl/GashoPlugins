@@ -63,6 +63,32 @@ describe("ShellPanel", () => {
     expect(box()).toHaveProperty("value", "npm test");
   });
 
+  it("sends a run that had no answer with the same request, and keeps the command when the record started for it comes back", async () => {
+    const answers: CallResult<unknown>[] = [
+      ...Array.from({ length: 3 }, () => ({ ok: false as const, error: "working server から応答がありません。" })),
+      { ok: true, data: { ...job({ state: "exited", exitCode: 0, endedAt: Date.now() }), earlier: true } },
+      { ok: true, data: job({ id: "mhz0a1b3-bbbbbb" }) },
+    ];
+    daemon({}, { run: () => answers.shift()! });
+    draw();
+    await screen.findByText(/まだコマンドを実行していません/);
+    await user.type(box(), "npm test{Enter}");
+    expect(await screen.findByText(/実行されたかは分かりません/)).toBeTruthy();
+    expect(box()).toHaveProperty("value", "npm test");
+
+    // Sent again later: the record the first one started, and nothing ran.
+    await user.type(box(), "{Enter}");
+    expect(await screen.findByText(/前に送ったときに実行されていたので/)).toBeTruthy();
+    expect(box()).toHaveProperty("value", "npm test");
+
+    await user.type(box(), "{Enter}");
+    await waitFor(() => expect(box()).toHaveProperty("value", ""));
+    const requests = callsOf("run").map((p) => (p as { request: string }).request);
+    expect(requests).toHaveLength(5);
+    expect(new Set(requests.slice(0, 4)).size).toBe(1);
+    expect(requests[4]).not.toBe(requests[0]);
+  });
+
   it("stops a running command with SIGINT, and with SIGKILL once it has not stopped for 3 seconds", async () => {
     set({ now: Date.now() });
     daemon({ jobs: [job()] });
