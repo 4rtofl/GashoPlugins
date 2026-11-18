@@ -8,7 +8,7 @@
 
 1. リングには、そのセッションの Context Window の使用率だけを出す。使用量の上限は Popover に出す
 2. Context Window の値は、Gasho から起動したセッションで、Claude Code がステータスラインに渡すものを使う。gasho-daemon が中継して `SessionInfo.context` に入れる
-3. 使用量の上限は、このプラグインの daemon の部分が、Claude Code の `get_usage` で読む。試験中の API なので、読めないときは、ステータスラインで受け取った上限（`SessionInfo.limits`）を出す
+3. 使用量の上限は、このプラグインの daemon の部分が、Claude Code の `get_usage` で読む。試験中の API なので、読めないときは、ステータスラインで受け取った上限（`SessionInfo.limits`）を出す。読んだあとに返答があったときも、ステータスラインの新しいほうを出す
 4. 5時間の上限は、プランによってない。あるときだけ出す
 5. Popover は、Gasho の SDK のものを使う。プラグインの CSS は、ページの末尾（ポータル）に出した中身には、SDK の `Popover` の中でしか当たらない
 
@@ -53,10 +53,12 @@
 ```
 
 - コンテキストの欄には、Claude Code の `used_percentage` による使用率と、使っているトークン数 / Context Window の大きさを出す。自動の要約（auto-compact）は 100% より前に始まるが、その閾値はステータスラインの JSON にないので、要約までの残りは出さない
-- 上限は、5時間の上限、すべてのモデルを合わせた週の上限、モデルごとの週の上限の順に、使用率とリセットの時刻で出す。リセットの時刻が今日なら時刻だけを、そうでなければ日付と曜日も出す。リセットの時刻を過ぎた上限は、「リセット済み」とする
-- 上限は、Popover を開いているあいだだけ、daemon の部分から読む。読み終わるまでと、読めなかったときは、ステータスラインで受け取った上限を「最後の返答の時点」として出す。この上限には、モデルごとの週の上限はない。読めなかったときは、その理由も出す
-- Claude Code が Claude.ai のプランで使われていない（API キーなど）ときは、上限がないことを書く。どちらからも上限が分からないときは、最初の返答のあとに出ることを書く
-- working server がオフラインのときは、最後に受け取った値を出し、オフラインであることを書く
+- 上限は、Claude Code の `/usage` と同じく、5時間の上限、すべてのモデルを合わせた週の上限、Sonnet の週の上限（`/usage` の「Current week (Sonnet only)」。`/usage` と同じく、プランが Max・Team か分からないときだけ）、モデルごとの週の上限の順に、使用率とリセットの時刻で出す。使用率は `/usage` と同じく切り捨てる（99.7% は 99%）。リセットの時刻は分に丸める（Claude.ai は、同じ時刻の上限を 13:59:59.7 と 14:00:00 で返すことがある）。今日なら時刻だけを、そうでなければ日付と曜日も出す。リセットの時刻を過ぎた上限は、「リセット済み」とする。リセットの時刻のない上限（まだ使っていない5時間の枠など）は、`/usage` と同じく使用率だけを出す
+- 上限は、Popover を開いているあいだだけ、daemon の部分から読む。読み終わるまでと、読めなかったときは、ステータスラインで受け取った上限を「最後の返答の時点」として出す。この上限には、モデルごとの週の上限はない。読めなかったときは、その理由も出す。読めなかったあとは、Popover を開くたびに読み直す
+- 読んだ値とステータスラインの値は、新しいほうを出す。ステータスラインのほうが新しいときも、ステータスラインにないモデルごとの週の上限などは、前に読んだ値を、読んだ時刻と一緒に出す
+- Claude Code が Claude.ai のプランで使われていない（API キーなど）ときは、上限がないことを書く。`claude setup-token` のトークン（`CLAUDE_CODE_OAUTH_TOKEN`）は使用量を読めないので、`get_usage` は API キーと同じ答えを返すが、返答のヘッダーから作るステータスラインには上限が届く。そのときは、ステータスラインの上限を出し、モデルごとの週の上限は読めないことを書く。どちらからも上限が分からないときは、最初の返答のあとに出ることを書く
+- daemon の部分が動いていないときは、Gasho が伝える理由（`useDaemonReady().reason`）を出す
+- working server がオフラインのときは、最後に受け取った値（読んだ値も、ページを開いているあいだは残す）を出し、オフラインであることを書く
 
 ステータスラインの上限は、セッションごとに、そのセッションが最後に返答した時点の値である。同じ working server のセッションは、同じ Claude Code のログインを使う。そこで、その working server のセッションのうち、`limits.at` がいちばん新しい値を使う。
 
@@ -67,14 +69,16 @@
 メソッド `limits` は、Claude Code を次の引数で起動し、標準入力で `initialize` と `get_usage`（`skip_behaviors: true`）の制御リクエストを1行ずつ渡して、`get_usage` の答えを待つ。
 
 ```
-claude -p --input-format stream-json --output-format stream-json --verbose --no-session-persistence
+claude -p --input-format stream-json --output-format stream-json --verbose --no-session-persistence --settings '{"disableAllHooks":true}'
 ```
 
-発言は送らないので、モデルは呼ばず、トークンも使わない。標準入力を閉じても、Claude Code は2つに答えてから終わる。`ctx.exec` は標準入力を渡せないので、`sh -c` の中で、`printf` の出力をパイプで Claude Code に渡す。渡す2行と `claude` の場所は環境変数で渡し、画面から来た値は入れない。`claude` の場所は、gasho-daemon と同じく、環境変数 `GASHO_CLAUDE_BIN` か `claude` にする。
+発言は送らないので、モデルは呼ばず、トークンも使わない。フックは止める。止めないと、利用者の設定とプラグインにある SessionStart・SessionEnd のフックが、読むたびにすべて動き（試した Mac では20本）、その分の時間もかかる。`--bare` は Claude Code のログイン（OAuth）を読まないので使えない。
+
+標準入力を閉じても、Claude Code は2つに答えてから終わる。答えの行が出たら、Claude Code が終わるのを待たずに使う（答えてから終わるまで数秒〜十数秒かかる）。`ctx.exec` は終わるまで出力を返さず、標準入力も渡せないので、Node.js の `spawn` で、シェルを通さずに、自分のプロセスグループで起動する。答えたあとは自分で終わるのに任せ、起動から90秒たっても動いていれば、プロセスグループに SIGTERM を送る。答える前に90秒たったときは、読めなかったものとする。90秒は、負荷の高い Mac（load average が200〜340）で、フックを止めても答えまで42〜62秒かかったためである。渡す2行は決まった文字列で、画面から来た値は入れない。`claude` の場所は、gasho-daemon と同じく、環境変数 `GASHO_CLAUDE_BIN` か `claude` にする。
 
 Claude Code は `ctx.dataDir`（`~/.local/share/gasho/plugin-data/usage/`）の中で動かす。プラグインの API 1.4 に対応した gasho-daemon は、このフォルダーで動く Claude Code を、セッションの一覧に出さない。
 
-答えからは、`rate_limits_available` と、`rate_limits` の `five_hour`、`seven_day`、`model_scoped` だけを読む。答えにはほかにも多くのフィールドがあるが、名前が内部のものなので使わない。読む値が1つもない答えは、読めなかったものとして扱う。
+答えからは、`subscription_type`、`rate_limits_available` と、`rate_limits` の `five_hour`、`seven_day`、`seven_day_sonnet`、`model_scoped` だけを読む。答えにはほかにも多くのフィールドがあるが、名前が内部のものなので使わない。読む値が1つもない答えは、読めなかったものとして扱う。
 
 daemon の部分は、読んでいるあいだに来た呼び出しには、同じ結果を返す。読んだ結果は30秒覚えておく。複数のブラウザーから続けて呼ばれても、Claude Code を何度も起動しないためである。
 
@@ -82,7 +86,7 @@ daemon の部分は、読んでいるあいだに来た呼び出しには、同�
 
 | メソッド | 種類 | 待つ時間 | 引数 | 返すもの |
 |---|---|---|---|---|
-| `limits` | read | 30秒 | なし | 使用量の上限（`UsageLimits`） |
+| `limits` | read | 100秒 | なし | 使用量の上限（`UsageLimits`） |
 
 `limits` は、セッションを指定せずに、working server を指定して呼ぶ。使用量の上限はアカウントごとの値で、セッションによらないためである。画面の部分は、Popover を開いているあいだだけ `useRequest` で呼び、前に読んだ値が1分より古ければ読み直す（`staleSeconds: 60`）。
 
@@ -91,18 +95,20 @@ daemon の部分は、読んでいるあいだに来た呼び出しには、同�
 export interface UsageLimits {
   /** 読んだ時刻（ミリ秒） */
   at: number;
-  /** false：Claude.ai のプランで使っていない（API キーなど） */
+  /** false：get_usage が読めない。Claude.ai のプランで使っていない（API キーなど）か、setup-token のトークン */
   available: boolean;
   /** 5時間の上限。プランによってない */
-  fiveHour?: UsageWindow;
+  fiveHour?: LimitWindow;
   /** すべてのモデルを合わせた週の上限 */
-  sevenDay?: UsageWindow;
+  sevenDay?: LimitWindow;
+  /** Sonnet の週の上限（/usage が出すプランだけ） */
+  sevenDaySonnet?: LimitWindow;
   /** モデルごとの週の上限（Fable など） */
-  models: (UsageWindow & { name: string })[];
+  models: (LimitWindow & { name: string })[];
 }
 ```
 
-`UsageWindow` は、使用率（`percent`、0〜100）とリセットの時刻（`resetsAt`、ミリ秒）で、Gasho の SDK の型である。
+`LimitWindow` は、使用率（`percent`、0〜100）とリセットの時刻（`resetsAt`、ミリ秒）。Claude.ai がリセットの時刻を返さない上限は、`resetsAt` がない。
 
 ## 値の取り方を選んだ理由
 
@@ -137,16 +143,24 @@ Context Window の使用率を正確に取れるのは、ステータスライ�
 - Popover の幅は、プラグインのクラス（`w-80`）のとおり 320px になった。ページの末尾に出した中身にも、プラグインの CSS が当たっている
 - Esc で Popover が閉じた。使用率を 75%、93% にすると、リングが黄色、赤になった
 
+## 確かめたこと（2026-11-18、1.0.1）
+
+負荷の高い Mac（load average が200〜340）で、Claude Code 2.1.326 を使って確かめた。
+
+- フックを止めても、`get_usage` の答えまで38〜62秒かかり、答えてから Claude Code が終わるまで13〜14秒かかった。daemon の部分の `readLimits` は、答えの行が出た時点（起動から38秒）で値を返した
+- `get_usage` は、週の上限のリセットの時刻を 13:59:59.7、Fable の週の上限を 14:00:00 で返した。分に丸めると、どちらも 23:00 と出る
+- Gasho の main（`2425aba`）の試しの Gasho にビルドを入れ、ページの中でリングと同じクラスのボタンを作って、明るいテーマで Popover を開いた状態（`data-state="open"`）の色を読んだ。前のクラスでは文字の色になり、今のクラスでは黄色（amber-600）のままだった。暗いテーマでは、どちらも黄色（amber-400）だった
+
 ## 安全
 
 - `get_usage` では、Claude Code が自分のログインで Claude.ai の使用量のエンドポイントを読む。このプラグインは、Claude Code のログインのトークンを読まない
-- `limits` が Claude Code に渡す2行は決まった文字列で、画面から来た値は入れない。`sh -c` に渡すコマンドにも、画面から来た値は入れない
+- `limits` が Claude Code に渡す2行と引数は決まった文字列で、画面から来た値は入れない。Claude Code はシェルを通さずに起動する
 
 ## ファイルの構成とテスト
 
 ```
 usage/
-├─ gasho-plugin.json       methods に limits（read、30秒）
+├─ gasho-plugin.json       methods に limits（read、100秒）
 ├─ package.json            build は gasho-plugin build、dev は gasho-plugin build --watch
 ├─ tsconfig.json
 ├─ src/
@@ -165,8 +179,8 @@ usage/
    └─ limits.test.ts
 ```
 
-- `usage.test.ts`：`get_usage` の答えの読み方（`five_hour` が null のとき、`rate_limits_available` が false のとき、答えの形が違うとき、エラーのとき）、Claude Code に渡す2行とコマンド、同時の呼び出しを1回にまとめて30秒覚えること、失敗の理由の伝え方
-- `limits.test.ts`：リングの色の段階、トークン数の書き方、ステータスラインの上限の選び方、Popover に出す上限の並び、リセットの時刻の書き方
+- `usage.test.ts`：`get_usage` の答えの読み方（`five_hour` が null のとき、リセットの時刻がないとき、Sonnet の週の上限をプランで分けること、`rate_limits_available` が false のとき、答えの形が違うとき、エラーのとき）、Claude Code に渡す2行、メソッドの待つ時間が読む時間より長いこと、偽の Claude Code（シェルのスクリプト）で、答えを終わる前に使うことと、フックを止める引数と、時間内に答えないとプロセスグループごと止めること、同時の呼び出しを1回にまとめて30秒覚えること、失敗の理由の伝え方
+- `limits.test.ts`：リングの色の段階、使用率の切り捨て、トークン数の書き方、ステータスラインの上限の選び方、Popover に出す上限の並び、読んだ値とステータスラインの値の新しいほう、setup-token のとき、リセットの時刻の書き方と分への丸め
 
 ## 今回は扱わないこと
 

@@ -1,13 +1,13 @@
 // The ring in the line under the chat box (P14): the share of the session's context window in use. Pressing it opens a
 // popover with the context window's tokens and the Claude.ai plan's usage limits. The limits are read with get_usage
-// (the daemon part) only while the popover is open; until they come, and when they cannot be read, the popover shows
-// those the status line reported (SessionInfo.limits), which lack the models' weekly limits.
-import { cn, Popover, relativeTime, useDaemonReady, useNow, useRequest, type ComposerFooterProps } from "@gasho/plugin-sdk";
+// (the daemon part) only while the popover is open; until they come, when they cannot be read, and when a reply came
+// after them, the popover shows those the status line reported (SessionInfo.limits), which lack the models' weekly limits.
+import { useEffect } from "react";
+import { cn, Popover, relativeTime, useDaemonReady, useNow, usePluginState, useRequest, type ComposerFooterProps } from "@gasho/plugin-sdk";
 import type { UsageLimits } from "../types.ts";
 import { clampPercent, latestStatusLineLimits, limitsView, resetLabel, toneOf, tokens, type Tone } from "./limits.ts";
 
-const TONE_TEXT: Record<Tone, string> = {
-  normal: "",
+const TONE_TEXT: Record<Exclude<Tone, "normal">, string> = {
   warn: "text-amber-600 dark:text-amber-400",
   danger: "text-red-600 dark:text-red-400",
 };
@@ -39,8 +39,9 @@ export function UsageRing({ machine, session }: ComposerFooterProps) {
           type="button"
           aria-label={`コンテキスト ${percent}% 使用。使用量の詳細を開く`}
           className={cn(
-            "inline-flex items-center gap-1 rounded tabular-nums outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:text-foreground",
-            TONE_TEXT[tone],
+            "inline-flex items-center gap-1 rounded tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            // Only the plain ring turns to the text's color: hover: comes after text-amber-600 and would win over it.
+            tone === "normal" ? "hover:text-foreground data-[state=open]:text-foreground" : TONE_TEXT[tone],
           )}
         >
           <Ring percent={percent} />
@@ -102,9 +103,24 @@ function Heading({ label, percent }: { label: string; percent?: number }) {
 /** What the popover shows. Drawn only while it is open, so that the limits are read only then. */
 function UsagePanel({ machine, session }: ComposerFooterProps) {
   const now = useNow(30_000);
-  const ready = useDaemonReady(machine.id).ready;
-  const read = useRequest<UsageLimits>(ready && machine.connected ? { machine: machine.id, method: "limits" } : undefined, { staleSeconds: 60 });
-  const view = limitsView(read.data, latestStatusLineLimits(machine));
+  const daemon = useDaemonReady(machine.id);
+  const read = useRequest<UsageLimits>(daemon.ready && machine.connected ? { machine: machine.id, method: "limits" } : undefined, { staleSeconds: 60 });
+  // Kept while the page is open, so that what was read stays while the working server is offline.
+  const [kept, keep] = usePluginState<UsageLimits | undefined>(`limits:${machine.id}`, undefined);
+  useEffect(() => {
+    if (read.data && read.data !== kept) keep(read.data);
+  }, [read.data, kept, keep]);
+  // A read that failed is read again each time the popover opens (this effect runs then only): Gasho before
+  // 4rtofl/Gasho#127 would not.
+  const { error, loading, reload } = read;
+  useEffect(() => {
+    if (error && !loading) reload();
+  }, []);
+  const data = read.data ?? kept;
+  const view = limitsView(data, latestStatusLineLimits(machine));
+  const problem = machine.connected && !daemon.ready && daemon.reason ? `使用量の上限を読めません（${daemon.reason.replace(/。$/, "")}）。` : read.error;
+  const hasUsage = view !== undefined && view.source !== "none" && (view.source === "usage" || view.rows.some((r) => r.at !== undefined));
+  const modelsNote = hasUsage || problem ? undefined : data && !data.available ? "この working server の Claude Code のログインでは、モデルごとの週の上限を読めません。" : read.loading ? "モデルごとの週の上限を読んでいます…" : undefined;
   const context = session.context;
   return (
     <div className="flex flex-col gap-3">
@@ -120,29 +136,39 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
       )}
       <section className="flex flex-col gap-2 border-t border-border pt-3">
         {view === undefined ? (
-          <p className="text-xs text-muted-foreground">
-            {read.loading ? "使用量の上限を読んでいます…" : "使用量の上限は、Claude.ai のプランで使っているとき、最初の返答のあとに出ます。"}
-          </p>
+          !problem && (
+            <p className="text-xs text-muted-foreground">
+              {read.loading ? "使用量の上限を読んでいます…" : "使用量の上限は、Claude.ai のプランで使っているとき、最初の返答のあとに出ます。"}
+            </p>
+          )
         ) : view.source === "none" ? (
           <p className="text-xs text-muted-foreground">この working server の Claude Code は Claude.ai のプランで使っていないので、使用量の上限はありません。</p>
         ) : (
           <>
             {view.rows.map((row) => {
               const percent = clampPercent(row.window.percent);
-              const done = row.window.resetsAt <= now;
+              const resetsAt = row.window.resetsAt;
+              const done = resetsAt !== undefined && resetsAt <= now;
               return (
                 <div key={row.key} className={cn("flex flex-col gap-1", done && "opacity-60")}>
                   <Heading label={row.label} percent={done ? undefined : percent} />
                   {!done && <Bar label={row.label} percent={percent} tone={toneOf(percent)} />}
-                  <p className="text-xs text-muted-foreground">{resetLabel(row.window.resetsAt, now)}</p>
+                  {resetsAt !== undefined && <p className="text-xs text-muted-foreground">{resetLabel(resetsAt, now)}</p>}
+                  {row.at !== undefined && <p className="text-xs text-muted-foreground">Claude.ai から読んだ値（{relativeTime(row.at, now)}）</p>}
                 </div>
               );
             })}
             <p className="text-xs text-muted-foreground">
               {view.source === "usage" ? `Claude.ai から読んだ値（${relativeTime(view.at, now)}）` : `最後の返答の時点（${relativeTime(view.at, now)}）`}
             </p>
-            {view.source === "statusline" && read.error && <p className="text-xs text-amber-600 dark:text-amber-400">{read.error} モデルごとの週の上限は出せません。</p>}
+            {modelsNote && <p className="text-xs text-muted-foreground">{modelsNote}</p>}
           </>
+        )}
+        {problem && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            {problem}
+            {view && view.source !== "none" && !hasUsage ? " モデルごとの週の上限は出せません。" : ""}
+          </p>
         )}
         {!machine.connected && <p className="text-xs text-muted-foreground">working server がオフラインです。最後に受け取った値を出しています。</p>}
       </section>

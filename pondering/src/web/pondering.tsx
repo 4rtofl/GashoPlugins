@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNow, usePluginState, useSessionActivity, type ConversationEndProps, type SessionActivity } from "@gasho/plugin-sdk";
 import { elapsed, tokenCount, toolLabel } from "./format";
 import { pickPhrase } from "./phrases";
-import { nextBaseline, shown, type Baseline } from "./work";
+import { dropped, nextBaseline, shown, type Baseline } from "./work";
 
 /**
  * Claude Code's star, there and back, a frame every 120 ms (style.css). ✳ asks for its text form (U+FE0E), so that
@@ -15,18 +15,33 @@ const FRAMES = ["·", "✢", "✳︎", "✶", "✻", "✽", "✻", "✶", "✳�
 /** The baseline kept in this browser too, so that a reload of the page (a phone does that) keeps the count. */
 const STORE = "gasho.pondering.tokens.";
 
-function saved(key: string): Baseline | null {
+function parse(text: string | null): Baseline | null {
   try {
-    const v = JSON.parse(localStorage.getItem(STORE + key) ?? "null") as Baseline | null;
+    const v = JSON.parse(text ?? "null") as Baseline | null;
     return v && typeof v.output === "number" && typeof v.early === "boolean" ? v : null;
   } catch {
     return null;
   }
 }
 
+function saved(key: string): Baseline | null {
+  try {
+    return parse(localStorage.getItem(STORE + key));
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps `b`, and removes the baselines of the sessions seen longest ago: else there would be one for every session. */
 function save(key: string, b: Baseline): void {
   try {
     localStorage.setItem(STORE + key, JSON.stringify(b));
+    const stored: [string, Baseline | null][] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(STORE)) stored.push([k, parse(localStorage.getItem(k))]);
+    }
+    for (const k of dropped(stored)) localStorage.removeItem(k);
   } catch {
     // kept for this page view only
   }
@@ -47,25 +62,26 @@ export function Pondering({ machine, session }: ConversationEndProps) {
   const sawIdle = useRef(false);
   // This view has watched the work of `base` go on since Gasho last told its start (see sameWork).
   const [watched, setWatched] = useState(false);
+  // Worked out as it is drawn, so that even the first frame of a new work shows nothing of the last one; kept below.
+  const next = working && output !== undefined ? nextBaseline(base, turn, output, Date.now(), sawIdle.current) : base;
   useEffect(() => {
     if (!inWork) {
       sawIdle.current = true;
       setWatched(false);
       return;
     }
-    if (!working || output === undefined) return;
-    const b = nextBaseline(base, turn, output, Date.now(), sawIdle.current);
-    if (b !== base) {
-      setBase(b);
-      save(key, b);
+    if (!working) return;
+    if (next && next !== base) {
+      setBase(next);
+      save(key, next);
       sawIdle.current = false;
     }
     if (turn !== undefined) setWatched(true);
-  }, [inWork, working, turn, output, base, setBase, key]);
+  }, [inWork, working, turn, next, base, setBase, key]);
 
   if (!working) return null;
-  const { start, tokens, phraseAt } = shown(base, turn, output, watched);
-  return <Spinner seed={`${session.sessionId}/${phraseAt ?? ""}`} start={start} tokens={tokens} tool={activity.tool} />;
+  const { start, tokens, seed } = shown(next, turn, output, watched);
+  return <Spinner seed={`${session.sessionId}/${seed ?? ""}`} start={start} tokens={tokens} tool={activity.tool} />;
 }
 
 function Spinner({ seed, start, tokens, tool }: { seed: string; start?: number; tokens?: number; tool?: SessionActivity["tool"] }) {
