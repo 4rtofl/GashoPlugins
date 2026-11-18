@@ -1,7 +1,7 @@
 {
   "id": "ayu-dark",
   "name": "ayu Dark",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "ayu の暗い配色（ayu-theme/vscode-ayu、MIT）",
   "genre": "theme",
   "api": "1.6",
