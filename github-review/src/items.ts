@@ -70,11 +70,12 @@ export function pageItems<M>(lists: { machine: M; listing: Listing }[]): PageIte
 
 /**
  * What "まとめてレビューさせる" makes on one working server: the pull requests with no worktree on any working server (one
- * with a worktree somewhere is being reviewed already) and a clone on this one, each with its spot here.
+ * with a worktree somewhere is being reviewed already) and a clone on this one, each with its spot here. One from a fork
+ * is left out: its code is someone else's, so a session is started for it only from its own row, one at a time.
  */
 export function batchTargets<M>(items: Item<M>[], machine: M): { item: Item<M>; spot: Spot<M> }[] {
   return items.flatMap((item) => {
-    if (item.spots.some((s) => s.worktree)) return [];
+    if (item.pr.fork || item.spots.some((s) => s.worktree)) return [];
     const spot = item.spots.find((s) => s.machine === machine);
     return spot ? [{ item, spot }] : [];
   });

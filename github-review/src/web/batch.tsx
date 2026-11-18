@@ -45,7 +45,7 @@ export function BatchMenu({
   });
   const none =
     where.length === 0
-      ? "worktree の無い Pull request がありません。"
+      ? "worktree の無い Pull request がありません（fork の Pull request は対象にしません）。"
       : templates.length === 0
         ? "設定で、送る指示のテンプレートを足してください。"
         : undefined;
@@ -67,6 +67,7 @@ export function BatchMenu({
                   {where.length > 1 || machines.length > 1
                     ? `${machine.name} の ${targets.length} 件に送る指示`
                     : `worktree の無い ${targets.length} 件に送る指示`}
+                  {items.some((item) => item.pr.fork) && <span className="block">fork の Pull request は対象にしません。行のボタンから 1 件ずつ始めてください。</span>}
                   {!machine.canLaunch && (
                     <span className="block text-amber-700 dark:text-amber-300">この working server では、Gasho からセッションを起動できません。</span>
                   )}

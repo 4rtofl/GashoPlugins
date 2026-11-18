@@ -387,4 +387,13 @@ test("まとめてレビューさせる: the pull requests with no worktree on a
     [[3, "/b/r"]],
   );
   assert.deepEqual(batchTargets(requested, "C"), []);
+
+  // One from a fork is left out, even with no worktree anywhere: it is started from its own row.
+  const { requested: withFork } = pageItems([
+    { machine: "A", listing: { ...a, requested: [row(1, { primary: "/a/r" }), { ...row(4, { primary: "/a/r" }), fork: true }] } },
+  ]);
+  assert.deepEqual(
+    batchTargets(withFork, "A").map((x) => x.item.pr.number),
+    [1],
+  );
 });
