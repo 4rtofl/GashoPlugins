@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
 import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING } from "../src/instructions.ts";
-import { ASK_RECHECK_MS, ASK_SETTLE_MS, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, withoutMark, working, type Recheck, type ReviewMark } from "../src/verdict.ts";
+import { ASK_RECHECK_MS, ASK_SETTLE_MS, askEndUnseen, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, withoutMark, working, type Recheck, type ReviewMark } from "../src/verdict.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER = "fedcba9876543210fedcba9876543210fedcba98";
@@ -295,6 +295,26 @@ test("ask rechecking: once the work ended, the row waits for the list read from 
   assert.equal(askRechecking(undefined, mark, { recheck: reading, now: ended }), false);
   assert.equal(askRechecking(merge, { sha: OTHER }, { recheck: reading, now: ended }), false);
   assert.equal(askRechecking(askOf({}, "changes"), mark, { recheck: reading, now: ended }), false);
+});
+
+test("ask end unseen: what was asked ended while the page was left, and GitHub was not read for it since", () => {
+  const merge = askOf({}, "mergeable");
+  const mark = { sha: SHA };
+  const asked = { kind: "merge" as const, sha: SHA, at: 1_000_000 };
+  assert.equal(askEndUnseen(merge, mark, { running: false, asked }), true);
+  // Read again for an earlier ask only.
+  assert.equal(askEndUnseen(merge, mark, { running: false, asked, recheck: { kind: "merge", sha: SHA, ended: asked.at - 5000 } }), true);
+  // Still being done: its end is yet to come.
+  assert.equal(askEndUnseen(merge, mark, { running: true, asked }), false);
+  // A row saw it end, and GitHub was read again.
+  assert.equal(askEndUnseen(merge, mark, { running: false, asked, recheck: { kind: "merge", sha: SHA, ended: asked.at + 5000 } }), false);
+  // Nothing asked on this screen, of another verdict, or something else.
+  assert.equal(askEndUnseen(merge, mark, { running: false }), false);
+  assert.equal(askEndUnseen(merge, { sha: OTHER }, { running: false, asked }), false);
+  assert.equal(askEndUnseen(askOf({}, "changes"), mark, { running: false, asked }), false);
+  // Merged by now, or no verdict.
+  assert.equal(askEndUnseen(undefined, mark, { running: false, asked }), false);
+  assert.equal(askEndUnseen(merge, undefined, { running: false, asked }), false);
 });
 
 test("sent back: once I requested changes after the review's comment, the row has no 差し戻す", () => {

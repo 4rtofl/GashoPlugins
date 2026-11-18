@@ -30,7 +30,7 @@ import { cn, relativeTime } from "@gasho/plugin-sdk";
 import { askEffort, askInstruction, type MergeMethod } from "../instructions.ts";
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
-import { askOf, askRechecking, askRunning, type AskKind, type ReviewProgress } from "../verdict.ts";
+import { askEndUnseen, askOf, askRechecking, askRunning, type AskKind, type ReviewProgress } from "../verdict.ts";
 import { askAgent, createWorktree, followCleanup, newSessionIn, reviewIn, openWorktree, progressOf, removeWorktree, sessionsIn, workingIn, type Item, type Spot, type Tools } from "./actions";
 import { markAsked, recheck, useAsked } from "./asked";
 import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
@@ -290,12 +290,21 @@ const RUNNING: Record<AskKind, { text: string; hint: string }> = {
 };
 const RECHECK_HINT = "セッションの作業が終わったので、Pull request の状態を GitHub から読み直しています";
 
+/** What the panel read itself of a pull request the lists do not hold, which it shows in their place. */
+export interface OwnReading {
+  /** By when GitHub was read again since what was asked ended; absent until it was. */
+  refreshed?: number | undefined;
+  /** When what was read last came. */
+  at?: number | undefined;
+}
+
 /**
  * "マージしてもらう", "差し戻す" or "修正してもらう": sends the Agent in the worktree what the verdict calls for. Once
  * it is asked, a badge says it is being done in place of the button, until the session there is at rest and the list
- * has been read from GitHub again: only that tells whether it was done, or the button is to come back.
+ * (`reading`, for a pull request the lists do not hold) has been read from GitHub again: only that tells whether it was
+ * done, or the button is to come back.
  */
-export function AgentAsk({ item }: { item: Item }) {
+export function AgentAsk({ item, reading }: { item: Item; reading?: OwnReading | undefined }) {
   const shared = useContext(RowContext);
   const { asked, rechecks } = useAsked();
   const { pr, spots } = item;
@@ -304,14 +313,21 @@ export function AgentAsk({ item }: { item: Item }) {
   const mark = pr.mark;
   const followed = placed.find((s) => s.worktree?.review && s.cleanup && !s.cleanup.problem)?.cleanup;
   const now = Date.now();
-  const running = askRunning(ask, mark, { working: workingIn(item), asked: asked.get(pr.url), followed, now });
+  const mine = asked.get(pr.url);
+  const running = askRunning(ask, mark, { working: workingIn(item), asked: mine, followed, now });
   const machines = [...new Set(spots.map((s) => s.machine.id))];
-  const rechecking = askRechecking(ask, mark, { recheck: rechecks.get(pr.url), listedAt: shared?.listedAt(machines), now });
-  // When the work ends, GitHub is read again. Before the screen is painted, so that the button does not show for a
-  // moment between the end of the work and the badge that waits for that reading.
+  const kept = rechecks.get(pr.url);
+  const rechecking = askRechecking(ask, mark, {
+    recheck: reading && kept ? { ...kept, refreshed: reading.refreshed } : kept,
+    listedAt: reading ? reading.at : shared?.listedAt(machines),
+    now,
+  });
+  const unseen = askEndUnseen(ask, mark, { running, asked: mine, recheck: kept });
+  // When the work ends, or is found to have ended while the page was left, GitHub is read again. Before the screen is
+  // painted, so that the button does not show for a moment between that end and the badge that waits for that reading.
   const wasRunning = useRef(running);
   useLayoutEffect(() => {
-    const ended = wasRunning.current && !running;
+    const ended = (wasRunning.current && !running) || unseen;
     wasRunning.current = running;
     if (ended && shared && ask && mark && placed.length > 0) {
       recheck(pr.url, { kind: ask.kind, sha: mark.sha }, () => Promise.all(machines.map((id) => shared.tools.actions.refresh(id))));

@@ -32,6 +32,10 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
   const on = machine.connected && daemon.ready;
   const r = useRequest<Listing>(on ? { machine: machine.id, method: "list", params: { query } } : undefined, { staleSeconds: ASK_SECONDS, refreshSeconds: ASK_SECONDS });
   const call = useCall();
+  // useCall gives a new function at every drawing. `refresh` is handed to the page, which is drawn again whenever it
+  // changes: were it to change with `call`, this would be drawn again without end.
+  const callRef = useRef(call);
+  callRef.current = call;
   const { reload } = r;
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string>();
@@ -55,9 +59,9 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
   useEffect(() => setRefreshError(undefined), [query]);
   const refresh = useCallback(async () => {
     if (!on) return;
-    await call<Listing>({ machine: machine.id, method: "list", params: { query, fresh: true } });
+    await callRef.current<Listing>({ machine: machine.id, method: "list", params: { query, fresh: true } });
     reload();
-  }, [on, call, machine.id, query, reload]);
+  }, [on, machine.id, query, reload]);
 
   const error = refreshError ?? r.error;
   useEffect(() => {

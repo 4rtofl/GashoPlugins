@@ -172,3 +172,16 @@ export function askRechecking(
   if (now - recheck.ended >= ASK_RECHECK_MS) return false;
   return recheck.refreshed === undefined || (listedAt ?? 0) <= recheck.refreshed;
 }
+
+/**
+ * What was asked on this screen is no longer being done, and GitHub was not read for that since it was asked: its end
+ * was not seen, as the page was left meanwhile. The list is from before the end of it, so the row reads GitHub again now.
+ */
+export function askEndUnseen(
+  ask: Ask | undefined,
+  mark: { sha: string } | undefined,
+  { running, asked, recheck }: { running: boolean; asked?: Asked | undefined; recheck?: Recheck | undefined },
+): boolean {
+  if (running || !ask || !mark || !asked || asked.kind !== ask.kind || asked.sha !== mark.sha) return false;
+  return recheck === undefined || recheck.ended < asked.at;
+}
