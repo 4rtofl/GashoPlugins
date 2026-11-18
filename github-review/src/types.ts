@@ -25,7 +25,10 @@ export interface PrWorktree {
   path: string;
   /** The branch checked out; absent when HEAD is detached (a pull request from a fork). */
   branch?: string;
-  /** review-<number> beside the primary checkout: one made for the review, which "片付ける" removes. */
+  /**
+   * review-<repository>-<number> (or review-<number>, the name before) beside the primary checkout: one made for the
+   * review, which "片付ける" removes.
+   */
   review: boolean;
   /** Its folder is gone, though git still has it: it does not open, and is made again or removed. */
   missing?: boolean;

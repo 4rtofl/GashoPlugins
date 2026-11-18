@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { elapsed, tokenCount, toolLabel } from "../src/web/format.ts";
 import { hash, PHRASES, pickPhrase } from "../src/web/phrases.ts";
+import { nextBaseline, shown, type Baseline } from "../src/web/work.ts";
 
 test("the time is written as Claude Code's spinner writes it", () => {
   assert.equal(elapsed(0), "0s");
@@ -66,4 +67,45 @@ test("a seed always gets the same phrase, and the seeds of many works reach ever
   const counts = [...seen.keys()].map((lang) => [...Array(6000).keys()].filter((i) => pickPhrase(`d5f0c1aa-session/${1_731_580_000_000 + i * 37_123}`).lang === lang).length);
   for (const n of counts) assert.ok(n > 800 && n < 1200, String(counts));
   for (const [lang, texts] of seen) assert.equal(texts.size, PHRASES[lang]?.length, lang);
+});
+
+// The start of a work as Gasho first gives it, from the hook of the person's message.
+const HOOK = 1_731_580_000_000;
+
+test("a start that moves by milliseconds is the same work: its tokens, start and phrase stay", () => {
+  const base = nextBaseline(null, HOOK, 1000, HOOK + 500, true);
+  assert.deepEqual(base, { turn: HOOK, output: 1000, early: true });
+  // Three minutes on, the hook is gone from those Gasho keeps: the start is the message's in the conversation.
+  for (const turn of [HOOK + 230, HOOK - 300]) {
+    assert.equal(nextBaseline(base, turn, 13_300, HOOK + 180_000, false), base);
+    assert.deepEqual(shown(base, turn, 13_300, true), { start: HOOK, tokens: 12_300, phraseAt: HOOK });
+  }
+});
+
+test("a start further away is another work, counted only when seen near its start", () => {
+  const base: Baseline = { turn: HOOK, output: 1000, early: true };
+  const next = HOOK + 60_000;
+  assert.deepEqual(nextBaseline(base, next, 5000, next + 2000, false), { turn: next, output: 5000, early: true });
+  assert.deepEqual(nextBaseline(base, next, 5000, next + 120_000, false), { turn: next, output: 5000, early: false });
+  assert.deepEqual(shown(base, next, 5000, true), { start: next, tokens: undefined, phraseAt: next });
+});
+
+test("after a reload, the baseline kept in the browser counts on for the same work", () => {
+  const stored: Baseline = { turn: HOOK, output: 1000, early: true };
+  // The reloaded page gets fewer hooks: the start is the message's in the conversation, and nothing was seen out of work.
+  assert.equal(nextBaseline(stored, HOOK + 230, 20_000, HOOK + 600_000, false), stored);
+  assert.deepEqual(shown(stored, HOOK + 230, 20_000, false), { start: HOOK, tokens: 19_000, phraseAt: HOOK });
+});
+
+test("a start Gasho no longer knows keeps the baseline: counted on while watched, and again once known", () => {
+  const base: Baseline = { turn: HOOK, output: 1000, early: true };
+  assert.equal(nextBaseline(base, undefined, 6000, HOOK + 600_000, false), base);
+  assert.deepEqual(shown(base, undefined, 6000, true), { start: HOOK, tokens: 5000, phraseAt: HOOK });
+  // Not watched since the start was known (a reload): the baseline may be of an earlier work. Only the phrase stays.
+  assert.deepEqual(shown(base, undefined, 6000, false), { start: undefined, tokens: undefined, phraseAt: HOOK });
+  assert.deepEqual(shown(base, HOOK + 230, 7000, false), { start: HOOK, tokens: 6000, phraseAt: HOOK });
+  // A work seen from its start, before Gasho tells when it started.
+  const fresh = nextBaseline(base, undefined, 6000, HOOK + 600_000, true);
+  assert.deepEqual(fresh, { output: 6000, early: true });
+  assert.deepEqual(shown(fresh, undefined, 6100, false), { start: undefined, tokens: 100, phraseAt: undefined });
 });
