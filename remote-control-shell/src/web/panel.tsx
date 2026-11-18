@@ -153,16 +153,21 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
     });
     return joined;
   };
-  /** All the output that is kept of a command, read in stretches (as it is now, for one that runs). */
+  /**
+   * All the output that is kept of a command, read in stretches. For one that runs, up to where it was at the first
+   * answer: output that comes faster than it is read would else keep it reading until the command ends.
+   */
   const readAll = async (job: ShellJob): Promise<string> => {
     let text = "";
+    let end = Infinity;
     for (let from = job.dropped; ; ) {
-      const r = await call<OutputAnswer>(target("output", { job: job.id, from, limit: READ_CHARS }));
+      const r = await call<OutputAnswer>(target("output", { job: job.id, from, limit: Math.min(READ_CHARS, end - from) }));
       if (!r.ok) throw new Error(r.error);
+      end = Math.min(end, r.data.size);
       // Output dropped meanwhile (it runs): what is kept now.
       text = r.data.from === from ? text + r.data.text : r.data.text;
       from = r.data.from + r.data.text.length;
-      if (!r.data.text || from >= r.data.size) return text;
+      if (!r.data.text || from >= end) return text;
     }
   };
   const copyOutput = (job: ShellJob) => {
