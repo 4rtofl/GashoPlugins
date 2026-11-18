@@ -201,7 +201,11 @@ export function BatchDialog({
                       <p className="break-words">{title}</p>
                       {step.text && (
                         <p
-                          className={cn("mt-0.5 text-[11px] break-words", step.state === "failed" ? "text-red-600 dark:text-red-300" : "text-muted-foreground")}
+                          className={cn(
+                            "mt-0.5 text-[11px] break-words",
+                            // On one done, what did not go as asked in sending.
+                            step.state === "failed" ? "text-red-600 dark:text-red-300" : step.state === "done" ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground",
+                          )}
                         >
                           {step.text}
                         </p>

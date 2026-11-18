@@ -199,7 +199,7 @@ export type BatchState = "waiting" | "working" | "done" | "skipped" | "failed";
 
 export interface BatchStep {
   state: BatchState;
-  /** Why it was skipped or failed. */
+  /** Why it was skipped or failed; on one done, what did not go as asked in sending (the effort level, say). */
   text?: string;
   /** The session started for it. */
   sessionId?: string;
@@ -207,17 +207,18 @@ export interface BatchStep {
 
 /**
  * "まとめてレビューさせる": for each pull request in turn (git in one clone at a time), makes its review worktree on the
- * working server, starts a session there and sends the template, as "worktree を作る" does, without opening the sessions.
- * A pull request whose worktree turns out to be there already is skipped. Once the person has said yes to trusting a
- * folder, the next folders Claude Code has no warnings about are trusted without asking again.
+ * working server, starts a session there and sends the template at the effort level of a review, as "worktree を作る"
+ * does, without opening the sessions. A pull request whose worktree turns out to be there already is skipped. Once the
+ * person has said yes to trusting a folder, the next folders Claude Code has no warnings about are trusted without
+ * asking again.
  */
 export async function reviewAll(
   targets: { item: Item; spot: Spot }[],
   template: Template,
   t: Tools,
   onStep: (url: string, step: BatchStep) => void,
-): Promise<{ done: number; failed: number; skipped: number }> {
-  const count = { done: 0, failed: 0, skipped: 0 };
+): Promise<{ done: number; failed: number; skipped: number; warned: number }> {
+  const count = { done: 0, failed: 0, skipped: 0, warned: 0 };
   let trustQuietly = false;
   const machines = new Set<string>();
   for (const [i, { item, spot }] of targets.entries()) {
@@ -250,18 +251,25 @@ export async function reviewAll(
       continue;
     }
     trustQuietly ||= started.trusted;
-    const sent = await t.send({ machine: machine.id, sessionId: started.sessionId, text: reviewInstruction(template, pr) });
+    const { sessionId } = started;
+    const sent = await t.send({ machine: machine.id, sessionId, text: reviewInstruction(template, pr), ...effortFor(machine, REVIEW_EFFORT) });
     if (!sent.ok) {
-      end({ state: "failed", sessionId: started.sessionId, text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}` });
+      end({ state: "failed", sessionId, text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}` });
       continue;
     }
-    end({ state: "done", sessionId: started.sessionId });
+    // Sent, but not quite as asked (the effort level could not be switched, say): its result says so.
+    if (sent.data.warning) count.warned += 1;
+    end({ state: "done", sessionId, ...(sent.data.warning ? { text: sent.data.warning } : {}) });
   }
   for (const id of machines) t.actions.reload(id);
-  const rest = [count.skipped > 0 ? `${count.skipped} 件は飛ばしました` : "", count.failed > 0 ? `${count.failed} 件はできませんでした` : ""].filter(Boolean);
+  const rest = [
+    count.warned > 0 ? `${count.warned} 件は送るときに注意が出ました` : "",
+    count.skipped > 0 ? `${count.skipped} 件は飛ばしました` : "",
+    count.failed > 0 ? `${count.failed} 件はできませんでした` : "",
+  ].filter(Boolean);
   t.actions.notify({
     text: `${targets.length} 件のうち ${count.done} 件でレビューを始めました${rest.length > 0 ? `（${rest.join("、")}）` : ""}。`,
-    ...(count.failed > 0 ? { tone: "danger" as const } : {}),
+    ...(count.failed > 0 || count.warned > 0 ? { tone: "danger" as const } : {}),
   });
   return count;
 }
