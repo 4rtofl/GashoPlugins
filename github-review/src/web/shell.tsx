@@ -21,7 +21,8 @@ type Question<Q, A = boolean> = (Q & { answer: (a: A) => void }) | undefined;
 
 /**
  * Questions that come once a row's work has waited (a worktree made, a launch answered), so another row's may come
- * while one is shown: they wait, and show one at a time in the order they came. The one shown and how to answer it.
+ * while one is shown: they wait, and show one at a time in the order they came (and after those of the other parts of
+ * the screen asked before: dialogs.tsx). The first one and how to answer it.
  */
 function useQuestions<Q, A = boolean>(): [Question<Q, A>, (q: Q) => Promise<A>, (a: A) => void] {
   const [queue, setQueue] = useState<NonNullable<Question<Q, A>>[]>([]);

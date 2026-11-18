@@ -2,8 +2,11 @@
 // launcher, the dialogs that ask first, the notice at the bottom).
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { answerCalls, callsOf, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
+import { ForkDialog } from "../src/web/dialogs.tsx";
+import type { ForkQuestion } from "../src/web/actions.ts";
 import { ReviewPage } from "../src/web/page.tsx";
 import type { Listing, PrRow } from "../src/types.ts";
 
@@ -205,5 +208,20 @@ describe("fork pull requests asked about one after another", () => {
     at.mockReturnValue(2_000);
     await userEvent.click(within(next).getByRole("button", { name: "起動する" }));
     await waitFor(() => expect(sdk.launchSession.mock.calls.map(([input]) => input.cwd)).toEqual(["/work/review-7", "/work/review-8"]));
+  });
+
+  it("shows one question at a time across the dialogs of the page and the side panel, the one asked first", async () => {
+    const answers: string[] = [];
+    // A part of the screen that asks a question in its own dialog, as the page and the side panel do.
+    function Asking({ n }: { n: number }) {
+      const [question, setQuestion] = useState<ForkQuestion | undefined>({ pr: fork(n), path: `/work/review-${n}`, files: [] });
+      return <ForkDialog question={question} onAnswer={(a) => (answers.push(`#${n} ${a}`), setQuestion(undefined))} />;
+    }
+    render(<Asking n={12} />);
+    render(<Asking n={11} />);
+    expect(screen.getAllByRole("dialog").map((d) => d.textContent)).toEqual([expect.stringContaining("#12「")]);
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "起動する" }));
+    expect(answers).toEqual(["#12 true"]);
+    expect(screen.getAllByRole("dialog").map((d) => d.textContent)).toEqual([expect.stringContaining("#11「")]);
   });
 });
