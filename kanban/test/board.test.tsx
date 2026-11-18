@@ -34,7 +34,17 @@ describe("KanbanPage", () => {
     expect(screen.getByText(/から更新されていない$/)).toBeTruthy();
   });
 
-  it("reads the repositories again on 「今すぐ見直す」, and names the working server when that fails", async () => {
+  it("reads the repositories again on 「今すぐ見直す」, and then the board", async () => {
+    set({ machines: [machine()] });
+    respond({ board: { data: board() } });
+    answerCalls({ refresh: { ok: true, data: board() } });
+    render(<KanbanPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "今すぐ見直す" }));
+    expect(sdk.call).toHaveBeenCalledWith({ machine: "m1", method: "refresh" });
+    await waitFor(() => expect(sdk.reload).toHaveBeenCalledWith("board"));
+  });
+
+  it("names the working server when 「今すぐ見直す」 fails", async () => {
     set({ machines: [machine()] });
     respond({ board: { data: board() } });
     answerCalls({ refresh: { ok: false, error: "gh が見つかりません" } });
@@ -43,8 +53,6 @@ describe("KanbanPage", () => {
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText("カンバンを読み込めなかった working server があります")).toBeTruthy();
     expect(within(alert).getByText("mac：gh が見つかりません")).toBeTruthy();
-    expect(sdk.call).toHaveBeenCalledWith({ machine: "m1", method: "refresh" });
-    expect(sdk.reload).toHaveBeenCalledWith("board");
   });
 
   it("names a working server whose daemon part does not run, and asks it for nothing", () => {
