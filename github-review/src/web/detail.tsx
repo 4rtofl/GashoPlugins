@@ -90,7 +90,7 @@ function PrPanelOf({ repo, number, item, machine }: { repo: string; number: numb
   const now = Math.max(clock, r.at ?? 0);
   const d = r.data;
   const shown: Item | undefined =
-    item ?? (d ? { pr: (({ place: _, ...pr }) => pr)(d.pr), spots: d.pr.place ? [{ machine, primary: d.pr.place.primary, ...(d.pr.place.worktree ? { worktree: d.pr.place.worktree } : {}) }] : [] } : undefined);
+    item ?? (d ? { pr: (({ place: _, ...pr }) => pr)(d.pr), spots: d.pr.place ? [{ machine, primary: d.pr.place.primary, ...(d.pr.place.worktree ? { worktree: d.pr.place.worktree } : {}), ...(d.pr.place.reviewSessions ? { reviewSessions: d.pr.place.reviewSessions } : {}) }] : [] } : undefined);
   const pr = shown?.pr;
   // Reads GitHub again; the detail asked for next gets what gasho-daemon kept of that.
   const readFresh = async () => {
@@ -197,7 +197,7 @@ function Progress({ item, now, reading }: { item: Item; now: number; reading: Ow
       {(ask || (pr.own && pr.state === "open")) && placed && shared && (
         <div className="flex flex-wrap items-center gap-2">
           <AgentAsk item={item} reading={reading} />
-          <ReviewMenu item={item} />
+          <ReviewMenu item={item} reading={reading} />
           {ask?.blocked && <span className="text-xs text-amber-700 dark:text-amber-300">{ask.blocked}</span>}
         </div>
       )}

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
 import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING } from "../src/instructions.ts";
-import { ASK_RECHECK_MS, ASK_SETTLE_MS, askEndUnseen, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, withoutMark, working, type Recheck, type ReviewMark } from "../src/verdict.ts";
+import { ASK_RECHECK_MS, ASK_SETTLE_MS, askEndUnseen, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, underway, withoutMark, workEndUnseen, working, workRechecking, type Asked, type Recheck, type ReviewMark } from "../src/verdict.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER = "fedcba9876543210fedcba9876543210fedcba98";
@@ -334,4 +334,78 @@ test("sent back: once I requested changes after the review's comment, the row ha
   // My own pull request cannot be sent back: it is mended.
   assert.equal(askOf({ own: true, changesRequestedAt: after, mark: { at } }, "changes")?.kind, "fix");
   assert.equal(askOf({ changesRequestedAt: after, mark: { at } }, "mergeable")?.kind, "merge");
+});
+
+test("underway: while a session works in the worktree, no button asks for more, whoever asked it", () => {
+  const merge = askOf({}, "mergeable");
+  const mark = { sha: SHA };
+  const now = 1_000_000;
+  const quiet = { working: false, reviewing: false, now };
+  assert.equal(underway(merge, mark, quiet), undefined);
+  // Nothing was asked here (the page was opened again, say), and a session works.
+  assert.equal(underway(merge, mark, { ...quiet, working: true }), "session");
+  assert.equal(underway(undefined, undefined, { ...quiet, working: true }), "session");
+  // A session sent a review works, on the verdict before it.
+  assert.equal(underway(merge, mark, { ...quiet, working: true, reviewing: true }), "review");
+});
+
+test("underway: what was asked is told apart from the rest, the last one asked first", () => {
+  const merge = askOf({}, "mergeable");
+  const mark = { sha: SHA };
+  const now = 1_000_000;
+  const later = now + ASK_SETTLE_MS;
+  const quiet = { working: false, reviewing: false };
+  const asked: Asked = { kind: "merge", sha: SHA, at: now };
+  const review: Asked = { kind: "review", sha: SHA, at: now };
+  // A moment after it was sent, before the session's state comes; then for as long as a session works.
+  assert.equal(underway(merge, mark, { ...quiet, asked, now }), "merge");
+  assert.equal(underway(merge, mark, { ...quiet, asked: review, now }), "review");
+  assert.equal(underway(undefined, undefined, { ...quiet, asked: review, now }), "review");
+  assert.equal(underway(merge, mark, { ...quiet, working: true, asked: review, now: later }), "review");
+  // Over.
+  assert.equal(underway(merge, mark, { ...quiet, asked, now: later }), undefined);
+  assert.equal(underway(merge, mark, { ...quiet, asked: review, now: later }), undefined);
+  // Asked here of this verdict, with a session sent a review from before still listed.
+  assert.equal(underway(merge, mark, { working: true, reviewing: true, asked, now: later }), "merge");
+  // Kept by the daemon part: a review at work goes first, as it came after.
+  const followed = { kind: "merge", sha: SHA } as const;
+  assert.equal(underway(merge, mark, { ...quiet, working: true, followed, now: later }), "merge");
+  assert.equal(underway(merge, mark, { working: true, reviewing: true, followed, now: later }), "review");
+  // Asked of the verdict before: only a session at work is known.
+  assert.equal(underway(merge, mark, { ...quiet, working: true, asked: { ...asked, sha: OTHER }, now: later }), "session");
+});
+
+test("workRechecking: a review's or a session's end waits for the list, whatever the verdict is by then", () => {
+  const merge = askOf({}, "mergeable");
+  const mark = { sha: SHA };
+  const ended = 1_000_000;
+  for (const kind of ["review", "session"] as const) {
+    const reading: Recheck = { kind, sha: OTHER, ended };
+    assert.equal(workRechecking(merge, mark, { recheck: reading, now: ended + 1000 }), kind);
+    assert.equal(workRechecking(undefined, undefined, { recheck: reading, now: ended + 1000 }), kind);
+    const read: Recheck = { ...reading, refreshed: ended + 2000 };
+    assert.equal(workRechecking(merge, mark, { recheck: read, listedAt: ended + 1000, now: ended + 2100 }), kind);
+    assert.equal(workRechecking(merge, mark, { recheck: read, listedAt: ended + 2200, now: ended + 2300 }), undefined);
+    assert.equal(workRechecking(merge, mark, { recheck: reading, now: ended + ASK_RECHECK_MS }), undefined);
+  }
+  // What was asked of a verdict is waited for while that verdict stands.
+  const asked: Recheck = { kind: "merge", sha: SHA, ended };
+  assert.equal(workRechecking(merge, mark, { recheck: asked, now: ended + 1000 }), "merge");
+  assert.equal(workRechecking(merge, { sha: OTHER }, { recheck: asked, now: ended + 1000 }), undefined);
+  assert.equal(workRechecking(merge, mark, { now: ended }), undefined);
+});
+
+test("workEndUnseen: a review asked here that ended while the page was left is read once", () => {
+  const merge = askOf({}, "mergeable");
+  const mark = { sha: SHA };
+  const asked: Asked = { kind: "review", sha: SHA, at: 1_000_000 };
+  assert.equal(workEndUnseen(merge, mark, { going: false, asked }), true);
+  assert.equal(workEndUnseen(undefined, undefined, { going: false, asked }), true);
+  assert.equal(workEndUnseen(merge, mark, { going: true, asked }), false);
+  assert.equal(workEndUnseen(merge, mark, { going: false, asked, recheck: { kind: "review", sha: SHA, ended: asked.at - 1 } }), true);
+  assert.equal(workEndUnseen(merge, mark, { going: false, asked, recheck: { kind: "review", sha: SHA, ended: asked.at + 1 } }), false);
+  // What was asked of a verdict goes by that verdict.
+  assert.equal(workEndUnseen(merge, mark, { going: false, asked: { ...asked, kind: "merge" } }), true);
+  assert.equal(workEndUnseen(merge, { sha: OTHER }, { going: false, asked: { ...asked, kind: "merge" } }), false);
+  assert.equal(workEndUnseen(merge, mark, { going: false }), false);
 });

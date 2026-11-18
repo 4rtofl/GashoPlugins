@@ -190,7 +190,9 @@ export class Reviewer {
     });
     if (clone) {
       const worktree = prWorktree(clone, d.pr);
-      d.pr.place = { primary: clone.path, ...(worktree ? { worktree } : {}) };
+      const sent = (await this.deps.removals?.all().catch(() => [])) ?? [];
+      const reviewSessions = sent.filter((x) => sameRepo(x.repo, d.pr.repo) && x.number === d.pr.number).map((x) => x.sessionId);
+      d.pr.place = { primary: clone.path, ...(worktree ? { worktree } : {}), ...(reviewSessions.length > 0 ? { reviewSessions } : {}) };
     }
     return d;
   }
@@ -268,8 +270,15 @@ export class Reviewer {
       const worktree = prWorktree(c, pr);
       const e = worktree && toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && cleanable(x.kind, worktree, c.path));
       const cleanup = e && { kind: e.kind, ...(e.sha ? { sha: e.sha } : {}), done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
-      const finishedSessions = sent.filter((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && reviewPosted(pr.mark, x)).map((x) => x.sessionId);
-      return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}), ...(finishedSessions.length > 0 ? { finishedSessions } : {}) };
+      const reviews = sent.filter((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number);
+      const finishedSessions = reviews.filter((x) => reviewPosted(pr.mark, x)).map((x) => x.sessionId);
+      return {
+        primary: c.path,
+        ...(worktree ? { worktree } : {}),
+        ...(cleanup ? { cleanup } : {}),
+        ...(finishedSessions.length > 0 ? { finishedSessions } : {}),
+        ...(reviews.length > 0 ? { reviewSessions: reviews.map((x) => x.sessionId) } : {}),
+      };
     };
     const requested = answer.requested.prs;
     const watchedPrs = answer.watched.flatMap((w) => w.prs);

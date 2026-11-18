@@ -55,6 +55,8 @@ export interface Place {
   cleanup?: Cleanup;
   /** The sessions sent its review that have posted the result: the page removes them once they are at rest. */
   finishedSessions?: string[];
+  /** The sessions sent its review, posted or not: while one is at work, the page says the review is under way. */
+  reviewSessions?: string[];
 }
 
 export interface PrRow {

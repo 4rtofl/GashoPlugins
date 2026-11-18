@@ -75,6 +75,14 @@ export function workingIn({ spots }: Item): boolean {
   return spots.some((s) => s.worktree && working(s.machine.sessions, s.worktree.path));
 }
 
+/** A session sent the review of a pull request works on something in its worktree. */
+export function reviewingIn({ spots }: Item): boolean {
+  return spots.some((s) => {
+    const dir = s.worktree?.path;
+    return dir !== undefined && working(s.machine.sessions.filter((x) => s.reviewSessions?.includes(x.sessionId)), dir);
+  });
+}
+
 const lastUsed = (s: SessionInfo): number => s.lastActivityAt ?? s.startedAt ?? 0;
 
 /** The sessions Gasho started in a folder (or below it), the one used last first: only these open in Gasho. */
@@ -118,8 +126,9 @@ function sentNotice(machine: MachineInfo, sessionId: string, text: string, t: To
  * for "何も送らない") at the effort level of a review. When the worktree turns out to be there already, it takes the
  * Gasho session used last there (or starts one) and sends nothing. Either way the page stays, so the person can go on to
  * other pull requests; the notice offers to open the session, and says why when the effort level could not be switched.
+ * True when a review was sent.
  */
-export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<void> {
+export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<boolean> {
   const { machine } = spot;
   t.actions.notify({ text: `#${pr.number} のレビュー用の worktree を作っています…`, busy: true });
   const r = await t.call<Created>({
@@ -131,29 +140,34 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
   t.actions.reload(machine.id);
   if (!r.ok) {
     t.actions.notify({ text: r.error, tone: "danger" });
-    return;
+    return false;
   }
   if (!r.data.created) {
     const sessionId = sessionsIn(machine, r.data.path)[0]?.sessionId ?? (await start(machine, r.data.path, t));
     if (sessionId) sentNotice(machine, sessionId, `#${pr.number} のレビュー用の worktree はもうありました（${folderName(r.data.path)}）。`, t);
-    return;
+    return false;
   }
   const sessionId = await start(machine, r.data.path, t);
-  if (!sessionId) return;
-  if (template && !(await sendTemplate(pr, machine, sessionId, template, t))) return;
+  if (!sessionId) return false;
+  const sent = template ? await sendTemplate(pr, machine, sessionId, template, t) : undefined;
+  if (sent === "failed") return false;
+  // The notice of what went wrong with the effort level stays.
+  if (sent === "warned") return true;
   sentNotice(
     machine,
     sessionId,
     template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`,
     t,
   );
+  return sent === "sent";
 }
 
 /**
  * Sends a session the template, with the verdict's mark asked for after it whatever it says, at the effort level of a
- * review. False (with the reason shown) when it did not go, or went without the effort level.
+ * review. "failed" (with the reason shown) when it did not go, "warned" (with the reason shown) when it went without the
+ * effort level.
  */
-async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<boolean> {
+async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<"sent" | "warned" | "failed"> {
   t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
   // Before it is sent, so that the result cannot come first. Without it the review goes on, and the session stays.
   await t.call({
@@ -172,13 +186,13 @@ async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: str
   if (!sent.ok) {
     await forgetSession(machine, sessionId, t);
     t.actions.notify({ text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`, tone: "danger", action: open });
-    return false;
+    return "failed";
   }
   if (sent.data.warning) {
     t.actions.notify({ text: `「${template.name}」を送りました。${sent.data.warning}`, tone: "danger", action: open });
-    return false;
+    return "warned";
   }
-  return true;
+  return "sent";
 }
 
 /** The session stays: it did not get the review, or it was given other work. */
@@ -210,13 +224,16 @@ export async function removeFinishedSession(pr: Pick<PrRow, "repo" | "number">, 
 /**
  * "レビューする" on my own pull request, whose worktree is there already (the one I made it in): starts a new session
  * there, apart from the one that made the changes, and sends it the template as "worktree を作る" does. The page stays.
+ * True when the review was sent.
  */
-export async function reviewIn({ pr }: Item, spot: Spot, template: Template, t: Tools): Promise<void> {
-  if (!spot.worktree) return;
+export async function reviewIn({ pr }: Item, spot: Spot, template: Template, t: Tools): Promise<boolean> {
+  if (!spot.worktree) return false;
   const { machine } = spot;
   const sessionId = await start(machine, spot.worktree.path, t);
-  if (!sessionId) return;
-  if (await sendTemplate(pr, machine, sessionId, template, t)) sentNotice(machine, sessionId, `#${pr.number} のレビューのセッションを起動し、「${template.name}」を送りました。`, t);
+  if (!sessionId) return false;
+  const sent = await sendTemplate(pr, machine, sessionId, template, t);
+  if (sent === "sent") sentNotice(machine, sessionId, `#${pr.number} のレビューのセッションを起動し、「${template.name}」を送りました。`, t);
+  return sent !== "failed";
 }
 
 /** Opens the worktree a pull request has on a working server. */
