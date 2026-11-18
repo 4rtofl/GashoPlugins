@@ -51,6 +51,8 @@ export interface Place {
   worktree?: PrWorktree;
   /** Its review worktree is to be removed once what was asked is done. */
   cleanup?: Cleanup;
+  /** The sessions sent its review that have posted the result: the page removes them once they are at rest. */
+  finishedSessions?: string[];
 }
 
 export interface PrRow {
