@@ -4,7 +4,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { fakeContext, loadDaemon } from "../../test/daemon.ts";
 import { ARGS, askClaude, forget, KEEP_MS, limitsOf, readLimits, REQUESTS, RUN_MS, type Asked } from "../src/daemon/usage.ts";
+import type { UsageLimits } from "../src/types.ts";
 
 /** What Claude Code 2.1.325 answered to get_usage on a Claude.ai plan without a 5-hour limit (fields cut down). */
 const ANSWER = {
@@ -107,7 +109,7 @@ async function fakeClaude(printed: string): Promise<{ bin: string; dir: string; 
   const bin = path.join(dir, "claude");
   await fs.writeFile(
     bin,
-    `#!/bin/sh\necho $$ > "${dir}/pid"\nprintf '%s\\n' "$@" > "${dir}/args"\nread -r a; read -r b\nprintf '%s\\n%s\\n' "$a" "$b" > "${dir}/stdin"\ncat "${dir}/printed"\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`,
+    `#!/bin/sh\necho $$ > "${dir}/pid"\npwd > "${dir}/cwd"\nprintf '%s\\n' "$@" > "${dir}/args"\nread -r a; read -r b\nprintf '%s\\n%s\\n' "$a" "$b" > "${dir}/stdin"\ncat "${dir}/printed"\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`,
     { mode: 0o755 },
   );
   return { bin, dir, read: (name) => fs.readFile(path.join(dir, name), "utf8") };
@@ -190,4 +192,38 @@ test("readLimits says why Claude Code gave no answer", async () => {
   await assert.rejects(readLimits(fail({ code: 1, stderr: "Error: not logged in\nmore" })), /週の上限を読めませんでした（Error: not logged in）/);
   await assert.rejects(readLimits(fail({ code: 0 })), /get_usage に答えませんでした/);
   forget();
+});
+
+test("the daemon part's limits asks Claude Code in the plugin's own folder, and tells the person why it could not", async () => {
+  forget();
+  const claude = process.env.GASHO_CLAUDE_BIN;
+  const c = await fakeClaude(out(INIT, ANSWER));
+  process.env.GASHO_CLAUDE_BIN = c.bin;
+  try {
+    const daemon = await loadDaemon("usage");
+    const { ctx } = fakeContext();
+    const { at, ...limits } = (await daemon.call("limits", undefined, ctx)) as UsageLimits;
+    assert.equal(typeof at, "number");
+    assert.deepEqual(limits, {
+      available: true,
+      sevenDay: { percent: 36, resetsAt: Date.parse("2026-11-18T08:00:00.027Z") },
+      models: [{ name: "Fable", percent: 0, resetsAt: Date.parse("2026-11-18T08:00:00Z") }],
+    });
+    // In its own folder, where gasho-daemon does not take the Claude Code for a session.
+    assert.equal(await fs.realpath((await c.read("cwd")).trim()), await fs.realpath(ctx.dataDir));
+
+    forget();
+    process.env.GASHO_CLAUDE_BIN = path.join(c.dir, "missing");
+    await assert.rejects(daemon.call("limits", undefined, ctx), { message: "Claude Code が見つかりません（gasho-daemon の GASHO_CLAUDE_BIN）。", user: true });
+  } finally {
+    if (claude === undefined) delete process.env.GASHO_CLAUDE_BIN;
+    else process.env.GASHO_CLAUDE_BIN = claude;
+    try {
+      process.kill(-Number(await c.read("pid")), "SIGTERM");
+    } catch {
+      // it has ended
+    }
+    await fs.rm(c.dir, { recursive: true, force: true });
+    forget();
+  }
 });

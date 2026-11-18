@@ -65,6 +65,11 @@ export function limitsView(read: UsageLimits | undefined, reported: PlanLimits |
   return line ? { source: "statusline", at: line.at, rows } : { source: "usage", at: (usage as UsageLimits).at, rows };
 }
 
+/** The share of a limit the popover shows: none once it has been reset, when the share read before no longer holds. */
+export function shownPercent(w: LimitWindow, now: number): number | undefined {
+  return w.resetsAt !== undefined && w.resetsAt <= now ? undefined : clampPercent(w.percent);
+}
+
 const WEEKDAYS = "日月火水木金土";
 
 /**

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PlanLimits, SessionInfo } from "@gasho/plugin-sdk";
-import { clampPercent, latestStatusLineLimits, limitsView, resetLabel, tokens, toneOf } from "../src/web/limits.ts";
+import { clampPercent, latestStatusLineLimits, limitsView, resetLabel, shownPercent, tokens, toneOf } from "../src/web/limits.ts";
 import type { UsageLimits } from "../src/types.ts";
 
 // The reset times are written in the browser's time zone; these tests read them in Japan's.
@@ -100,4 +100,15 @@ test("a reset is written as a time today, with the date and the day of the week 
   assert.equal(resetLabel(Date.parse("2026-11-21T14:00:00Z"), now), "11月21日（土）23:00 にリセット");
   assert.equal(resetLabel(now - 1, now), "リセット済み");
   assert.equal(resetLabel(now, now), "リセット済み");
+});
+
+test("a limit shows its share until it is reset, and none from then on, as its reset reads 「リセット済み」", () => {
+  const now = Date.parse("2026-11-14T15:00:00Z");
+  assert.equal(shownPercent({ percent: 36.6, resetsAt: now + 1 }, now), 36);
+  assert.equal(shownPercent({ percent: 104, resetsAt: now + 1 }, now), 100);
+  assert.equal(shownPercent({ percent: 36.6 }, now), 36);
+  for (const resetsAt of [now, now - 1]) {
+    assert.equal(shownPercent({ percent: 36, resetsAt }, now), undefined);
+    assert.equal(resetLabel(resetsAt, now), "リセット済み");
+  }
 });

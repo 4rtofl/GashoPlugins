@@ -16,6 +16,12 @@ test("a card goes in a column by its pull request and its Claude Code sessions, 
   assert.equal(state(card({ pr: open }), info).column, "github");
   assert.equal(state(card({ pr: { ...open, number: 8 } }), info).column, "review");
   assert.deepEqual(state(card({ issue: 5 }), undefined).actions, [{ label: "Issue を実装する", text: "Issue #5 を読んで実装して" }]);
+  // A review worktree is not one of mine to implement, nor a pull request of mine awaiting review.
+  const review = state(card({ issue: 5, review: true, pr: { ...open, number: 8 } }), info);
+  assert.deepEqual([review.column, review.reason, review.actions], ["mine", "レビューする PR", undefined]);
+  // A worktree deploying is in GitHub 待ち, merged or not.
+  const deploying = { prs: {}, stacks: { dev1: { path: "/r/wt", started: 1, seen: 2, running: ["/r/wt"] } } };
+  assert.equal(state(card({ pr: { ...open, state: "merged" } }), deploying).column, "github");
 });
 
 test("the sample finds the deploys with ps and lsof, puts the deploying card in GitHub 待ち, and keeps the worktree that deployed to each Stack last", async () => {

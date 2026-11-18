@@ -5,7 +5,7 @@
 import { useEffect } from "react";
 import { cn, Popover, relativeTime, useDaemonReady, useNow, usePluginState, useRequest, type ComposerFooterProps } from "@gasho/plugin-sdk";
 import type { UsageLimits } from "../types.ts";
-import { clampPercent, latestStatusLineLimits, limitsView, resetLabel, toneOf, tokens, type Tone } from "./limits.ts";
+import { clampPercent, latestStatusLineLimits, limitsView, resetLabel, shownPercent, toneOf, tokens, type Tone } from "./limits.ts";
 
 const TONE_TEXT: Record<Exclude<Tone, "normal">, string> = {
   warn: "text-amber-600 dark:text-amber-400",
@@ -146,13 +146,12 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
         ) : (
           <>
             {view.rows.map((row) => {
-              const percent = clampPercent(row.window.percent);
+              const percent = shownPercent(row.window, now);
               const resetsAt = row.window.resetsAt;
-              const done = resetsAt !== undefined && resetsAt <= now;
               return (
-                <div key={row.key} className={cn("flex flex-col gap-1", done && "opacity-60")}>
-                  <Heading label={row.label} percent={done ? undefined : percent} />
-                  {!done && <Bar label={row.label} percent={percent} tone={toneOf(percent)} />}
+                <div key={row.key} className={cn("flex flex-col gap-1", percent === undefined && "opacity-60")}>
+                  <Heading label={row.label} percent={percent} />
+                  {percent !== undefined && <Bar label={row.label} percent={percent} tone={toneOf(percent)} />}
                   {resetsAt !== undefined && <p className="text-xs text-muted-foreground">{resetLabel(resetsAt, now)}</p>}
                   {row.at !== undefined && <p className="text-xs text-muted-foreground">Claude.ai から読んだ値（{relativeTime(row.at, now)}）</p>}
                 </div>
