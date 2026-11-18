@@ -17,8 +17,8 @@ function fake(
     sessions?: Partial<SessionInfo>[];
     claimed?: boolean;
     removeSession?: "fail";
-    /** A pull request from a fork, whose worktree has these of PROJECT_FILES (none: it cannot be read). */
-    fork?: { files?: string[]; start: boolean };
+    /** A pull request from a fork, whose worktree has these of PROJECT_FILES (none: it cannot be read), read at `path`. */
+    fork?: { files?: string[]; start: boolean; path?: string };
   } = {},
 ) {
   const steps: string[] = [];
@@ -44,7 +44,7 @@ function fake(
       calls.push(params);
       if (method !== "projectFiles") return { ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created };
       const files = opts.fork?.files;
-      return files ? { ok: true, data: { path: DIR, files } satisfies ProjectFiles } : { ok: false, error: "読めません" };
+      return files ? { ok: true, data: { path: opts.fork?.path ?? DIR, files } satisfies ProjectFiles } : { ok: false, error: "読めません" };
     }) as unknown as Tools["call"],
     launch: (async ({ cwd }: { cwd: string }) => {
       launched.push(cwd);
@@ -183,6 +183,15 @@ test("create: a fork's pull request asks first, with which of .claude/, CLAUDE.m
   assert.deepEqual(f.methods, ["create", "projectFiles"]);
   assert.equal(f.last()?.text, "#5 のセッションは起動していません。worktree（review-5）はそのまま残しています。");
   assert.equal(f.last()?.tone, undefined);
+});
+
+test("create: a fork's worktree the daemon read in another clone of the repository starts nothing, unasked, and says why", async () => {
+  const f = fake({ fork: { files: [], start: true, path: "/v/r/review-5" } });
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.deepEqual(f.asked, []);
+  assert.deepEqual(f.launched, []);
+  assert.match(f.last()?.text ?? "", /\/w\/r\/review-5 ではなく \/v\/r\/review-5 の中身を読んだ/);
+  assert.equal(f.last()?.tone, "danger");
 });
 
 test("create: a fork's pull request starts and gets the template once the person says 起動する", async () => {

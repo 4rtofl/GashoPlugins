@@ -104,15 +104,20 @@ const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? 
 type PrRef = Pick<PrRow, "repo" | "number" | "title" | "author" | "fork">;
 
 /**
- * Whether a session may start in the worktree of a pull request on a working server. One from a fork holds the fork's
- * code: Claude Code trusts the worktree as it trusts the primary checkout, so it asks nothing, and reads the fork's
- * `.claude/` (hooks run commands) and CLAUDE.md. So the person is shown which of them it has, and answers; one of the
- * same repository goes on unasked. `error`: the worktree could not be read. The notice is cleared before asking.
+ * Whether a session may start in `cwd`, the worktree of a pull request on a working server. One from a fork holds the
+ * fork's code: Claude Code trusts the worktree as it trusts the primary checkout, so it asks nothing, and reads the
+ * fork's `.claude/` (hooks run commands) and CLAUDE.md. So the person is shown which of them it has, and answers; one
+ * of the same repository goes on unasked. `error`: the worktree could not be read, or the daemon read another one (of
+ * another clone of the repository). The notice is cleared before asking.
  */
-export async function confirmFork(pr: PrRef, machine: MachineInfo, t: Tools): Promise<{ start: boolean; error?: string }> {
+export async function confirmFork(pr: PrRef, cwd: string, machine: MachineInfo, t: Tools): Promise<{ start: boolean; error?: string }> {
   if (!pr.fork) return { start: true };
   const r = await t.call<ProjectFiles>({ machine: machine.id, method: "projectFiles", params: { repo: pr.repo, number: pr.number } });
   if (!r.ok) return { start: false, error: r.error };
+  if (r.data.path !== cwd) {
+    const error = `セッションは起動していません。同じリポジトリの clone が複数あり、${cwd} ではなく ${r.data.path} の中身を読んだためです。そのうち 1 つだけを対象リポジトリにすると、起動できます。`;
+    return { start: false, error };
+  }
   t.actions.notify(undefined);
   return { start: await t.actions.askFork({ pr, path: r.data.path, files: r.data.files }) };
 }
@@ -143,7 +148,7 @@ async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: 
 
 /** Starts a session in a pull request's worktree; its id, or undefined (with the reason shown) when it did not start. */
 async function start(machine: MachineInfo, cwd: string, pr: PrRef, t: Tools): Promise<string | undefined> {
-  const fork = await confirmFork(pr, machine, t);
+  const fork = await confirmFork(pr, cwd, machine, t);
   if (!fork.start) {
     t.actions.notify(
       fork.error
