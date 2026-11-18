@@ -2,7 +2,7 @@
 // templates and the settings of the merge, which rows are at work, and the dialogs and the notice they show; and the
 // removal of the review worktrees whose merge or send-back is done, and of the sessions that have posted their review.
 // The rows "まとめてレビューさせる" has not done yet are at work too (batch-run.ts).
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCall, useLaunchSession, useNavigation, useRemoveSession, useRemoveWorktree, removeWorktreeProblem, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../cleanup.ts";
 import { mergeMethodOf } from "../instructions.ts";
@@ -18,6 +18,23 @@ import type { Source } from "./listing";
 import type { RowShared } from "./row";
 
 type Question<Q, A = boolean> = (Q & { answer: (a: A) => void }) | undefined;
+
+/**
+ * Questions that come once a row's work has waited (a worktree made, a launch answered), so another row's may come
+ * while one is shown: they wait, and show one at a time in the order they came. The one shown and how to answer it.
+ */
+function useQuestions<Q, A = boolean>(): [Question<Q, A>, (q: Q) => Promise<A>, (a: A) => void] {
+  const [queue, setQueue] = useState<NonNullable<Question<Q, A>>[]>([]);
+  const ask = useCallback((q: Q) => new Promise<A>((resolve) => setQueue((cur) => [...cur, { ...q, answer: resolve }])), []);
+  const shown = queue[0];
+  const reply = (a: A) => {
+    if (!shown) return;
+    shown.answer(a);
+    // Removed as itself, not as the first: answered twice before the page draws again, the next one is not dropped unanswered.
+    setQueue((cur) => cur.filter((q) => q !== shown));
+  };
+  return [shown, ask, reply];
+}
 
 export function useRowShell({
   sources,
@@ -42,8 +59,8 @@ export function useRowShell({
   const [rawDelete] = useSetting<boolean>("deleteBranch");
   const merge = useMemo(() => ({ method: mergeMethodOf(rawMethod), deleteBranch: rawDelete !== false }), [rawMethod, rawDelete]);
   const [notice, setNotice] = useState<Notice>();
-  const [fork, setFork] = useState<Question<ForkQuestion>>();
-  const [trust, setTrust] = useState<Question<{ path: string; warnings: string[] }>>();
+  const [fork, askFork, answerFork] = useQuestions<ForkQuestion>();
+  const [trust, askTrust, answerTrust] = useQuestions<{ path: string; warnings: string[] }>();
   const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot }>>();
   const [asking, setAsking] = useState<Question<{ kind: CleanupKind; item: Item; spot: Spot }, { cleanup: boolean } | undefined>>();
   const { sending } = useAsked();
@@ -62,15 +79,15 @@ export function useRowShell({
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
       notify: setNotice,
-      askFork: (q) => new Promise<boolean>((resolve) => setFork({ ...q, answer: resolve })),
-      askTrust: (q) => new Promise<boolean>((resolve) => setTrust({ ...q, answer: resolve })),
+      askFork,
+      askTrust,
       askRemove: (q) => new Promise<boolean>((resolve) => setRemoving({ ...q, answer: resolve })),
       askAgentFor: (q) => new Promise<{ cleanup: boolean } | undefined>((resolve) => setAsking({ ...q, answer: resolve })),
       reload: (id) => sources[id]?.reload(),
       refresh: async (id) => sources[id]?.refresh(),
     };
     return { call, launch, send, remove, removeSession, nav, actions };
-  }, [call, launch, send, remove, removeSession, nav, sources]);
+  }, [call, launch, send, remove, removeSession, nav, sources, askFork, askTrust]);
   useAutoCleanup(sources, ready, tools);
   useFinishedSessions(sources, ready, tools);
 
@@ -106,8 +123,8 @@ export function useRowShell({
     };
   const overlays = (
     <>
-      <ForkDialog question={fork} onAnswer={answer(fork, () => setFork(undefined))} />
-      <TrustDialog question={trust} onAnswer={answer(trust, () => setTrust(undefined))} />
+      <ForkDialog question={fork} onAnswer={answerFork} />
+      <TrustDialog question={trust} onAnswer={answerTrust} />
       <RemoveDialog question={removing} onAnswer={answer(removing, () => setRemoving(undefined))} />
       <AskDialog question={asking} merge={merge} onAnswer={answer(asking, () => setAsking(undefined))} />
       <Toast notice={notice} onClose={() => setNotice(undefined)} />
