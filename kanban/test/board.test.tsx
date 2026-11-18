@@ -13,6 +13,13 @@ const board = (over: Partial<Board> = {}): Board => ({
   ...over,
 });
 
+/** Answers the question whether to trust a folder, which takes an answer half a second after it shows (board.tsx). */
+async function answerTrust(dialog: HTMLElement, name: "信頼して起動する" | "やめる") {
+  const button = within(dialog).getByRole("button", { name });
+  await waitFor(() => expect(button).toHaveProperty("disabled", false), { timeout: 5000 });
+  await userEvent.click(button);
+}
+
 describe("KanbanPage", () => {
   it("asks for the board every minute, and every 2 seconds while the working server reads the repositories", () => {
     set({ machines: [machine()] });
@@ -84,7 +91,7 @@ describe("KanbanPage", () => {
     const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
     expect(within(dialog).getByText("/work/issue-1-x")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json に hooks があります")).toBeTruthy();
-    await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
+    await answerTrust(dialog, "信頼して起動する");
 
     await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
     expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/issue-1-x", trust: true });
@@ -99,7 +106,7 @@ describe("KanbanPage", () => {
     render(<KanbanPage params={{}} />);
     await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
-    await userEvent.click(await screen.findByRole("button", { name: "やめる" }));
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(sdk.launchSession).toHaveBeenCalledTimes(1);
     expect(sdk.nav.openSession).not.toHaveBeenCalled();

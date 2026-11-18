@@ -36,6 +36,13 @@ async function openFromNotice() {
   await userEvent.click(open);
 }
 
+/** Answers the question whether to trust a folder, which takes an answer half a second after it shows (dialogs.tsx). */
+async function answerTrust(dialog: HTMLElement, name: "信頼して起動する" | "やめる") {
+  const button = within(dialog).getByRole("button", { name });
+  await waitFor(() => expect(button).toHaveProperty("disabled", false), { timeout: 5000 });
+  await userEvent.click(button);
+}
+
 async function choose(template: string) {
   await userEvent.click(screen.getByRole("button", { name: /worktree を作る/ }));
   await userEvent.click(await screen.findByRole("menuitem", { name: template }));
@@ -87,7 +94,7 @@ describe("a pull request without a worktree", () => {
     const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
     expect(within(dialog).getByText("/work/review-7")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json があります")).toBeTruthy();
-    await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
+    await answerTrust(dialog, "信頼して起動する");
     await openFromNotice();
     expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched");
     expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/review-7", trust: true });
@@ -98,7 +105,7 @@ describe("a pull request without a worktree", () => {
     sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true });
     render(<ReviewPage params={{}} />);
     await choose("レビュー");
-    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "やめる" }));
+    await answerTrust(await screen.findByRole("dialog"), "やめる");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(sdk.launchSession).toHaveBeenCalledTimes(1);
     expect(sdk.sendInput).not.toHaveBeenCalled();

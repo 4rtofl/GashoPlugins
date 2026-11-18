@@ -19,7 +19,13 @@ const card = (over: Partial<KanbanCard> = {}): KanbanCard => ({
 });
 
 function draw(row: PlacedCard, actions: Partial<CardActions> = {}) {
-  const given: CardActions = { notify: vi.fn(), askTrust: vi.fn(async () => false), ...actions };
+  // Counts the sessions being started, as the board does.
+  let starting = 0;
+  const begin = () => {
+    starting++;
+    return () => void starting--;
+  };
+  const given: CardActions = { notify: vi.fn(), askTrust: vi.fn(async () => false), begin, starting: () => starting, ...actions };
   render(
     <CardActionsContext.Provider value={given}>
       <Card row={row} now={Date.now()} where={{ machines: false, repos: false }} />
