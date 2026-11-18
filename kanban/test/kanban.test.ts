@@ -493,13 +493,20 @@ test("saving a file of the board plugins' folder reads them again, and says whic
   try {
     const first = await folder.start((_, changed) => changes.push([...changed].sort()));
     assert.deepEqual(first.plugins.map((p) => p.name), ["a", "b"]);
-    // Saved until heard: saving the same text again, while the reading of the first goes on or after it, is no change.
-    await until(() => changes.length > 0, () => fs.writeFile(path.join(dir, "a/lib.ts"), 'export const column = "agent";\n'));
-    assert.deepEqual(changes, [["a"]]);
+    // Saved until heard. Reading the saved file takes 1.5 seconds, and it is saved again with the same text while it is
+    // read: that is no change, though the reading for it starts before the first one ends.
+    const hooks = globalThis as typeof globalThis & { kanbanReading?: () => void };
+    const save = () => fs.writeFile(path.join(dir, "a/lib.ts"), 'globalThis.kanbanReading?.();\nawait new Promise((r) => setTimeout(r, 1500));\nexport const column = "agent";\n');
+    hooks.kanbanReading = () => {
+      hooks.kanbanReading = undefined;
+      void save();
+    };
+    await until(() => changes.length > 0, save);
     // The cards written out are not read.
     await writeFiles(dir, { "cards/o__r.json": "{}" });
     await new Promise((r) => setTimeout(r, 600));
-    assert.equal(changes.length, 1);
+    await folder.reload();
+    assert.deepEqual(changes, [["a"]]);
   } finally {
     // An open watcher keeps this file's node running.
     folder.stop();
