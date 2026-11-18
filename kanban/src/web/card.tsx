@@ -373,10 +373,15 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
                 onSelect={() =>
                   void startSession(row, launch, actions).then((sessionId) => {
                     if (!sessionId) return;
-                    actions.notify({ text: `${card.label} でセッションを起動しました。`, session: { machine: machine.id, sessionId } });
-                    // Leaving the board would drop the question of another card still starting one: the notice opens
-                    // this session, and the last to start is opened.
-                    if (actions.starting() === 0) nav.openSession(machine.id, sessionId);
+                    const session = { machine: machine.id, sessionId };
+                    // Leaving the board would drop the question of another card still starting one: the board stays,
+                    // and the last to start is opened (the others are in the sidebar).
+                    if (actions.starting() > 0) {
+                      actions.notify({ text: `${card.label} でセッションを起動しました。ほかのカードの起動が終わるまで、カンバンのままにします。`, session });
+                      return;
+                    }
+                    actions.notify({ text: `${card.label} でセッションを起動しました。`, session });
+                    nav.openSession(machine.id, sessionId);
                   })
                 }
                 className={MENU_ITEM}
