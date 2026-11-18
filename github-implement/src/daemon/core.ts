@@ -109,14 +109,15 @@ interface Version {
 const versions = new Map<string, Version>();
 const versionKey = (repo: string, number: number): string => `${repo.toLowerCase()}#${number}`;
 
-export async function readItems(ctx: Ctx, repo: string, branch: string | undefined, added: number[], maxAgeSeconds: number): Promise<WorktreeItems> {
+/** `head`: the worktree's HEAD commit, without which no merged pull request is the worktree's (parseItems). */
+export async function readItems(ctx: Ctx, repo: string, branch: string | undefined, added: number[], maxAgeSeconds: number, head?: string): Promise<WorktreeItems> {
   const now = Date.now();
   const gone = (n: number) => (missingUntil.get(`${repo}#${n}`) ?? 0) > now;
   const branchNamed = branchNumber(branch);
   const named = branchNamed !== undefined && !gone(branchNamed) ? branchNamed : undefined;
   const asked = added.filter((n) => !gone(n));
   const stdout = await readAllowingNotFound(ctx.github.read(itemsQueryArgs(repo, branch, [...(named ? [named] : []), ...asked]), { repo, maxAgeSeconds }));
-  const items = parseItems(stdout, named, asked, now);
+  const items = parseItems(stdout, named, asked, now, head);
   if (named !== undefined && !items.named) missingUntil.set(`${repo}#${named}`, now + MISSING_FOR_MS);
   for (const n of items.missing) missingUntil.set(`${repo}#${n}`, now + MISSING_FOR_MS);
   const at = Date.now();
