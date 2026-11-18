@@ -18,7 +18,8 @@ export default {
       } catch {
         return false;
       }
-      return gh(`compare ${was} with ${repo}`, async () => isSameRepo(await readAllowingNotFound(ctx.github.read(sameRepoArgs(was, repo), { repo, maxAgeSeconds: KEEP_MAX_SECONDS }))), ctx);
+      // "b" is the name the origin has now. GitHub not having the old one ("a") says they are not the same.
+      return gh(`compare ${was} with ${repo}`, async () => isSameRepo(await readAllowingNotFound(ctx.github.read(sameRepoArgs(was, repo), { repo, maxAgeSeconds: KEEP_MAX_SECONDS }), "b")), ctx);
     };
     const kept = await current().seen(worktree, repo, branch, Date.now(), renamed);
     const head = branch ? await worktreeHead(ctx, worktree, typeof p.repoDir === "string" ? p.repoDir : undefined) : undefined;

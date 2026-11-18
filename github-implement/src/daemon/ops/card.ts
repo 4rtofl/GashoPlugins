@@ -8,8 +8,6 @@ import type { Op } from "../op.ts";
 export interface ItemCard extends ItemSummary {
   /** ISO 8601 */
   createdAt: string;
-  /** Issues closed: whether as done or as not planned. */
-  stateReason?: "completed" | "not_planned";
   /** The start of the body as plain text on one line; "" when it has none. */
   excerpt: string;
   labels: { name: string; color?: string }[];
@@ -43,12 +41,9 @@ export function parseCard(json: string): ItemCard | null {
   if (!item) return null;
   const r = raw as Record<string, unknown>;
   const me = login(data?.viewer);
-  const reason = str(r.stateReason)?.toUpperCase();
   return {
     ...item,
     createdAt: str(r.createdAt) ?? "",
-    ...(item.state === "closed" && reason === "NOT_PLANNED" ? { stateReason: "not_planned" as const } : {}),
-    ...(item.state === "closed" && reason === "COMPLETED" ? { stateReason: "completed" as const } : {}),
     excerpt: excerptOf(str(r.bodyText) ?? ""),
     labels: nodesOf(r.labels).flatMap((l) => {
       const name = str(l.name);

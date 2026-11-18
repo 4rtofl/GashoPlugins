@@ -1,6 +1,6 @@
 // The reviews of a pull request that have text of their own, with what they decided and their reactions (read with the
 // comments', conversation-meta.ts).
-import { CircleAlert, CircleCheck, CircleSlash, Clock, MessageSquareText, type LucideIcon } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleSlash, Clock, History, MessageSquareText, type LucideIcon } from "lucide-react";
 import { Markdown, RelativeTime } from "@gasho/plugin-sdk";
 import type { GitHubReview } from "../../../types.ts";
 import { Badge, type BadgeTone } from "../../ui/badge.tsx";
@@ -22,7 +22,7 @@ function useReviews(): ConversationEntry[] {
   const { item, now } = useItem();
   const meta = useConversationMeta().data;
   const byId = new Map((meta?.reviews ?? []).map((m) => [m.id, m]));
-  return (item.reviews ?? []).map((r, i) => {
+  const entries = (item.reviews ?? []).map((r, i): ConversationEntry => {
     const s = STATE[r.state];
     // A review not yet submitted is gh's login's own draft, which no one else sees yet.
     const m = r.id && r.state !== "pending" ? byId.get(r.id) : undefined;
@@ -48,6 +48,10 @@ function useReviews(): ConversationEntry[] {
       ),
     };
   });
+  if (item.reviewsLeftOut) {
+    entries.push({ key: "reviews-left-out", at: item.reviews?.[0]?.submittedAt ?? item.createdAt, pin: "bottom", icon: History, title: `古いレビュー ${item.reviewsLeftOut} 件は省いています。GitHub で読めます。` });
+  }
+  return entries;
 }
 
 export default { order: 30, useEntries: useReviews } satisfies ConversationPart;
