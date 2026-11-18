@@ -4,7 +4,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
 import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
@@ -12,6 +12,14 @@ import { canPush, PROJECT_FILES } from "../types.ts";
 import { sessionsIn, type ForkQuestion, type Item, type Notice, type Spot } from "./actions";
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
+
+/**
+ * An answer to a question that others may wait behind (shell.tsx): the next one shows in its place at once, so the
+ * second click of a double click would answer that one unseen. It is not taken.
+ */
+const single = (answer: () => void) => (e: MouseEvent) => {
+  if (e.detail < 2) answer();
+};
 
 /**
  * Claude Code asks whether to trust a folder before a session starts there: the person answers here. `note`: what else
@@ -47,10 +55,10 @@ export function TrustDialog({
             </ul>
           )}
           <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Button size="sm" onClick={() => onAnswer(false)}>
+            <Button size="sm" onClick={single(() => onAnswer(false))}>
               やめる
             </Button>
-            <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
+            <Button size="sm" variant="primary" onClick={single(() => onAnswer(true))}>
               信頼して起動する
             </Button>
           </div>
@@ -94,10 +102,10 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
               <p className="text-xs text-muted-foreground">{PROJECT_FILES.join("・")} はありません。</p>
             )}
             <div className="flex justify-end gap-2 border-t border-border pt-4">
-              <Button size="sm" onClick={() => onAnswer(false)}>
+              <Button size="sm" onClick={single(() => onAnswer(false))}>
                 起動しない
               </Button>
-              <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
+              <Button size="sm" variant="primary" onClick={single(() => onAnswer(true))}>
                 起動する
               </Button>
             </div>
