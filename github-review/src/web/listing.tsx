@@ -14,8 +14,6 @@ export interface Source {
   ready: boolean;
   reason?: string;
   listing?: Listing;
-  /** What it watches: the list's, or read on its own while no list has come. */
-  watched?: string[];
   /** When `listing` came (ms since the epoch, by this browser's clock). */
   at?: number;
   error?: string;
@@ -33,20 +31,12 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
   const daemon = useDaemonReady(machine.id);
   const on = machine.connected && daemon.ready;
   const r = useRequest<Listing>(on ? { machine: machine.id, method: "list", params: { query } } : undefined, { staleSeconds: ASK_SECONDS, refreshSeconds: ASK_SECONDS });
-  // gh may fail before any list comes; what it watches is read without gh, so 対象リポジトリ can still be chosen.
-  const w = useRequest<string[]>(on && !r.data ? { machine: machine.id, method: "watched" } : undefined, { staleSeconds: 0 });
-  const watched = r.data?.watched ?? w.data;
   const call = useCall();
   // useCall gives a new function at every drawing. `refresh` is handed to the page, which is drawn again whenever it
   // changes: were it to change with `call`, this would be drawn again without end.
   const callRef = useRef(call);
   callRef.current = call;
-  const { reload: reloadList } = r;
-  const { reload: reloadWatched } = w;
-  const reload = useCallback(() => {
-    reloadList();
-    reloadWatched();
-  }, [reloadList, reloadWatched]);
+  const { reload } = r;
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string>();
   const asked = useRef(freshAsk);
@@ -75,8 +65,8 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
 
   const error = refreshError ?? r.error;
   useEffect(() => {
-    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, at: r.at, watched, ...(error ? { error } : {}), refreshing, reload, refresh });
-  }, [machine.id, on, daemon.reason, r.data, r.at, watched, error, refreshing, reload, refresh, onChange]);
+    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, at: r.at, ...(error ? { error } : {}), refreshing, reload, refresh });
+  }, [machine.id, on, daemon.reason, r.data, r.at, error, refreshing, reload, refresh, onChange]);
   useEffect(() => () => onChange(machine.id, undefined), [machine.id, onChange]);
   return null;
 }

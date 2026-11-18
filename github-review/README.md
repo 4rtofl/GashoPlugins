@@ -53,7 +53,7 @@
 | `options` | read | 対象リポジトリに選べるもの（`RepoOption[]`）。`ctx.folders()` のフォルダーから作り、30秒は同じものを返す |
 | `list` | read | `{ query, fresh? }` のページ（`Listing`）。Pull request ごとに、この working server の clone と worktree（`place`）を付ける |
 | `detail` | read | `{ repo, number, fresh? }` のサイドパネルの中身（`PrDetail`）。本文・最新の30件のコメント・head のチェックと、この working server の clone と worktree（`pr.place`） |
-| `watched` | read | 対象リポジトリ（primary checkout のパスの `string[]`）。gh を使わないので、`list` が失敗しても読める。ページは、`list` の結果がまだ無いあいだ、「対象リポジトリ」で選んでいるものをこれで読む |
+| `watched` | read | 対象リポジトリ（primary checkout のパスの `string[]`）。gh を使わないので、`list` が失敗しても読める。ページは、「対象リポジトリ」を開くたびに、選んでいるものをこれで読む |
 | `watch` | write | 対象リポジトリを `{ paths }` に変える。新しく足せるのは `options` にある GitHub の repo だけ |
 | `create` | write | `{ repo, number }` のレビュー用の worktree を作る。もうあれば、その場所を返す（`Created`） |
 | `remove` | write | `{ repo, number }` のレビュー用の worktree か、「マージしてもらう」で片付けると選んだ worktree（名前は問わない）と、ローカルのブランチを消す（`Removed`） |
