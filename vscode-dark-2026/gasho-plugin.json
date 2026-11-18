@@ -1,7 +1,7 @@
 {
   "id": "vscode-dark-2026",
   "name": "VS Code Dark 2026",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "VS Code の既定の暗い配色 Dark 2026（microsoft/vscode、MIT）",
   "genre": "theme",
   "api": "1.6",

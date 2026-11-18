@@ -20,20 +20,28 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p scripts",
-    "test": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\" \"kanban/plugins/*/*.test.ts\"",
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p scripts && tsc -p test",
+    "test": "npm run test:node && npm run test:web",
+    "test:node": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\" \"kanban/plugins/*/*.test.ts\"",
+    "test:web": "vitest run",
     "test:coverage": "node --disable-warning=ExperimentalWarning scripts/coverage.ts",
     "check": "node scripts/check.ts"
   },
   "devDependencies": {
     "@gasho/plugin-sdk": "npm:@4rtofl/gasho-plugin-sdk@^1.18.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.12",
     "@types/node": "^24.0.0",
     "@types/react": "19.3.0",
+    "happy-dom": "^21.0.4",
     "lucide-react": "^1.72.0",
     "react": "^19.3.1",
-    "typescript": "^7.0.2"
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=24.2.0"
   }
 }
