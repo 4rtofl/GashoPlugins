@@ -7,7 +7,7 @@ import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { batchTargets, pageItems } from "../src/items.ts";
 import { listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries } from "../src/daemon/gh.ts";
-import { createWorktree, prWorktree, readClone, removeWorktree, repoName, ReviewError, reviewName, reviewNumbers, type Clone, type Exec } from "../src/daemon/git.ts";
+import { createWorktree, prWorktree, readClone, removeWorktree, repoName, ReviewError, reviewName, reviewNumbers, type Clone, type Exec, type OnGitHub } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
 import { fillTemplate, parseTemplates } from "../src/template.ts";
 import type { Listing, PrRow } from "../src/types.ts";
@@ -31,8 +31,12 @@ const exec: Exec = async (command, args, o = {}) => {
 const git = async (cwd: string, ...args: string[]) =>
   (await run("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "init.defaultBranch=main", ...args])).stdout.trim();
 
-/** A repository "o/r" with a bare origin, branches feat/5-a and feat/6-b, pull requests #7 and #8 from forks (refs/pull/<N>/head) and a clone at <root>/r/main. */
-async function setup(): Promise<{ root: string; primary: string; clone: () => Promise<Clone>; sha: (ref: string) => Promise<string> }> {
+/**
+ * A repository "o/r" with a bare origin, branches feat/5-a and feat/6-b, pull requests #7 and #8 from forks
+ * (refs/pull/<N>/head) and a clone at <root>/r/main. `onGitHub` says whether origin has a commit, as GitHub keeps one a
+ * force-push left behind.
+ */
+async function setup(): Promise<{ root: string; primary: string; clone: () => Promise<Clone>; sha: (ref: string) => Promise<string>; onGitHub: OnGitHub }> {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "github-review-")));
   roots.push(root);
   const origin = path.join(root, "origin.git");
@@ -64,6 +68,7 @@ async function setup(): Promise<{ root: string; primary: string; clone: () => Pr
     primary,
     clone: () => readClone(exec, { path: primary, github: "o/r" }),
     sha: (ref) => git(origin, "rev-parse", ref),
+    onGitHub: (oid) => git(origin, "cat-file", "-e", `${oid}^{commit}`).then(() => true, () => false),
   };
 }
 
@@ -134,7 +139,7 @@ test("remove: not while something would be lost; then the worktree and its local
   const head = await s.sha("feat/5-a");
   await git(s.root, "--git-dir", path.join(s.root, "origin.git"), "branch", "-D", "feat/5-a");
   await git(s.primary, "fetch", "--prune", "origin");
-  await assert.rejects(removeWorktree(exec, await s.clone(), pr), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
+  await assert.rejects(removeWorktree(exec, await s.clone(), pr, { onGitHub: s.onGitHub }), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
   assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr, head }), { path: dest, branch: "feat/5-a" });
   await assert.rejects(fs.lstat(dest));
   assert.equal(await git(s.primary, "branch", "--list", "feat/5-a"), "");
@@ -187,16 +192,30 @@ test("remove: after its author rebased and force-pushed, the commit the worktree
   await fs.writeFile(path.join(forkDest, "review.txt"), "mine\n");
   await git(forkDest, "add", ".");
   await git(forkDest, "commit", "-m", "mine");
-  await assert.rejects(removeWorktree(exec, await s.clone(), { ...fork, head: next }), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
+  await assert.rejects(removeWorktree(exec, await s.clone(), { ...fork, head: next }, { onGitHub: s.onGitHub }), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
   await git(forkDest, "reset", "--hard", "HEAD~1");
-  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...fork, head: next }), { path: forkDest });
+  // GitHub has to be read for that: when it cannot be, nothing goes.
+  const unread: OnGitHub = () => Promise.reject(new Error("GitHub に届きません"));
+  await assert.rejects(removeWorktree(exec, await s.clone(), { ...fork, head: next }, { onGitHub: unread }), (e: unknown) => e instanceof ReviewError && /GitHub を読めなかった.*1 個.*GitHub に届きません/.test(e.message));
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...fork, head: next }, { onGitHub: s.onGitHub }), { path: forkDest });
 
   // Of the same repository, with origin's branch fetched after the force-push.
   const pr = { number: 6, branch: "feat/6-b", fork: false };
   const { path: dest } = await createWorktree(exec, await s.clone(), pr);
   const head = await rebase("refs/heads/feat/6-b");
   await git(s.primary, "fetch", "origin");
-  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr, head }), { path: dest, branch: "feat/6-b" });
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr, head }, { onGitHub: s.onGitHub }), { path: dest, branch: "feat/6-b" });
+
+  // A review worktree made by hand on a commit never pushed: GitHub does not have the one it was made at.
+  await git(s.primary, "switch", "-c", "wip");
+  await fs.writeFile(path.join(s.primary, "wip.txt"), "wip\n");
+  await git(s.primary, "add", ".");
+  await git(s.primary, "commit", "-m", "wip");
+  await git(s.primary, "switch", "main");
+  const handmade = path.join(s.root, "r", "review-5");
+  await git(s.primary, "worktree", "add", handmade, "wip");
+  await assert.rejects(removeWorktree(exec, await s.clone(), { number: 5, branch: "feat/5-a", fork: false, head: await s.sha("feat/5-a") }, { onGitHub: s.onGitHub }), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
+  assert.match(await git(s.primary, "branch", "--list", "wip"), /wip/);
 });
 
 test("worktree: a review worktree whose folder is gone does not open, and is made again or removed, unless that would lose a commit", async () => {

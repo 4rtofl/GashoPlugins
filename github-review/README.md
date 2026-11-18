@@ -45,7 +45,7 @@
   - フォルダーの信頼は、最初の1件で確かめる。そこで信頼すると、そのあとのフォルダーは、Claude Code が警告を出さないものだけ確かめずに信頼する（警告のあるフォルダーは、その都度確かめる）。確かめるダイアログはこのページに出すので、ほかの画面にいるあいだは、このページに戻るまで待つ
   - 作るときに worktree がもうあった Pull request は飛ばす
 - テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る
-- `review-<リポジトリ名>-<番号>` の worktree と、「マージしてもらう」で片付けると選んだ worktree（名前は問わない）がある行には「片付ける」を出す。押すと確かめてから、worktree とローカルのブランチを消す。未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも、worktree を作ったときの commit にも無い commit）があれば、消さずに理由を出す。worktree を作ったときの commit は、その worktree の HEAD の reflog の最初の行から読むので、作者がそのあと rebase や force-push をしても、レビューした人が commit していなければ片付けられる。Pull request がマージか閉じられたら、`review-<リポジトリ名>-<番号>` の worktree の行に「片付けてよい」と出す。マージか閉じられて上下の段から外れた Pull request も、`review-<リポジトリ名>-<番号>` の worktree か、「マージしてもらう」で片付けると選んだ worktree があるあいだは、下の段のその repo の所に出す（対象リポジトリでなくても出し、検索の語では絞り込まない）
+- `review-<リポジトリ名>-<番号>` の worktree と、「マージしてもらう」で片付けると選んだ worktree（名前は問わない）がある行には「片付ける」を出す。押すと確かめてから、worktree とローカルのブランチを消す。未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも、worktree を作ったときの commit にも無い commit）があれば、消さずに理由を出す。worktree を作ったときの commit は、その worktree の HEAD の reflog の最初の行から読むので、作者がそのあと rebase や force-push をしても、レビューした人が commit していなければ片付けられる。その commit は、GitHub にあるとき（GraphQL の問い合わせ1回で確かめる）だけ数える。push していない commit の上に手で作った `review-<番号>` を、その commit ごと消さないため。GitHub を読めないときは数えず、理由を出して消さない。Pull request がマージか閉じられたら、`review-<リポジトリ名>-<番号>` の worktree の行に「片付けてよい」と出す。マージか閉じられて上下の段から外れた Pull request も、`review-<リポジトリ名>-<番号>` の worktree か、「マージしてもらう」で片付けると選んだ worktree があるあいだは、下の段のその repo の所に出す（対象リポジトリでなくても出し、検索の語では絞り込まない）
 
 ## daemon の部分のメソッド
 
