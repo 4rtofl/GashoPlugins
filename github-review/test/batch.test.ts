@@ -13,7 +13,7 @@ const dirOf = (n: number) => `/w/r/review-r-${n}`;
  * not trust their folders yet; `warned` are the numbers whose folder it has warnings about. Making the worktree of
  * `hold` waits for `release()`.
  */
-function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[]; sendWarning?: number[]; features?: string[]; answers?: boolean[]; hold?: number } = {}) {
+function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[]; sendWarning?: number[]; sendFail?: number[]; features?: string[]; answers?: boolean[]; hold?: number } = {}) {
   const machine = { id: "m1", name: "m1", canLaunch: true, features: opts.features ?? ["effort"], sessions: [] } as unknown as MachineInfo;
   const items = Array.from({ length: opts.count ?? 3 }, (_, i) => {
     const number = i + 1;
@@ -31,7 +31,11 @@ function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[
   let release = () => {};
   const held = new Promise<void>((r) => (release = r));
   const tools = {
-    call: (async ({ params }: { params: { number: number } }) => {
+    call: (async ({ method, params }: { method: string; params: { number: number; action?: string; sessionId?: string } }) => {
+      if (method === "reviewSession") {
+        log.push(`reviewSession ${params.action} ${params.sessionId}`);
+        return { ok: true, data: {} };
+      }
       if (params.number === opts.hold) await held;
       log.push(`create #${params.number}`);
       return { ok: true, data: { path: dirOf(params.number), created: !opts.existing?.includes(params.number) } satisfies Created };
@@ -48,9 +52,11 @@ function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[
     send: (async ({ sessionId, text, effort }: { sessionId: string; text: string; effort?: string }) => {
       log.push(`send ${sessionId} effort=${effort ?? "-"}: ${text.split("\n")[0]}`);
       const n = Number(sessionId.slice(2));
+      if (opts.sendFail?.includes(n)) return { ok: false, error: "送れません" };
       return { ok: true, data: { queued: false, ...(opts.sendWarning?.includes(n) ? { warning: "Effort を Max にできませんでした。いまの Effort のまま送ります。" } : {}) } };
     }) as Tools["send"],
     remove: (async () => ({ ok: true })) as unknown as Tools["remove"],
+    removeSession: (async () => ({ ok: true })) as unknown as Tools["removeSession"],
     nav: {} as Tools["nav"],
     actions: {
       notify: (n) => notices.push(n),
@@ -72,12 +78,22 @@ test("batch: each one is sent the template at the effort level of a review; a wa
   const count = await reviewAll(f.items, TEMPLATE, f.tools, f.onStep);
   assert.deepEqual(
     f.log.filter((l) => l.startsWith("send")),
-    ["send s-1 effort=max: #1 をレビュー", "send s-2 effort=max: #2 をレビュー"],
+    ["send s-1 effort=xhigh: #1 をレビュー", "send s-2 effort=xhigh: #2 をレビュー"],
   );
   assert.deepEqual(f.steps["#1"]?.at(-1), { state: "done", sessionId: "s-1" });
   assert.deepEqual(f.steps["#2"]?.at(-1), { state: "done", sessionId: "s-2", text: "Effort を Max にできませんでした。いまの Effort のまま送ります。" });
   assert.deepEqual(count, { done: 2, failed: 0, skipped: 0, warned: 1 });
   assert.deepEqual(batchSummary(count, 2), { text: "2 件のうち 2 件でレビューを始めました（1 件は送るときに注意が出ました）。", tone: "danger" });
+});
+
+test("batch: a session is tracked before its review is sent, and forgotten when the review did not go", async () => {
+  const f = fakeBatch({ count: 2, sendFail: [2] });
+  const count = await reviewAll(f.items, TEMPLATE, f.tools, f.onStep);
+  assert.deepEqual(
+    f.log.filter((l) => /^(send|reviewSession)/.test(l)),
+    ["reviewSession track s-1", "send s-1 effort=xhigh: #1 をレビュー", "reviewSession track s-2", "send s-2 effort=xhigh: #2 をレビュー", "reviewSession forget s-2"],
+  );
+  assert.deepEqual(count, { done: 1, failed: 1, skipped: 0, warned: 0 });
 });
 
 test("batch: where gasho-daemon cannot switch the effort level, the template goes as it is", async () => {
