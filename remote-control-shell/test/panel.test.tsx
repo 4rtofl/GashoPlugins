@@ -68,8 +68,14 @@ describe("ShellPanel", () => {
     daemon({ jobs: [job()] });
     draw();
     const record = await screen.findByRole("region", { name: "$ npm test" });
+    // The panel keeps the time of the press (Date.now()), which is not before this.
+    const pressed = Date.now();
     await user.click(within(record).getByRole("button", { name: "停止" }));
     expect(callsOf("signal")).toEqual([{ job: "mhz0a1b2-aaaaaa", signal: "INT" }]);
+
+    act(() => set({ now: pressed + 2000 }));
+    expect(within(record).queryByRole("button", { name: "強制終了" })).toBeNull();
+    expect(within(record).getByRole("button", { name: "停止" })).toBeTruthy();
 
     act(() => set({ now: Date.now() + 3000 }));
     await user.click(within(record).getByRole("button", { name: "強制終了" }));
@@ -79,11 +85,16 @@ describe("ShellPanel", () => {
     ]);
   });
 
-  it("stops the newest running command on Ctrl+C when nothing is selected", async () => {
+  it("stops the newest running command on Ctrl+C when nothing is selected, and leaves it to copying while text is", async () => {
     daemon({ jobs: [job({ id: "mhz0a1b2-aaaaaa", command: "sleep 100" }), job({ id: "mhz0a1b3-bbbbbb", command: "npm run dev" })] });
     draw();
     await screen.findByRole("region", { name: "$ npm run dev" });
-    await user.click(box());
+    await user.type(box(), "ls");
+    (box() as HTMLTextAreaElement).setSelectionRange(0, 2);
+    await user.keyboard("{Control>}c{/Control}");
+    expect(callsOf("signal")).toEqual([]);
+
+    (box() as HTMLTextAreaElement).setSelectionRange(2, 2);
     await user.keyboard("{Control>}c{/Control}");
     expect(callsOf("signal")).toEqual([{ job: "mhz0a1b3-bbbbbb", signal: "INT" }]);
   });

@@ -23,10 +23,14 @@ describe("KanbanPage", () => {
     expect(lastRequest("board")?.options?.refreshSeconds).toBe(2);
   });
 
-  it("says the board stopped being read when its last reading is old", () => {
+  it("says the board stopped being read when its last reading is old, and not while it is new", () => {
     set({ machines: [machine()] });
-    respond({ board: { data: board({ updatedAt: NOW - 6 * 60_000 }) } });
+    respond({ board: { data: board() } });
     render(<KanbanPage params={{}} />);
+    expect(screen.getByText(/ 更新$/)).toBeTruthy();
+    expect(screen.queryByText(/から更新されていない$/)).toBeNull();
+
+    act(() => respond({ board: { data: board({ updatedAt: NOW - 6 * 60_000 }) } }));
     expect(screen.getByText(/から更新されていない$/)).toBeTruthy();
   });
 
