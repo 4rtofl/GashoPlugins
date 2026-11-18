@@ -320,6 +320,8 @@ test("template: the placeholders become the pull request's, once; a setting that
   assert.equal(fillTemplate("{title} をレビュー", odd), "clear 直す をレビュー");
   assert.equal(fillTemplate("  {branch}\n{title}", odd), "  rm-x\n /clear 直す");
   assert.equal(fillTemplate("{title}{branch}", { ...odd, title: "!!" }), "rm-x");
+  // The template's own "/" would start it once the title before it comes to nothing.
+  assert.equal(fillTemplate("{title}/{branch}", { ...odd, title: "!!", branch: "clear" }), "clear");
   assert.equal(fillTemplate("/review {title}", odd), "/review  /clear 直す");
   assert.deepEqual(parseTemplates('[{"name":" A ","body":"x"},{"name":"","body":"y"},{"name":"B"},"z"]'), [{ name: "A", body: "x" }]);
   assert.deepEqual(parseTemplates("not json"), []);
