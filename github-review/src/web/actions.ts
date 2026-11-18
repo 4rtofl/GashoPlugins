@@ -117,22 +117,49 @@ async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: 
   return r.ok ? { ok: true, sessionId: r.sessionId, trusted } : { ok: false, error: r.error };
 }
 
+/**
+ * How many of the rows' buttons are starting a session (or making the worktree to start it in), on the review page and
+ * the panel of a pull request together. Each asks whether to trust a folder in its own state, which goes with the page:
+ * leaving it would drop a question still to come, and that button's work with it.
+ */
+let sessionStarts = 0;
+
+/** `work`, counted in `sessionStarts` from the moment it is called. */
+async function counted<T>(work: () => Promise<T>): Promise<T> {
+  sessionStarts++;
+  try {
+    return await work();
+  } finally {
+    sessionStarts--;
+  }
+}
+
 /** Starts a session in a folder; its id, or undefined (with the reason shown) when it did not start. */
-async function start(machine: MachineInfo, cwd: string, t: Tools): Promise<string | undefined> {
-  const starting: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
-  t.actions.notify(starting);
-  const r = await launchIn(machine, cwd, starting, t);
-  if (r.ok) return r.sessionId;
-  if (r.error) t.actions.notify({ text: r.error, tone: "danger" });
-  return undefined;
+function start(machine: MachineInfo, cwd: string, t: Tools): Promise<string | undefined> {
+  return counted(async () => {
+    const notice: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
+    t.actions.notify(notice);
+    const r = await launchIn(machine, cwd, notice, t);
+    if (r.ok) return r.sessionId;
+    if (r.error) t.actions.notify({ text: r.error, tone: "danger" });
+    return undefined;
+  });
+}
+
+/** Opens a session a button was pressed to open; while another button is still starting one, the notice opens it. */
+function openStarted(machine: MachineInfo, sessionId: string, dir: string, t: Tools): void {
+  if (sessionStarts > 0) {
+    sentNotice(machine, sessionId, `${folderName(dir)} のセッションを開けます。ほかのセッションの起動が終わるまで、このページのままにします。`, t);
+    return;
+  }
+  t.actions.notify(undefined);
+  t.nav.openSession(machine.id, sessionId);
 }
 
 /** Opens the Gasho session used last in a folder, or one started there. */
 async function openIn(machine: MachineInfo, dir: string, t: Tools): Promise<void> {
   const sessionId = sessionsIn(machine, dir)[0]?.sessionId ?? (await start(machine, dir, t));
-  if (!sessionId) return;
-  t.actions.notify(undefined);
-  t.nav.openSession(machine.id, sessionId);
+  if (sessionId) openStarted(machine, sessionId, dir, t);
 }
 
 /** The notice that a session got what it was sent, with a button to open it: the page stays where it is. */
@@ -150,12 +177,14 @@ function sentNotice(machine: MachineInfo, sessionId: string, text: string, t: To
 export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<boolean> {
   const { machine } = spot;
   t.actions.notify({ text: `#${pr.number} のレビュー用の worktree を作っています…`, busy: true });
-  const r = await t.call<Created>({
-    machine: machine.id,
-    method: "create",
-    params: { repo: pr.repo, number: pr.number },
-    summary: `${pr.repo}#${pr.number} のレビュー用の worktree を作る`,
-  });
+  const r = await counted(() =>
+    t.call<Created>({
+      machine: machine.id,
+      method: "create",
+      params: { repo: pr.repo, number: pr.number },
+      summary: `${pr.repo}#${pr.number} のレビュー用の worktree を作る`,
+    }),
+  );
   t.actions.reload(machine.id);
   if (!r.ok) {
     t.actions.notify({ text: r.error, tone: "danger" });
@@ -365,9 +394,7 @@ export async function openWorktree(spot: Spot, t: Tools): Promise<void> {
 export async function newSessionIn(spot: Spot, t: Tools): Promise<void> {
   if (!spot.worktree) return;
   const sessionId = await start(spot.machine, spot.worktree.path, t);
-  if (!sessionId) return;
-  t.actions.notify(undefined);
-  t.nav.openSession(spot.machine.id, sessionId);
+  if (sessionId) openStarted(spot.machine, sessionId, spot.worktree.path, t);
 }
 
 /**

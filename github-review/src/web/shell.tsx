@@ -56,13 +56,34 @@ export function useRowShell({
     },
     [],
   );
+  // The trust questions waiting here. Once the page or panel is left, each is answered no, as is one asked after: the
+  // button's work ends, and the sessions being started are counted right (actions.ts).
+  const waiting = useRef(new Set<(yes: boolean) => void>());
+  const left = useRef(false);
+  useEffect(() => {
+    left.current = false;
+    return () => {
+      left.current = true;
+      for (const answer of [...waiting.current]) answer(false);
+    };
+  }, []);
   const batch = useBatchRun();
   const atWork = useMemo(() => new Set([...sending.keys(), ...batchBusy(batch)]), [sending, batch]);
 
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
       notify: setNotice,
-      askTrust: (q) => new Promise<boolean>((resolve) => setTrusts((cur) => [...cur, { ...q, answer: resolve }])),
+      askTrust: (q) =>
+        left.current
+          ? Promise.resolve(false)
+          : new Promise<boolean>((resolve) => {
+              const answer = (yes: boolean) => {
+                waiting.current.delete(answer);
+                resolve(yes);
+              };
+              waiting.current.add(answer);
+              setTrusts((cur) => [...cur, { ...q, answer }]);
+            }),
       askRemove: (q) => new Promise<boolean>((resolve) => setRemoving({ ...q, answer: resolve })),
       askAgentFor: (q) => new Promise<{ cleanup: boolean } | undefined>((resolve) => setAsking({ ...q, answer: resolve })),
       reload: (id) => sources[id]?.reload(),
