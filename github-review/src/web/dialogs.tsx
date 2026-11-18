@@ -4,7 +4,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
 import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
@@ -14,11 +14,15 @@ import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
 
 /**
- * An answer to a question that others may wait behind (shell.tsx): the next one shows in its place at once, so the
- * second click of a double click would answer that one unseen. It is not taken.
+ * The questions that may wait behind each other (shell.tsx): answering one shows the next in its place at once, so what
+ * would answer it unseen is not taken. The second click of a double click (`single`), and a key held down (`heldKey`).
+ * Each question gets a new panel (`key`), which puts the focus back on its first button, the no.
  */
 const single = (answer: () => void) => (e: MouseEvent) => {
   if (e.detail < 2) answer();
+};
+const heldKey = (e: KeyboardEvent) => {
+  if (e.repeat) e.preventDefault();
 };
 
 /**
@@ -38,7 +42,7 @@ export function TrustDialog({
     <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
         <Dialog.Overlay className={DIALOG_OVERLAY} />
-        <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+        <Dialog.Content key={question?.path} onKeyDown={heldKey} className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
           <div className="space-y-1.5">
             <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
             <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
@@ -81,7 +85,7 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
         {/* The portal lands outside the plugin's part of the page, where its CSS would not apply. */}
         <div data-gasho-plugin="github-review" style={{ display: "contents" }}>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
-          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+          <Dialog.Content key={question?.path} onKeyDown={heldKey} className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
             <div className="space-y-1.5">
               <Dialog.Title className="text-base font-semibold tracking-tight">fork のコードでセッションを起動しますか</Dialog.Title>
               <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
