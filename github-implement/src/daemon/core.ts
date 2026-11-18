@@ -105,9 +105,9 @@ export async function withTextFile<T>(text: string, run: (file: string) => Promi
 /**
  * The output of a GraphQL read, also when a part of it is something GitHub does not have (a number, a branch): gh
  * fails then, with the rest of the answer on stdout. A repository this login cannot read (no access, renamed, deleted)
- * is NOT_FOUND too, but nothing in it was read: that stays a failure.
+ * is NOT_FOUND too, but nothing in it was read: that stays a failure. `field`: the field of data the repository is in.
  */
-export async function readAllowingNotFound(answer: Promise<ExecResult>): Promise<string> {
+export async function readAllowingNotFound(answer: Promise<ExecResult>, field = "repository"): Promise<string> {
   try {
     return (await answer).stdout;
   } catch (e) {
@@ -115,7 +115,7 @@ export async function readAllowingNotFound(answer: Promise<ExecResult>): Promise
     if (typeof out !== "string" || !out.includes('"NOT_FOUND"') || !out.includes('"data"')) throw e;
     let repository: unknown;
     try {
-      repository = (JSON.parse(out) as { data?: { repository?: unknown } } | null)?.data?.repository;
+      repository = (JSON.parse(out) as { data?: Record<string, unknown> | null } | null)?.data?.[field];
     } catch {
       throw e;
     }

@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
-import type { GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
-import { askFresh, itemRead, readAgain, readItems, type Ctx } from "../src/daemon/core.ts";
+import type { DaemonContext, GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
+import { askFresh, begin, end, itemRead, readAgain, readItems, type Ctx } from "../src/daemon/core.ts";
+import itemsOp from "../src/daemon/ops/items.ts";
 import { branchArg, branchNumber, detailArgs, fitDetail, ghError, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
 import { worktreeHeads } from "../src/daemon/head.ts";
 import { parseLocked } from "../src/daemon/ops/locked.ts";
-import type { GitHubItemDetail } from "../src/types.ts";
+import type { GitHubItemDetail, WorktreeItems } from "../src/types.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
 import { editArgs } from "../src/daemon/ops/edit.ts";
 import { stateArgs } from "../src/daemon/ops/state.ts";
@@ -245,6 +249,28 @@ test("a repository this login cannot read fails the read of its items, and shows
   const items = await readItems(ctx, "o/private", "feat/7-x", [8], 0);
   assert.equal(items.named?.number, 7);
   assert.deepEqual(items.added.map((i) => i.number), [8]);
+});
+
+test("numbers added under a name GitHub no longer has come off when the origin names another repository", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "github-implement-test-"));
+  await fs.writeFile(path.join(dir, "worktrees.json"), JSON.stringify({ worktrees: { "/w": { repo: "o/gone", added: [8], seenAt: 1 } } }));
+  begin(dir, {}, () => undefined);
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        if (args.some((a) => a.includes("a: repository"))) throw ghFailure({ a: null, b: { id: "R_1" } }, [{ type: "NOT_FOUND", path: ["a"] }], "Could not resolve to a Repository with the name 'o/gone'.");
+        return { stdout: JSON.stringify({ data: { repository: { pulls: { nodes: [] } } } }), stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as DaemonContext;
+  try {
+    const read = (await itemsOp.run({ repo: "o/now", worktree: "/w" }, ctx)) as WorktreeItems;
+    assert.deepEqual(read.added, []);
+  } finally {
+    end();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("an issue closed as a duplicate is told apart from one closed as done", () => {
