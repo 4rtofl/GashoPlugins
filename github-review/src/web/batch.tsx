@@ -1,13 +1,15 @@
 // "まとめてレビューさせる" at the head of the pull requests GitHub asks me to review: a template (and, with several working
 // servers, where to make them) from its menu, then a dialog with the pull requests it would make a review worktree and a
-// session for, ticked; it shows how each went while it runs, and each session started can be opened from there.
+// session for, ticked; it shows how each went while it runs (batch-run.ts), and each session started can be opened from
+// there.
 import { Ban, Check, ChevronDown, CircleAlert, Clock, ExternalLink, LoaderCircle, Sparkles } from "lucide-react";
 import { Dialog, DropdownMenu } from "radix-ui";
 import { useEffect, useState, type ReactNode } from "react";
 import { cn, type MachineInfo } from "@gasho/plugin-sdk";
 import { batchTargets } from "../items.ts";
 import type { Template } from "../template.ts";
-import type { BatchStep, Item, Spot } from "./actions";
+import type { BatchStep, Item } from "./actions";
+import type { BatchChoice, BatchRun, BatchTarget } from "./batch-run";
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, MENU, MENU_ITEM } from "./ui/styles";
 
@@ -21,13 +23,6 @@ function Scope({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
-}
-
-/** What the person chose from the menu: where, what to send, and the pull requests it would do. */
-export interface BatchChoice {
-  machine: MachineInfo;
-  template: Template;
-  targets: { item: Item; spot: Spot }[];
 }
 
 /** The button with its menu: a template for each working server that has pull requests to do and can start sessions. */
@@ -125,30 +120,34 @@ const STEP_LOOK: Record<BatchStep["state"], { Icon: typeof Check; className: str
 };
 
 /**
- * Asks which of the pull requests to do, then shows how each goes. `steps` is undefined until it starts; closing the
- * dialog while it runs only hides it (the notice at the bottom keeps telling how far it is).
+ * Asks which of the pull requests of `choice` to do; once started, shows how each of the run's goes. Closing the dialog
+ * while it runs only hides it: the run goes on, even away from the page (batch-run.ts), and the notice at the bottom
+ * tells how far it is.
  */
 export function BatchDialog({
   choice,
-  steps,
-  running,
+  run,
   onStart,
   onOpen,
   onClose,
 }: {
+  /** What the person chose from the menu, before it starts. */
   choice: BatchChoice | undefined;
-  steps: Record<string, BatchStep> | undefined;
-  running: boolean;
-  onStart: (targets: BatchChoice["targets"]) => void;
+  /** The run whose dialog is open. */
+  run: BatchRun | undefined;
+  onStart: (targets: BatchTarget[]) => void;
   onOpen: (sessionId: string) => void;
   onClose: () => void;
 }) {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
-    if (choice && !steps) setPicked(new Set(choice.targets.map((x) => x.item.pr.url)));
+    if (choice) setPicked(new Set(choice.targets.map((x) => x.item.pr.url)));
   }, [choice]);
+  const steps: Record<string, BatchStep> | undefined = choice ? undefined : run?.steps;
   const started = Boolean(steps);
-  const shown = choice ? (started ? choice.targets.filter((x) => steps?.[x.item.pr.url]) : choice.targets) : [];
+  const running = started && run?.running === true;
+  const shown = choice?.targets ?? run?.targets ?? [];
+  const template = (choice ?? run)?.template;
   const toggle = (url: string) =>
     setPicked((cur) => {
       const next = new Set(cur);
@@ -156,7 +155,7 @@ export function BatchDialog({
       return next;
     });
   return (
-    <Dialog.Root open={Boolean(choice)} onOpenChange={(next) => !next && onClose()}>
+    <Dialog.Root open={Boolean(choice ?? run)} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
         <Scope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
@@ -168,9 +167,9 @@ export function BatchDialog({
               <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
                 {started
                   ? running
-                    ? "1 件ずつ、worktree を作ってセッションを起動し、指示を送っています。閉じても続けます。"
+                    ? "1 件ずつ、worktree を作ってセッションを起動し、指示を送っています。閉じても、ほかの画面に移っても続けます。フォルダーを信頼するかは、このページで聞きます。ほかの画面にいるあいだは、このページに戻るまで待ちます。"
                     : "終わりました。始めたセッションは、ここかサイドバーから開けます。"
-                  : `選んだ Pull request ごとに、レビュー用の worktree を作ってセッションを起動し、「${choice?.template.name ?? ""}」を送ります。セッションは開かずに、1 件ずつ進めます。`}
+                  : `選んだ Pull request ごとに、レビュー用の worktree を作ってセッションを起動し、「${template?.name ?? ""}」を送ります。セッションは開かずに、1 件ずつ進めます。`}
               </Dialog.Description>
             </div>
             <ul className="max-h-[50dvh] divide-y divide-black/[0.05] overflow-y-auto rounded-xl border border-border dark:divide-white/[0.05]">

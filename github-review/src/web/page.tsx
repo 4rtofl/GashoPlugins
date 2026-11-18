@@ -7,9 +7,11 @@ import { RefreshCw, Search, Settings2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Page, useNavigation, useNow, usePluginState, type PageProps } from "@gasho/plugin-sdk";
 import { MAX_QUERY } from "../types.ts";
-import { reviewAll, type BatchStep, type Item } from "./actions";
-import { BatchDialog, BatchMenu, type BatchChoice } from "./batch";
+import type { Item } from "./actions";
+import { BatchDialog, BatchMenu } from "./batch";
+import { hideBatch, startBatch, useBatchPage, useBatchRun, type BatchChoice } from "./batch-run";
 import { prKey } from "./detail";
+import { TrustDialog } from "./dialogs";
 import { DEFAULT_QUERY, useListings } from "./listing";
 import { ReposDialog } from "./repos-dialog";
 import { PrItemRow, RowContext } from "./row";
@@ -23,8 +25,9 @@ export function ReviewPage(_: PageProps) {
   const [draft, setDraft] = useState(query);
   const [freshAsk, setFreshAsk] = useState(0);
   const [choosing, setChoosing] = useState(false);
-  const [batch, setBatch] = useState<{ choice: BatchChoice; steps?: Record<string, BatchStep>; shown: boolean }>();
-  const [batchRunning, setBatchRunning] = useState(false);
+  // "まとめてレビューさせる": what the person chose from its menu, until it starts; then the run, kept outside the page.
+  const [batchChoice, setBatchChoice] = useState<BatchChoice>();
+  const batch = useBatchRun();
   // The pull request whose panel is open (the panel says so while it is open).
   const [open] = usePluginState<string | null>("openPr", null);
   const { sourcesEl, machines, sources, ready, page, pending, refreshing } = useListings(query, freshAsk);
@@ -42,20 +45,8 @@ export function ReviewPage(_: PageProps) {
     else nav.openPanel("pr", { repo, number: String(number) });
   };
   const selected = open ? [...page.requested, ...page.groups.flatMap((g) => g.items)].find((i) => prKey(i.pr.repo, i.pr.number) === open)?.pr.url : undefined;
-  const { shared, overlays, runMany } = useRowShell({ sources, ready, select, ...(selected ? { selected } : {}) });
-  /** "まとめてレビューさせる": the rows of the pull requests it does stay off until each is done. */
-  const startBatch = (targets: BatchChoice["targets"]) => {
-    if (!batch || batchRunning) return;
-    const urls = targets.map((x) => x.item.pr.url);
-    setBatch({ ...batch, steps: Object.fromEntries(urls.map((u) => [u, { state: "waiting" }])) });
-    setBatchRunning(true);
-    void runMany(urls, async (release) => {
-      await reviewAll(targets, batch.choice.template, shared.tools, (url, step) => {
-        setBatch((cur) => (cur?.steps ? { ...cur, steps: { ...cur.steps, [url]: step } } : cur));
-        if (step.state !== "working") release(url);
-      });
-    }).finally(() => setBatchRunning(false));
-  };
+  const { shared, overlays } = useRowShell({ sources, ready, select, ...(selected ? { selected } : {}) });
+  useBatchPage(shared.tools.actions.notify);
   const search = () => {
     const q = draft.trim().slice(0, MAX_QUERY);
     setDraft(q);
@@ -137,8 +128,8 @@ export function ReviewPage(_: PageProps) {
               items={page.requested}
               machines={ready}
               templates={shared.templates}
-              disabled={batchRunning || page.requested.some((i) => shared.busy.has(i.pr.url))}
-              onPick={(choice) => setBatch({ choice, shown: true })}
+              disabled={batch?.running === true || page.requested.some((i) => shared.busy.has(i.pr.url))}
+              onPick={setBatchChoice}
             />
           }
         >
@@ -187,13 +178,17 @@ export function ReviewPage(_: PageProps) {
         reload={(id) => sources[id]?.reload()}
       />
       <BatchDialog
-        choice={batch?.shown ? batch.choice : undefined}
-        steps={batch?.steps}
-        running={batchRunning}
-        onStart={startBatch}
-        onOpen={(sessionId) => batch && nav.openSession(batch.choice.machine.id, sessionId)}
-        onClose={() => setBatch((cur) => (cur && batchRunning ? { ...cur, shown: false } : undefined))}
+        choice={batchChoice}
+        run={batch?.shown ? batch : undefined}
+        onStart={(targets) => {
+          if (batchChoice) startBatch(batchChoice, targets, shared.tools);
+          setBatchChoice(undefined);
+        }}
+        onOpen={(sessionId) => batch && nav.openSession(batch.machine.id, sessionId)}
+        onClose={() => (batchChoice ? setBatchChoice(undefined) : hideBatch())}
       />
+      {/* What Claude Code asks about a folder in the run, waiting while the page was away. */}
+      <TrustDialog question={batch?.trust} onAnswer={(yes) => batch?.trust?.answer(yes)} />
       {overlays}
     </MotionConfig>
   );

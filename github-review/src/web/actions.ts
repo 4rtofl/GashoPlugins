@@ -205,20 +205,28 @@ export interface BatchStep {
   sessionId?: string;
 }
 
+/** How many pull requests of "まとめてレビューさせる" ended how; `warned` are done ones with a `text`. */
+export interface BatchCount {
+  done: number;
+  failed: number;
+  skipped: number;
+  warned: number;
+}
+
 /**
  * "まとめてレビューさせる": for each pull request in turn (git in one clone at a time), makes its review worktree on the
  * working server, starts a session there and sends the template at the effort level of a review, as "worktree を作る"
  * does, without opening the sessions. A pull request whose worktree turns out to be there already is skipped. Once the
  * person has said yes to trusting a folder, the next folders Claude Code has no warnings about are trusted without
- * asking again.
+ * asking again. The notice says how far it is; `batchSummary` says how it went.
  */
 export async function reviewAll(
   targets: { item: Item; spot: Spot }[],
   template: Template,
   t: Tools,
   onStep: (url: string, step: BatchStep) => void,
-): Promise<{ done: number; failed: number; skipped: number; warned: number }> {
-  const count = { done: 0, failed: 0, skipped: 0, warned: 0 };
+): Promise<BatchCount> {
+  const count: BatchCount = { done: 0, failed: 0, skipped: 0, warned: 0 };
   let trustQuietly = false;
   const machines = new Set<string>();
   for (const [i, { item, spot }] of targets.entries()) {
@@ -262,16 +270,20 @@ export async function reviewAll(
     end({ state: "done", sessionId, ...(sent.data.warning ? { text: sent.data.warning } : {}) });
   }
   for (const id of machines) t.actions.reload(id);
+  return count;
+}
+
+/** The notice of how "まとめてレビューさせる" went, for `total` pull requests. */
+export function batchSummary(count: BatchCount, total: number): Notice {
   const rest = [
     count.warned > 0 ? `${count.warned} 件は送るときに注意が出ました` : "",
     count.skipped > 0 ? `${count.skipped} 件は飛ばしました` : "",
     count.failed > 0 ? `${count.failed} 件はできませんでした` : "",
   ].filter(Boolean);
-  t.actions.notify({
-    text: `${targets.length} 件のうち ${count.done} 件でレビューを始めました${rest.length > 0 ? `（${rest.join("、")}）` : ""}。`,
+  return {
+    text: `${total} 件のうち ${count.done} 件でレビューを始めました${rest.length > 0 ? `（${rest.join("、")}）` : ""}。`,
     ...(count.failed > 0 || count.warned > 0 ? { tone: "danger" as const } : {}),
-  });
-  return count;
+  };
 }
 
 /** Opens the worktree a pull request has on a working server. */

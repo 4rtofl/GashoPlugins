@@ -1,7 +1,7 @@
 // What the review page and the page of one pull request share around the rows' buttons: the tools they use, the
 // templates and the settings of the merge, which rows are at work, and the dialogs and the notice they show; and the
-// removal of the review worktrees whose merge or send-back is done.
-// `runMany` is for work on many rows at once ("まとめてレビューさせる"), whose rows stay off until each is done.
+// removal of the review worktrees whose merge or send-back is done. The rows "まとめてレビューさせる" has not done yet
+// are at work too (batch-run.ts).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCall, useLaunchSession, useNavigation, useRemoveWorktree, removeWorktreeProblem, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../cleanup.ts";
@@ -10,6 +10,7 @@ import { parseTemplates } from "../template.ts";
 import type { Place } from "../types.ts";
 import { working } from "../verdict.ts";
 import { cleanUp, type Actions, type Item, type Notice, type Spot, type Tools } from "./actions";
+import { batchBusy, useBatchRun } from "./batch-run";
 import { AskDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
 import type { Source } from "./listing";
 import type { RowShared } from "./row";
@@ -26,11 +27,7 @@ export function useRowShell({
   ready: MachineInfo[];
   select?: (item: Item) => void;
   selected?: string;
-}): {
-  shared: RowShared;
-  overlays: ReactNode;
-  runMany: (urls: string[], work: (release: (url: string) => void) => Promise<void>) => Promise<void>;
-} {
+}): { shared: RowShared; overlays: ReactNode } {
   const nav = useNavigation();
   const call = useCall();
   const launch = useLaunchSession();
@@ -46,6 +43,11 @@ export function useRowShell({
   const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot }>>();
   const [asking, setAsking] = useState<Question<{ kind: CleanupKind; item: Item; spot: Spot }, { cleanup: boolean } | undefined>>();
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const batch = useBatchRun();
+  const atWork = useMemo(() => {
+    const urls = batchBusy(batch);
+    return urls.length === 0 ? busy : new Set([...busy, ...urls]);
+  }, [busy, batch]);
 
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
@@ -59,23 +61,10 @@ export function useRowShell({
   }, [call, launch, send, remove, nav, sources]);
   useAutoCleanup(sources, ready, tools);
 
-  const release = (urls: string[]) =>
-    setBusy((cur) => {
-      const next = new Set(cur);
-      for (const u of urls) next.delete(u);
-      return next;
-    });
-  const runMany = (urls: string[], work: (release: (url: string) => void) => Promise<void>) => {
-    setBusy((cur) => new Set([...cur, ...urls]));
-    return work((url) => release([url]))
-      .catch((e: unknown) => setNotice({ text: e instanceof Error ? e.message : String(e), tone: "danger" }))
-      .finally(() => release(urls));
-  };
-
   const shared: RowShared = {
     tools,
     templates,
-    busy,
+    busy: atWork,
     machines: ready.length > 1,
     merge,
     ...(select ? { select } : {}),
@@ -84,7 +73,13 @@ export function useRowShell({
       setBusy((cur) => new Set(cur).add(url));
       void work()
         .catch((e: unknown) => setNotice({ text: e instanceof Error ? e.message : String(e), tone: "danger" }))
-        .finally(() => release([url]));
+        .finally(() =>
+          setBusy((cur) => {
+            const next = new Set(cur);
+            next.delete(url);
+            return next;
+          }),
+        );
     },
   };
 
@@ -102,7 +97,7 @@ export function useRowShell({
       <Toast notice={notice} onClose={() => setNotice(undefined)} />
     </>
   );
-  return { shared, overlays, runMany };
+  return { shared, overlays };
 }
 
 /**
