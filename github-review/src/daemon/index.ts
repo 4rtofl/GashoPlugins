@@ -143,6 +143,7 @@ export default defineDaemonPlugin({
           throw new PluginError("セッションの削除の指定が正しくありません。");
       }
     },
+    /**
      * Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed);
      * a worktree of any other name only when "マージしてもらう" asked for it to be cleaned up.
      */
