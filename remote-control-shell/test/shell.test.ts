@@ -64,8 +64,8 @@ test("the script runs the command as written, keeps its exit status, and writes 
   }
 });
 
-/** Runs the script in `shell -i` in a group of its own, sends SIGINT to the group once the command says "ready": its exit status. */
-function interrupted(shell: string, home: string, command: string): Promise<number | NodeJS.Signals | null> {
+/** Runs the script in `shell -i` in a group of its own, sends `signal` to the group once the command says "ready": its exit status. */
+function interrupted(shell: string, home: string, command: string, signal: NodeJS.Signals = "SIGINT"): Promise<number | NodeJS.Signals | null> {
   return new Promise((resolve, reject) => {
     const child = spawn(shell, ["-i", "-c", SCRIPT, "gasho-shell", path.join(home, "cwd"), command], {
       cwd: home,
@@ -82,13 +82,13 @@ function interrupted(shell: string, home: string, command: string): Promise<numb
     };
     const timer = setTimeout(() => {
       group("SIGKILL");
-      reject(new Error(`${shell}: SIGINT did not end "${command}"`));
+      reject(new Error(`${shell}: ${signal} did not end "${command}"`));
     }, 15_000);
     let out = "";
     child.stdout.on("data", (b: Buffer) => {
       const was = out;
       out += b.toString();
-      if (!was.includes("ready") && out.includes("ready")) group("SIGINT");
+      if (!was.includes("ready") && out.includes("ready")) group(signal);
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
@@ -97,7 +97,7 @@ function interrupted(shell: string, home: string, command: string): Promise<numb
   });
 }
 
-test("in an interactive shell, SIGINT to the shell's group reaches the command; the script ends with its status", async () => {
+test("in an interactive shell, SIGINT and SIGTERM to the shell's group reach the command; the script ends with its status", async () => {
   // Startup files of its own, so that none of the person's runs (zsh asks to make one when there is none).
   const home = mkdtempSync(path.join(os.tmpdir(), "rcs-int-"));
   for (const rc of [".bashrc", ".zshrc"]) writeFileSync(path.join(home, rc), "");
@@ -107,6 +107,10 @@ test("in an interactive shell, SIGINT to the shell's group reaches the command; 
       assert.equal(await interrupted(shell, home, "sh -c 'echo ready; exec sleep 30'"), 130, shell);
       // Ended by itself after the signal: its own code, not the signal's.
       assert.equal(await interrupted(shell, home, "sh -c \"trap '' INT; echo ready; sleep 0.3; exit 3\""), 3, shell);
+      // SIGTERM (the plugin stops): nothing after `;` runs, though an interactive shell ignores SIGTERM.
+      const after = path.join(home, "went-on");
+      assert.equal(await interrupted(shell, home, `sh -c 'echo ready; exec sleep 30'; touch '${after}'`, "SIGTERM"), 143, shell);
+      assert.ok(!existsSync(after), shell);
     }
   } finally {
     rmSync(home, { recursive: true, force: true });
