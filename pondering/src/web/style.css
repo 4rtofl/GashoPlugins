@@ -8,7 +8,7 @@
   --pondering-ink: #b5502f;
   --pondering-shine: #f0a383;
 }
-.pondering:is(.dark *) {
+.dark .pondering {
   --pondering-ink: #d77757;
   --pondering-shine: #f6cbb7;
 }
