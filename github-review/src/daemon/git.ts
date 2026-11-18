@@ -195,13 +195,16 @@ function branchName(b: string): string {
 export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { onGitHub?: OnGitHub } = {}): Promise<Created> {
   const found = prWorktree(clone, pr);
   if (found && !found.missing) return { path: found.path, created: false, ...(found.branch ? { branch: found.branch } : {}) };
-  if (found) {
+  // Only once what it is made at has been fetched: a merged pull request whose branch went from origin would otherwise
+  // lose its local branch, and still get no worktree.
+  const removeGone = async () => {
+    if (!found) return;
     try {
       await removeWorktree(exec, clone, pr, o);
     } catch (e) {
       throw e instanceof ReviewError ? new ReviewError(`${found.path} のフォルダーは消えていますが、git に残っているものを片付けられないので、作り直しません。${e.message}`) : e;
     }
-  }
+  };
   const dest = reviewPath(clone, pr.number);
   if (await succeeds(fs.lstat(dest))) {
     throw new ReviewError(`${dest} がもうあります。この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
@@ -216,12 +219,14 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { 
     if (!(await succeeds(git(exec, clone.path, ["cat-file", "-e", `${head}^{commit}`])))) {
       throw new ReviewError(`Pull request #${pr.number} の head が、GitHub から読んだあとに変わりました。もう一度作ってください。`);
     }
+    await removeGone();
     await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--detach", dest, head], w));
     return { path: await realPath(dest), created: true };
   }
   const branch = branchName(pr.branch);
   const remote = `refs/remotes/origin/${branch}`;
   await step(`origin の ${branch} を取ってくることが`, git(exec, clone.path, ["fetch", "origin", `+refs/heads/${branch}:${remote}`], w));
+  await removeGone();
   const local = await succeeds(git(exec, clone.path, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]));
   if (!local) {
     await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--track", "-b", branch, dest, remote], w));

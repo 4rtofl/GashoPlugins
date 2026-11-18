@@ -263,6 +263,14 @@ test("worktree: a review worktree whose folder is gone does not open, and is mad
   assert.deepEqual(await removeWorktree(exec, await s.clone(), pr), { path: dest5, branch: "feat/5-a" });
   assert.equal(await git(s.primary, "branch", "--list", "feat/5-a"), "");
   assert.doesNotMatch(await git(s.primary, "worktree", "list"), /review-r-5/);
+
+  // A merged pull request whose branch went from origin is not made again, and keeps what git has of it.
+  const pr6 = { number: 6, branch: "feat/6-b", fork: false };
+  const { path: dest6 } = await createWorktree(exec, await s.clone(), pr6);
+  await fs.rm(dest6, { recursive: true });
+  await git(origin, "branch", "-D", "feat/6-b");
+  await assert.rejects(createWorktree(exec, await s.clone(), pr6), (e: unknown) => e instanceof ReviewError && /origin の feat\/6-b を取ってくること/.test(e.message));
+  assert.deepEqual(prWorktree(await s.clone(), pr6), { path: dest6, branch: "feat/6-b", review: true, missing: true });
 });
 
 test("worktree: the name holds REPO of OWNER/REPO, kept to what a folder name can safely have", () => {
