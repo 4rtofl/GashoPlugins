@@ -117,6 +117,14 @@ test("headings of the same name on a working server tell the folder they are in"
     ["GashoPlugins …/Project", "GashoPlugins …/GashoPlugins", "Gasho -"],
   );
 
+  // Clones side by side in one folder, both named after the repository on GitHub: their own folders' names.
+  const side = worktree(mac, "/home/u/repos/Gasho", { repo: "/home/u/repos/Gasho", repoName: "Gasho" });
+  const sideFork = worktree(mac, "/home/u/repos/Gasho-fork", { repo: "/home/u/repos/Gasho-fork", repoName: "Gasho" });
+  assert.deepEqual(
+    categories(context([mac], [side, sideFork], [["a", side, 2], ["b", sideFork, 1]])).map((c) => c.description),
+    ["…/Gasho", "…/Gasho-fork"],
+  );
+
   // On two working servers, the server's name comes first; the same name on another server is told by it alone.
   const ubuntu = machine("ubuntu");
   const there = worktree(ubuntu, "/u/Project/GashoPlugins/GashoPlugins", { repo: "/u/Project/GashoPlugins/GashoPlugins", repoName: "GashoPlugins" });

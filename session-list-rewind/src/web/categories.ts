@@ -9,16 +9,24 @@ const basename = (path: string) => path.split("/").filter(Boolean).pop() ?? path
 /** A worktree's name under a session: its branch, or its folder's name (HEAD detached, or outside a repository). */
 const worktreeName = (w: SessionListWorktree) => w.branch ?? basename(w.path);
 
+/** The ends of the paths (as lists of folder names), as far up as it takes to tell them apart; at the top, the whole path. */
+function pathEnds(paths: readonly string[][]): string[] {
+  for (let n = 1; ; n++) {
+    const labels = paths.map((p) => (n >= p.length ? `/${p.join("/")}` : `…/${p.slice(-n).join("/")}`));
+    if (new Set(labels).size === labels.length || paths.every((p) => n >= p.length)) return labels;
+  }
+}
+
 /**
  * For folders of the same name, the end of the path of the folder each is in, as far up as it takes to tell them apart:
- * …/Project and …/GashoPlugins for /u/Project/GashoPlugins and /u/Project/GashoPlugins/GashoPlugins.
+ * …/Project and …/GashoPlugins for /u/Project/GashoPlugins and /u/Project/GashoPlugins/GashoPlugins. When the folders
+ * they are in do not tell them apart (clones side by side, both named after the repository on GitHub), the end of their
+ * own paths: …/Gasho and …/Gasho-fork for /u/repos/Gasho and /u/repos/Gasho-fork.
  */
-function parentLabels(folders: readonly string[]): string[] {
-  const parents = folders.map((f) => f.split("/").filter(Boolean).slice(0, -1));
-  for (let n = 1; ; n++) {
-    const labels = parents.map((p) => (n >= p.length ? `/${p.join("/")}` : `…/${p.slice(-n).join("/")}`));
-    if (new Set(labels).size === labels.length || parents.every((p) => n >= p.length)) return labels;
-  }
+function folderLabels(folders: readonly string[]): string[] {
+  const paths = folders.map((f) => f.split("/").filter(Boolean));
+  const parents = pathEnds(paths.map((p) => p.slice(0, -1)));
+  return new Set(parents).size === parents.length ? parents : pathEnds(paths);
 }
 
 interface Category {
@@ -77,7 +85,7 @@ export function categories(ctx: SessionListContext): SessionCategory[] {
   const where = new Map<string, string>();
   for (const cs of sameName.values()) {
     if (cs.length < 2) continue;
-    const labels = parentLabels(cs.map((c) => c.folder));
+    const labels = folderLabels(cs.map((c) => c.folder));
     cs.forEach((c, i) => where.set(c.id, labels[i]!));
   }
 

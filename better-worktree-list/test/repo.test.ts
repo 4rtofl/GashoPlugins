@@ -115,6 +115,20 @@ test("headings of the same name on a working server tell the folder they are in,
     ["…/a/x", "…/b/x", "/"],
   );
 
+  // Clones side by side in one folder, both named after the repository on GitHub: their own folders' names.
+  const side = worktree(mac, "/home/u/repos/Gasho", { repo: "/home/u/repos/Gasho", repoName: "Gasho" });
+  const sideFork = worktree(mac, "/home/u/repos/Gasho-fork", { repo: "/home/u/repos/Gasho-fork", repoName: "Gasho" });
+  assert.deepEqual(
+    repoCategories(context([mac], [used(side, 300), used(sideFork, 200)])).map((c) => c.description),
+    ["…/Gasho", "…/Gasho-fork"],
+  );
+  // With another in a folder of its own, as far up as it takes for all of them.
+  const other = worktree(mac, "/home/u/other/Gasho", { repo: "/home/u/other/Gasho", repoName: "Gasho" });
+  assert.deepEqual(
+    repoCategories(context([mac], [used(side, 300), used(sideFork, 200), used(other, 100)])).map((c) => c.description),
+    ["…/repos/Gasho", "…/repos/Gasho-fork", "…/other/Gasho"],
+  );
+
   // On two working servers, the server's name comes first.
   const pc = machine("pc");
   const forkPc = worktree(pc, "/u/fork/Gasho", { repo: "/u/fork/Gasho", repoName: "Gasho" });
