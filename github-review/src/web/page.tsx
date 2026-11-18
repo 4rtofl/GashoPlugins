@@ -188,7 +188,11 @@ export function ReviewPage(_: PageProps) {
         onClose={() => (batchChoice ? setBatchChoice(undefined) : hideBatch())}
       />
       {/* What Claude Code asks about a folder in the run, waiting while the page was away. */}
-      <TrustDialog question={batch?.trust} onAnswer={(yes) => batch?.trust?.answer(yes)} />
+      <TrustDialog
+        question={batch?.trust}
+        note="まとめてレビューさせている途中です。一度信頼すると、このあとのフォルダーは、Claude Code が警告を出さないものだけ確かめずに信頼します。"
+        onAnswer={(yes) => batch?.trust?.answer(yes)}
+      />
       {overlays}
     </MotionConfig>
   );
