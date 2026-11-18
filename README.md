@@ -62,6 +62,7 @@ npx vitest run github         # 画面の部品のテストを、パスで絞っ
 - 受けた引数は `sdk` のモック（`sdk.request`・`sdk.call`・`sdk.nav.openPanel` など）に残る。`callsOf`・`lastRequest` で、メソッドごとに取り出せる
 - `Page`・`Panel`・`Tile` などの部品は、受け取った題と中身を描くだけにした。`Popover` は、trigger を押すと開き、開いているあいだだけ中身を描く。Gasho の見た目や、`Popover` の出る位置は確かめられない
 - 決めた値と記録は、テストごとに `test/setup.ts` が消す
+- SDK の版を上げて hooks や部品が増えたら、`test/sdk.tsx` にも足す。足りないと、`npm run typecheck`（`tsc -p test`）が足りない名前を出して落ちる
 
 ## 公開する
 

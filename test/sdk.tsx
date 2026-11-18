@@ -318,3 +318,8 @@ export const Popover: GashoSdk["Popover"] = ({ trigger, children, label, open, o
     </>
   );
 };
+
+// Each export above is typed by its name, which does not catch a name the SDK added: tsc -p test names it here.
+type Missing = Exclude<keyof GashoSdk, keyof typeof import("./sdk.tsx")>;
+const complete: [Missing] extends [never] ? true : Missing = true;
+void complete;
