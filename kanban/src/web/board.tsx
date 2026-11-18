@@ -894,8 +894,27 @@ function EmptyState({ canChoose, onChoose }: { canChoose: boolean; onChoose: () 
   );
 }
 
+/**
+ * How long the buttons of a folder's question do nothing once it shows: the next question opens where the one just
+ * answered was, so the second click of a double click would trust a folder that was never read.
+ */
+const TRUST_ANSWER_AFTER_MS = 500;
+
+/** Whether `question` has shown for TRUST_ANSWER_AFTER_MS, so its buttons may answer it. */
+function useAnswerable(question: object | undefined): boolean {
+  // The question it is for, not a flag: one that takes another's place without closing waits on its own.
+  const [ready, setReady] = useState<object>();
+  useEffect(() => {
+    if (!question) return;
+    const t = setTimeout(() => setReady(question), TRUST_ANSWER_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [question]);
+  return question !== undefined && ready === question;
+}
+
 /** Claude Code asks whether to trust a card's folder before a session starts there: the person answers here. */
 function TrustDialog({ question, onAnswer }: { question: { path: string; warnings: string[] } | undefined; onAnswer: (yes: boolean) => void }) {
+  const answerable = useAnswerable(question);
   return (
     <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
@@ -917,10 +936,10 @@ function TrustDialog({ question, onAnswer }: { question: { path: string; warning
               </ul>
             )}
             <div className="flex justify-end gap-2 border-t border-border pt-4">
-              <Button size="sm" onClick={() => onAnswer(false)}>
+              <Button size="sm" disabled={!answerable} onClick={() => onAnswer(false)}>
                 やめる
               </Button>
-              <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
+              <Button size="sm" variant="primary" disabled={!answerable} onClick={() => onAnswer(true)}>
                 信頼して起動する
               </Button>
             </div>
