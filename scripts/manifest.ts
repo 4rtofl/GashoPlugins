@@ -20,7 +20,7 @@ const THEME_VALUE_MAX = 64;
 const MAX_TIMEOUT_SECONDS = 120;
 
 // Checked against the SDK's types: a permission or a theme's name that the SDK adds or takes away fails npm run typecheck.
-const PERMISSIONS = { "session.input": true, "session.launch": true, "session.remove": true, "worktree.remove": true } satisfies Record<Permission, true>;
+const PERMISSIONS = { "session.input": true, "session.launch": true, "session.remove": true, "worktree.remove": true, "session.notification": true } satisfies Record<Permission, true>;
 const THEME_NAMES = {
   background: true,
   foreground: true,

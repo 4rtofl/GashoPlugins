@@ -93,6 +93,8 @@ export interface PrRow {
   mark?: ReviewMark;
   /** When I last requested changes on it (ISO 8601). */
   changesRequestedAt?: string;
+  /** Where the search words put it in the upper part, the smaller first: the same on every working server. */
+  order?: number;
   /** Absent when this working server has no clone of its repository. */
   place?: Place;
 }
@@ -110,7 +112,7 @@ export interface RepoPrs {
 export interface Listing {
   /** The primary checkouts watched, as chosen. */
   watched: string[];
-  /** The open pull requests GitHub asks me to review (all of GitHub), narrowed by the search words. */
+  /** The pull requests GitHub asks me to review (all of GitHub) and those I opened in the watched repositories, narrowed by the search words. */
   requested: PrRow[];
   /** How many more GitHub found than `requested` holds. */
   requestedMore?: number;
@@ -186,3 +188,5 @@ export const canPush = (pr: Pick<PrRow, "fork" | "own" | "canModify">): boolean 
 export const MAX_REPOS = 30;
 /** Search words, at most. */
 export const MAX_QUERY = 200;
+/** Pull requests read per search, and shown in the upper part. */
+export const SEARCH_LIMIT = 50;

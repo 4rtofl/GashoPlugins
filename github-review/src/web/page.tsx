@@ -1,5 +1,5 @@
-// The review page (P2): above, the open pull requests GitHub asks me to review (all of GitHub); below, those of the
-// repositories each working server watches, and those that have a review worktree. One search box narrows both, in the
+// The review page (P2): above, the pull requests GitHub asks me to review and those I opened (all of GitHub); below, those
+// of the repositories each working server watches, and those that have a review worktree. One search box narrows both, in the
 // words of GitHub's list of pull requests. Every working server's daemon part is asked once a minute while the page shows.
 // Pressing a row opens the pull request's panel ("pr", detail.tsx) beside the page, as a session's panel opens.
 import { MotionConfig } from "framer-motion";
@@ -56,7 +56,7 @@ export function ReviewPage(_: PageProps) {
   const list = (
     <Page
       title="レビュー"
-      description="レビューを頼まれた Pull request と、対象リポジトリの Pull request。worktree を作ると、その中でセッションを起動します（画面はこのページのまま）。"
+      description="レビューを頼まれた Pull request と自分の Pull request、対象リポジトリの Pull request。worktree を作ると、その中でセッションを起動します（画面はこのページのまま）。"
       actions={
         <div className="flex flex-wrap gap-2">
           <Button size="sm" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
@@ -119,7 +119,7 @@ export function ReviewPage(_: PageProps) {
         )}
 
         <Section
-          title="レビューを頼まれた Pull request"
+          title="レビューを頼まれた Pull request と自分の Pull request"
           count={page.requested.length}
           more={page.requestedMore}
           loading={pending && page.requested.length === 0}
@@ -134,7 +134,7 @@ export function ReviewPage(_: PageProps) {
           }
         >
           {page.requested.length === 0 ? (
-            <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request はありません。" : "レビューを頼まれた Pull request はありません。"}</Empty>
+            <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request も、自分の Pull request もありません。" : "レビューを頼まれた Pull request も、自分の Pull request もありません。"}</Empty>
           ) : (
             <Rows items={page.requested} now={now} showRepo />
           )}

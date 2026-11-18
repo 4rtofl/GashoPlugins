@@ -36,6 +36,10 @@ function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[
         log.push(`reviewSession ${params.action} ${params.sessionId}`);
         return { ok: true, data: {} };
       }
+      if (method === "trackReview") {
+        log.push(`trackReview ${params.sessionId} #${params.number}`);
+        return { ok: true, data: { ok: true } };
+      }
       if (params.number === opts.hold) await held;
       log.push(`create #${params.number}`);
       return { ok: true, data: { path: dirOf(params.number), created: !opts.existing?.includes(params.number) } satisfies Created };
@@ -109,6 +113,22 @@ test("batch: where gasho-daemon cannot switch the effort level, the template goe
     ["send s-1 effort=-: #1 をレビュー"],
   );
   assert.deepEqual(batchSummary(count, 1), { text: "1 件のうち 1 件でレビューを始めました。" });
+});
+
+test("batch: each review is tracked for its finished notification before it is sent", async () => {
+  const f = fakeBatch({ count: 2 });
+  await reviewAll(f.items, TEMPLATE, f.tools, f.onStep);
+  assert.deepEqual(
+    f.log.filter((l) => /^(reviewSession|trackReview|send)/.test(l)),
+    [
+      "reviewSession track s-1",
+      "trackReview s-1 #1",
+      "send s-1 effort=high: #1 をレビュー",
+      "reviewSession track s-2",
+      "trackReview s-2 #2",
+      "send s-2 effort=high: #2 をレビュー",
+    ],
+  );
 });
 
 test("batch: trust is asked on the first folder; after a yes, folders with no warnings are trusted without asking, ones with warnings are asked", async () => {

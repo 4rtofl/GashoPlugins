@@ -9,11 +9,13 @@ import { Cleanups } from "./cleanups.ts";
 import { commitArgs, ghError, headArgs, parseCommit, parseHead } from "./gh.ts";
 import { createWorktree, projectFiles, removeWorktree, ReviewError, type OnGitHub, type PrHead } from "./git.ts";
 import { Reviewer } from "./reviewer.ts";
+import { finishedNotification, ReviewSessions } from "./review-sessions.ts";
 import { SessionRemovals } from "./session-removals.ts";
 
 let reviewer: Reviewer | undefined;
 let cleanups: Cleanups | undefined;
 let removals: SessionRemovals | undefined;
+let reviewSessions: ReviewSessions | undefined;
 
 function current(): Reviewer {
   if (!reviewer) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
@@ -79,11 +81,27 @@ export default defineDaemonPlugin({
     void reviewer.load();
     void cleanups.load();
     void removals.load();
+    reviewSessions = new ReviewSessions({ file: path.join(ctx.dataDir, "review-sessions.json"), log: ctx.log });
+    void reviewSessions.load();
   },
   stop() {
     reviewer = undefined;
     cleanups = undefined;
     removals = undefined;
+    reviewSessions = undefined;
+  },
+  /**
+   * A session that was sent a review ended a turn: once the review of the head now is posted, the notification says so,
+   * once. Until then (the Agent asks something, GitHub cannot be read) Gasho's own notification goes out.
+   */
+  async onSessionStop(ctx) {
+    const review = await reviewSessions?.get(ctx.session.sessionId);
+    if (!review) return undefined;
+    const { stdout } = await ctx.github.read(headArgs(review.repo, review.number), { repo: review.repo, maxAgeSeconds: 0, timeoutMs: 4000 });
+    const pr = parseHead(stdout);
+    const notification = pr && finishedNotification(pr, review);
+    if (notification) await reviewSessions?.forget(ctx.session.sessionId);
+    return notification;
   },
   methods: {
     /** The repositories that can be watched: RepoOption[]. */
@@ -152,6 +170,14 @@ export default defineDaemonPlugin({
         default:
           throw new PluginError("片付けの指定が正しくありません。");
       }
+    },
+    /** The session { sessionId } is about to be sent the review of { repo, number }: its end is notified (onSessionStop). */
+    async trackReview(params) {
+      if (!reviewSessions) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
+      const p = objArg(params);
+      if (typeof p.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(p.sessionId)) throw new PluginError("セッションの指定が正しくありません。");
+      await reviewSessions.track(p.sessionId, repoArg(p.repo), numberArg(p.number));
+      return { ok: true };
     },
     /**
      * The session { sessionId } a review is sent to (review-session.ts), by `action`: "track" { repo, number, before? } —

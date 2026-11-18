@@ -1,4 +1,4 @@
-// "まとめてレビューさせる" at the head of the pull requests GitHub asks me to review: a template (and, with several working
+// "まとめてレビューさせる" at the head of the pull requests GitHub asks me to review and those I opened: a template (and, with several working
 // servers, where to make them) from its menu, then a dialog with the pull requests it would make a review worktree and a
 // session for, ticked; it shows how each went while it runs (batch-run.ts), and each session started can be opened from
 // there.

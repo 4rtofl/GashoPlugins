@@ -32,6 +32,7 @@ function fake(
   const launched: string[] = [];
   const efforts: (string | undefined)[] = [];
   const calls: unknown[] = [];
+  const finishing: unknown[] = [];
   const machine = { id: "m1", name: "m1", canLaunch: true, features: ["effort"], sessions: (opts.sessions ?? []) as SessionInfo[] } as MachineInfo;
   const tools = {
     call: (async ({ method, params }: { method: string; params: { action?: string } }) => {
@@ -40,6 +41,11 @@ function fake(
         steps.push(`reviewSession:${params.action}`);
         tracked.push(params);
         return { ok: true, data: { claimed: opts.claimed ?? true } };
+      }
+      if (method === "trackReview") {
+        steps.push("trackReview");
+        finishing.push(params);
+        return { ok: true, data: { ok: true } };
       }
       calls.push(params);
       if (method !== "projectFiles") return { ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created };
@@ -81,7 +87,7 @@ function fake(
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };
   const pr = opts.fork ? { ...PR, fork: true, author: "someone" } : PR;
-  return { tools, spot, machine, item: { pr, spots: [spot] } as Item, notices, methods, asked, opened, sent, launched, efforts, calls, steps, tracked, removed, last: () => notices.at(-1) };
+  return { tools, spot, machine, item: { pr, spots: [spot] } as Item, notices, methods, asked, opened, sent, launched, efforts, calls, steps, tracked, finishing, removed, last: () => notices.at(-1) };
 }
 
 test("create: starts a session and sends the template, but stays on the page; the notice opens the session", async () => {
@@ -93,7 +99,7 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.deepEqual(f.efforts, ["high"]);
   assert.deepEqual(f.opened, []);
   // A pull request of the same repository is not asked about.
-  assert.deepEqual(f.methods, ["create", "reviewSession"]);
+  assert.deepEqual(f.methods, ["create", "reviewSession", "trackReview"]);
   assert.deepEqual(f.asked, []);
   const n = f.last();
   assert.equal(n?.text, "#5 のセッションを起動し、「レビューする」を送りました。");
@@ -101,6 +107,17 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.equal(n?.action?.label, "セッションを開く");
   n?.action?.run();
   assert.deepEqual(f.opened, ["m1/s-new"]);
+});
+
+test("create: the session is tracked before the review is sent, and not when nothing is sent", async () => {
+  const f = fake();
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.deepEqual(f.steps, ["reviewSession:track", "trackReview", "send"]);
+  assert.deepEqual(f.finishing, [{ sessionId: "s-new", repo: "o/r", number: 5 }]);
+  const none = fake();
+  await createWorktree(none.item, none.spot, undefined, none.tools);
+  assert.deepEqual(none.tracked, []);
+  assert.deepEqual(none.finishing, []);
 });
 
 test("create: with 何も送らない it sends nothing, and stays", async () => {
@@ -274,7 +291,7 @@ test("a session is tracked before the review is sent, with the verdict there was
   const f = fake();
   const marked = { ...f.item, pr: { ...PR, mark: { verdict: "changes", sha: "a".repeat(40), url: "https://github.com/o/r/pull/5#old" } } } as Item;
   await createWorktree(marked, f.spot, { name: "レビューする", body: "x" }, f.tools);
-  assert.deepEqual(f.steps, ["reviewSession:track", "send"]);
+  assert.deepEqual(f.steps, ["reviewSession:track", "trackReview", "send"]);
   assert.deepEqual(f.tracked, [{ action: "track", sessionId: "s-new", repo: "o/r", number: 5, before: "https://github.com/o/r/pull/5#old" }]);
   const none = fake();
   await createWorktree(none.item, none.spot, undefined, none.tools);
@@ -290,7 +307,7 @@ test("レビューする on my own pull request tracks only the new session, not
 test("a session that did not get the review is not removed later", async () => {
   const f = fake({ send: "fail" });
   await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
-  assert.deepEqual(f.steps, ["reviewSession:track", "send", "reviewSession:forget"]);
+  assert.deepEqual(f.steps, ["reviewSession:track", "trackReview", "send", "reviewSession:forget"]);
 });
 
 test("a session asked for more than the review is not removed when the review is posted", async () => {
