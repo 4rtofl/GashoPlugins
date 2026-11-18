@@ -40,7 +40,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run typecheck
-      - run: npm test
+      # The tests, and a table of what of the code they run per plugin in the job's summary (scripts/coverage.ts). Only
+      # a failing test fails it, not the numbers.
+      - run: npm run test:coverage
       - run: npm run build
       - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: node scripts/release.ts
