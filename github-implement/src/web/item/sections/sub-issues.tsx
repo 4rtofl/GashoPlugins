@@ -8,7 +8,7 @@ import { cn, Popover, useNavigation, useRequest } from "@gasho/plugin-sdk";
 import type { IssueRef, SubIssues } from "../../../daemon/ops/sub-issues.ts";
 import { readOp } from "../../daemon.ts";
 import { numberFrom } from "../../../number.ts";
-import { itemIcon, NOT_PLANNED_ICON, useRefreshOptions } from "../../tabs.ts";
+import { closedUndone, itemIcon, NOT_PLANNED_ICON, useRefreshOptions } from "../../tabs.ts";
 import { Button } from "../../ui/button.tsx";
 import { Skeleton } from "../../ui/skeleton.tsx";
 import { useAfterChange, useItem, type Change } from "../context.tsx";
@@ -20,8 +20,9 @@ const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 function IssueLink({ issue, repo }: { issue: IssueRef; repo: string }) {
   const nav = useNavigation();
   const here = sameRepo(issue.repo, repo);
-  const Icon = issue.state === "closed" && issue.stateReason === "not_planned" ? NOT_PLANNED_ICON : itemIcon({ kind: "issues", state: issue.state });
-  const color = issue.state === "open" ? "text-emerald-600 dark:text-emerald-400" : issue.stateReason === "not_planned" ? "text-muted-foreground" : "text-violet-600 dark:text-violet-400";
+  const undone = closedUndone(issue);
+  const Icon = undone ? NOT_PLANNED_ICON : itemIcon({ kind: "issues", state: issue.state });
+  const color = issue.state === "open" ? "text-emerald-600 dark:text-emerald-400" : undone ? "text-muted-foreground" : "text-violet-600 dark:text-violet-400";
   const params = { kind: "issues", number: String(issue.number) };
   return (
     <a

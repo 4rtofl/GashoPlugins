@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import { test } from "node:test";
+import type { DaemonContext } from "@gasho/plugin-sdk/daemon";
 import type { Ctx } from "../src/daemon/core.ts";
 import { COMMENTS_MAX } from "../src/daemon/detail/comments.ts";
-import { commentEditArgs } from "../src/daemon/ops/comment-edit.ts";
+import commentEdit from "../src/daemon/ops/comment-edit.ts";
+import comment from "../src/daemon/ops/comment.ts";
 import { parseComments, readComments } from "../src/daemon/ops/comments.ts";
 
 const groups = (given: Record<string, [number, boolean, string[]?]>) =>
@@ -107,9 +110,33 @@ test("older pages are read until there are as many comments as the item's read k
   assert.equal(reads, COMMENTS_MAX / 100);
 });
 
-test("a comment's new text goes to gh as a raw field, never read from a file", () => {
-  // gh api reads the file of a -F value that starts with "@".
-  const args = commentEditArgs("IC_1", "@/etc/passwd");
-  assert.equal(args[args.indexOf("body=@/etc/passwd") - 1], "-f");
-  assert.equal(args[args.indexOf("id=IC_1") - 1], "-f");
+test("a long comment reaches gh in a file of its own, which goes after: Linux takes 128 KiB at most per argument", async () => {
+  // 3 bytes a character: past 128 KiB. A text that starts with "@" is only what the file holds.
+  const body = `@/etc/passwd\n${"あ".repeat(50_000)}`;
+  const sent: { args: string[]; text: string }[] = [];
+  const ctx = {
+    github: {
+      write: async (args: string[]) => {
+        const file = args.find((a) => a.startsWith("--body-file="))?.slice("--body-file=".length) ?? args.find((a) => a.startsWith("body=@"))?.slice("body=@".length) ?? "";
+        sent.push({ args, text: await fs.readFile(file, "utf8") });
+        return { stdout: "", stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as DaemonContext;
+  await comment.run({ repo: "o/r", kind: "issues", number: 3, body }, ctx);
+  await commentEdit.run({ repo: "o/r", id: "IC_1", body }, ctx);
+  assert.deepEqual(
+    sent.map((s) => s.text === body),
+    [true, true],
+  );
+  assert.ok(sent.every((s) => s.args.every((a) => Buffer.byteLength(a) < 1024)));
+  // gh api reads the file of a -F value that starts with "@"; the id stays a raw field.
+  const edit = sent[1]?.args ?? [];
+  assert.equal(edit[edit.findIndex((a) => a.startsWith("body=@")) - 1], "-F");
+  assert.equal(edit[edit.indexOf("id=IC_1") - 1], "-f");
+  for (const s of sent) {
+    const file = (s.args.find((a) => a.startsWith("--body-file=")) ?? s.args.find((a) => a.startsWith("body=@")) ?? "").replace(/^--body-file=|^body=@/, "");
+    await assert.rejects(fs.stat(file));
+  }
 });

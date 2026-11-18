@@ -8,6 +8,7 @@ export interface Spot<M> {
   primary: string;
   worktree?: PrWorktree;
   cleanup?: Cleanup;
+  reviewSessions?: string[];
 }
 
 export interface Item<M> {
@@ -66,4 +67,18 @@ export function pageItems<M>(lists: { machine: M; listing: Listing }[]): PageIte
     requestedMore: Math.max(0, ...lists.map((l) => l.listing.requestedMore ?? 0)),
     watchedMore: lists.reduce((n, l) => n + (l.listing.watchedMore ?? 0), 0),
   };
+}
+
+/**
+ * What "まとめてレビューさせる" makes on one working server: the open pull requests with no worktree on any working server
+ * (one with a worktree somewhere is being reviewed already) and a clone on this one, each with its spot here. A search
+ * without `is:open` lists merged and closed ones too: they have nothing left to review. One from a fork is left out: its
+ * code is someone else's, so a session is started for it only from its own row, one at a time.
+ */
+export function batchTargets<M>(items: Item<M>[], machine: M): { item: Item<M>; spot: Spot<M> }[] {
+  return items.flatMap((item) => {
+    if (item.pr.state !== "open" || item.pr.fork || item.spots.some((s) => s.worktree)) return [];
+    const spot = item.spots.find((s) => s.machine === machine);
+    return spot ? [{ item, spot }] : [];
+  });
 }

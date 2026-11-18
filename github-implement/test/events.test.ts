@@ -38,3 +38,19 @@ test("events become the conversation's changes, and a merge hides the close it c
     { type: "merged", at: "2026-11-14T18:20:42Z", actor: "4rna-y" },
   ]);
 });
+
+test("a merge hides the close it comes with a second apart, and a close that was reopened stays", () => {
+  const node = (__typename: string, createdAt: string, more: Record<string, unknown> = {}) => ({ __typename, createdAt, actor: { login: "4rna-y" }, ...more });
+  const json = (nodes: unknown[]) => JSON.stringify({ data: { repository: { issueOrPullRequest: { timelineItems: { nodes } } } } });
+  const merged = parseEvents(json([node("ClosedEvent", "2026-11-14T10:00:00Z"), node("ReopenedEvent", "2026-11-14T10:05:00Z"), node("ClosedEvent", "2026-11-14T18:20:41Z"), node("MergedEvent", "2026-11-14T18:20:42Z")]));
+  assert.deepEqual(
+    merged.map((e) => `${e.type} ${e.at}`),
+    ["closed 2026-11-14T10:00:00Z", "reopened 2026-11-14T10:05:00Z", "merged 2026-11-14T18:20:42Z"],
+  );
+  assert.deepEqual(
+    parseEvents(json([node("MergedEvent", "2026-11-14T18:20:42Z"), node("ClosedEvent", "2026-11-14T18:20:43Z")])).map((e) => e.type),
+    ["merged"],
+  );
+  // An issue closed as a duplicate says so.
+  assert.equal(parseEvents(json([node("ClosedEvent", "2026-11-14T10:00:00Z", { stateReason: "DUPLICATE" })]))[0]?.stateReason, "duplicate");
+});

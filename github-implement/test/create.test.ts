@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import type { DaemonContext } from "@gasho/plugin-sdk/daemon";
 import { createIssueArgs } from "../src/daemon/ops/create-issue.ts";
 import { createPullArgs } from "../src/daemon/ops/create-pull.ts";
-import { localState, parseCompare, parseNewPull } from "../src/daemon/ops/new-pull.ts";
+import { branchPageArgs, localState, parseBranchPage, parseCompare, parseNewPull } from "../src/daemon/ops/new-pull.ts";
 import { parseSearch, searchTerms } from "../src/daemon/ops/search.ts";
 
 const run = promisify(execFile);
@@ -38,6 +38,27 @@ test("a branch GitHub does not have is told apart, and the base offered is never
   assert.equal(parseCompare(JSON.stringify({ data: { repository: { ref: null } } }), "gone"), undefined);
 });
 
+test("the bases offered are the branches with the latest commits first, of every page read", () => {
+  const node = (name: string, committedDate: string) => ({ name, target: { committedDate } });
+  const first = JSON.stringify({
+    data: {
+      repository: {
+        defaultBranchRef: { name: "main" },
+        head: null,
+        pullRequestTemplates: [],
+        refs: { pageInfo: { hasNextPage: true, endCursor: "MTAw" }, nodes: [node("a-old", "2026-01-01T00:00:00Z"), node("main", "2026-11-01T00:00:00Z")] },
+      },
+    },
+  });
+  const page = parseBranchPage(first);
+  assert.equal(page.next, "MTAw");
+  const second = parseBranchPage(JSON.stringify({ data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: "MjAw" }, nodes: [node("z-new", "2026-11-17T00:00:00Z"), node("m-mid", "2026-06-01T00:00:00Z")] } } } }));
+  assert.equal(second.next, undefined);
+  assert.deepEqual(parseNewPull(first, "feat/1-x", [...page.refs, ...second.refs]).branches, ["main", "z-new", "m-mid", "a-old"]);
+  // The cursor goes to GitHub as a variable.
+  assert.ok(branchPageArgs("o/r", "MTAw").includes("after=MTAw"));
+});
+
 test("the commits not pushed are counted from the worktree's HEAD, and GitHub's commits it lacks are told apart", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "almighty-"));
   try {
@@ -62,9 +83,9 @@ test("the commits not pushed are counted from the worktree's HEAD, and GitHub's 
 });
 
 test("what the forms send never becomes a flag of gh, and gh never pushes the branch", () => {
-  const pull = createPullArgs("o/r", { branch: "feat/1-x", base: "main", title: "-t", body: "--repo x/y", draft: true });
-  assert.deepEqual(pull, ["pr", "create", "--repo", "o/r", "--head=feat/1-x", "--base=main", "--title=-t", "--body=--repo x/y", "--draft"]);
-  assert.deepEqual(createIssueArgs("o/r", { title: "-t", body: "", labels: ["bug"], assignees: ["@me"] }), ["issue", "create", "--repo", "o/r", "--title=-t", "--body=", "--label=bug", "--assignee=@me"]);
+  const pull = createPullArgs("o/r", { branch: "feat/1-x", base: "main", title: "-t", bodyFile: "/tmp/b.md", draft: true });
+  assert.deepEqual(pull, ["pr", "create", "--repo", "o/r", "--head=feat/1-x", "--base=main", "--title=-t", "--body-file=/tmp/b.md", "--draft"]);
+  assert.deepEqual(createIssueArgs("o/r", { title: "-t", bodyFile: "/tmp/b.md", labels: ["bug"], assignees: ["@me"] }), ["issue", "create", "--repo", "o/r", "--title=-t", "--body-file=/tmp/b.md", "--label=bug", "--assignee=@me"]);
 });
 
 test("a search keeps only the repository's own issues and pull requests", () => {

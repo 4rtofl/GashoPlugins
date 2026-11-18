@@ -4,7 +4,7 @@
 import { gh, itemRead } from "../core.ts";
 import { numberArg, repoArg } from "../gh.ts";
 import type { Op } from "../op.ts";
-import { isLockReason, type LockReason } from "./lock.ts";
+import type { LockReason } from "./lock.ts";
 
 export interface LockState {
   locked: boolean;
@@ -13,9 +13,13 @@ export interface LockState {
 
 export const lockedArgs = (repo: string, number: number): string[] => ["api", `repos/${repo}/issues/${number}`, "--jq", "{locked, reason: .active_lock_reason}"];
 
+/** REST names the reasons as GitHub's lock API takes them ("off-topic", "too heated"); gh's --reason takes them with "_". */
+const REST_REASON: Record<string, LockReason> = { "off-topic": "off_topic", "too heated": "too_heated", resolved: "resolved", spam: "spam" };
+
 export function parseLocked(json: string): LockState {
   const r = (JSON.parse(json) ?? {}) as { locked?: unknown; reason?: unknown };
-  return r.locked === true ? { locked: true, ...(isLockReason(r.reason) && { reason: r.reason }) } : { locked: false };
+  const reason = typeof r.reason === "string" && Object.hasOwn(REST_REASON, r.reason) ? REST_REASON[r.reason] : undefined;
+  return r.locked === true ? { locked: true, ...(reason && { reason }) } : { locked: false };
 }
 
 export default {

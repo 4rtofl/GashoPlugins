@@ -2,12 +2,14 @@
 // call brought them, gh with its failures turned into messages, and the reads of a worktree's items and of one item,
 // which the background reads use too. A read of one item uses what gasho-daemon kept as long as the item's version
 // (what the read of its worktree's items says of it) is the same, up to KEEP_MAX_SECONDS.
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { PluginError, type DaemonContext, type ExecResult, type GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../types.ts";
 import { branchNumber } from "../number.ts";
 import { detailArgs, ghError, itemsQueryArgs, itemVersions, notAPull, parseDetail, parseItems, urlKind, type DetailPart } from "./gh.ts";
-import { Store } from "./store.ts";
+import { Store, type KeptWorktree } from "./store.ts";
 
 /** The worktrees read in the background: those Gasho showed in the last day. */
 export const SHOWN_WITHIN_MS = 24 * 60 * 60_000;
@@ -22,9 +24,9 @@ let store: Store | undefined;
 let settings: Record<string, unknown> = {};
 const detailParts: DetailPart[] = [];
 
-export function begin(dataDir: string, startSettings: Record<string, unknown>): void {
+export function begin(dataDir: string, startSettings: Record<string, unknown>, log: Ctx["log"]): void {
   settings = startSettings;
-  store = new Store(path.join(dataDir, "worktrees.json"));
+  store = new Store(path.join(dataDir, "worktrees.json"), log);
   void store.load();
 }
 
@@ -52,8 +54,22 @@ export function keepSeconds(): number {
   return s === 0 ? 30 : Math.min(KEEP_MAX_SECONDS, Math.max(5, s - 5));
 }
 
-/** How old a read may be for a call: none when the screen asks for a fresh one (its reload button). */
+/** How old a read may be for a call: none when the screen asks for a fresh one. */
 export const maxAge = (params: Record<string, unknown>): number => (params.fresh === true ? 0 : keepSeconds());
+
+/** When the screen last asked to read a repository again (its reload button, ops/fresh.ts), by owner/name in lower case. */
+const askedAt = new Map<string, number>();
+
+/** From now on, the reads of the repository's worktree items and of their parts use only what gh reads from now. */
+export function askFresh(repo: string): void {
+  askedAt.set(repo.toLowerCase(), Date.now());
+}
+
+/** `seconds`, or less: nothing read before the screen last asked to read the repository again. */
+function sinceAsked(repo: string, seconds: number): number {
+  const at = askedAt.get(repo.toLowerCase());
+  return at === undefined ? seconds : Math.max(0, Math.min(seconds, (Date.now() - at) / 1000));
+}
 
 export function current(): Store {
   if (!store) throw new PluginError("github-implement の daemon の部分が、まだ動き始めていません。");
@@ -72,15 +88,39 @@ export async function gh<T>(what: string, run: () => Promise<T>, ctx: Ctx): Prom
 }
 
 /**
- * The output of a GraphQL read, also when a part of it is something GitHub does not have (a number, a branch): gh
- * fails then, with the rest of the answer on stdout.
+ * Runs `run` with `text` in a file of its own, for gh to read (--body-file, or -F <field>=@<file> of gh api): Linux
+ * takes 128 KiB at most per argument, which a long Japanese body (3 bytes a character) is past. The file is removed
+ * once `run` settles.
  */
-export async function readAllowingNotFound(answer: Promise<ExecResult>): Promise<string> {
+export async function withTextFile<T>(text: string, run: (file: string) => Promise<T>): Promise<T> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gasho-github-implement-"));
+  try {
+    const file = path.join(dir, "text.md");
+    await fs.writeFile(file, text, { mode: 0o600 });
+    return await run(file);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The output of a GraphQL read, also when a part of it is something GitHub does not have (a number, a branch): gh
+ * fails then, with the rest of the answer on stdout. A repository this login cannot read (no access, renamed, deleted)
+ * is NOT_FOUND too, but nothing in it was read: that stays a failure. `field`: the field of data the repository is in.
+ */
+export async function readAllowingNotFound(answer: Promise<ExecResult>, field = "repository"): Promise<string> {
   try {
     return (await answer).stdout;
   } catch (e) {
     const out = (e as { stdout?: unknown })?.stdout;
     if (typeof out !== "string" || !out.includes('"NOT_FOUND"') || !out.includes('"data"')) throw e;
+    let repository: unknown;
+    try {
+      repository = (JSON.parse(out) as { data?: Record<string, unknown> | null } | null)?.data?.[field];
+    } catch {
+      throw e;
+    }
+    if (typeof repository !== "object" || repository === null) throw e;
     return out;
   }
 }
@@ -116,7 +156,7 @@ export async function readItems(ctx: Ctx, repo: string, branch: string | undefin
   const branchNamed = branchNumber(branch);
   const named = branchNamed !== undefined && !gone(branchNamed) ? branchNamed : undefined;
   const asked = added.filter((n) => !gone(n));
-  const stdout = await readAllowingNotFound(ctx.github.read(itemsQueryArgs(repo, branch, [...(named ? [named] : []), ...asked]), { repo, maxAgeSeconds }));
+  const stdout = await readAllowingNotFound(ctx.github.read(itemsQueryArgs(repo, branch, [...(named ? [named] : []), ...asked]), { repo, maxAgeSeconds: sinceAsked(repo, maxAgeSeconds) }));
   const items = parseItems(stdout, named, asked, now, head);
   if (named !== undefined && !items.named) missingUntil.set(`${repo}#${named}`, now + MISSING_FOR_MS);
   for (const n of items.missing) missingUntil.set(`${repo}#${n}`, now + MISSING_FOR_MS);
@@ -151,14 +191,15 @@ export type ItemRead = (args: string[], options?: GitHubReadOptions) => Promise<
  * ctx.github.read for the reads of one issue or pull request (its body, comments, files, …). While its version is the
  * same, they use what gasho-daemon kept since the version was first read, up to KEEP_MAX_SECONDS: changes GitHub does
  * not show in it (reactions, project values) show within that. Without a version of now (it is in no worktree's tabs),
- * keepSeconds as other reads; nothing kept when the screen asks for a fresh one; a maxAgeSeconds given still applies.
+ * keepSeconds as other reads; nothing kept when the screen asks for a fresh one or from before its reload button was
+ * last pressed (askFresh); a maxAgeSeconds given still applies.
  */
 export function itemRead(ctx: Ctx, repo: string, number: number, params: Record<string, unknown> = {}): ItemRead {
   return async (args, options = {}) => {
     const v = await versionOf(ctx, repo, number);
     const known = v && Date.now() - v.at <= keepSeconds() * 1000 ? v : undefined;
     // Not rounded to seconds: the screen reads in the same second as the version, and what it read then is good.
-    const maxAgeSeconds = params.fresh === true ? 0 : known ? Math.min(KEEP_MAX_SECONDS, (Date.now() - known.since) / 1000) : keepSeconds();
+    const maxAgeSeconds = sinceAsked(repo, params.fresh === true ? 0 : known ? Math.min(KEEP_MAX_SECONDS, (Date.now() - known.since) / 1000) : keepSeconds());
     const answer = await ctx.github.read(args, { repo, maxAgeSeconds, ...options });
     // A version read while gh ran may be of a change gh read GitHub before: what was kept up to now is too old for it.
     const after = versions.get(versionKey(repo, number));
@@ -185,4 +226,30 @@ export async function readDetail(ctx: Ctx, repo: string, kind: GitHubKind, numbe
   if (item?.kind === "issues" && urlKind(item.url) === "pulls") item = await readAs("pulls");
   if (!item) throw new PluginError("この番号の Issue や Pull request は見つかりません。");
   return item;
+}
+
+/**
+ * Reads a worktree shown in the last day again: its items, then what its tabs open first (the issue the branch is named
+ * after and its open pull requests), each apart, so that one that cannot be read does not keep the others from it.
+ */
+export async function readAgain(ctx: Ctx, w: Pick<KeptWorktree, "repo" | "branch" | "added">, stopped: () => boolean): Promise<void> {
+  let items: WorktreeItems;
+  try {
+    items = await readItems(ctx, w.repo, w.branch, w.added, keepSeconds());
+  } catch (e) {
+    ctx.log(`could not read ${w.repo}${w.branch ? ` (${w.branch})` : ""} again`, e);
+    return;
+  }
+  const open = [...(items.named ? [items.named] : []), ...items.pulls].filter((i) => i.state === "open");
+  const seen = new Set<string>();
+  for (const i of open) {
+    if (stopped()) return;
+    if (seen.has(`${i.kind}${i.number}`)) continue;
+    seen.add(`${i.kind}${i.number}`);
+    try {
+      await readDetail(ctx, w.repo, i.kind, i.number);
+    } catch (e) {
+      ctx.log(`could not read ${w.repo}#${i.number} again`, e);
+    }
+  }
 }
