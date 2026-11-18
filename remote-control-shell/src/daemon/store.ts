@@ -23,6 +23,8 @@ export interface StoredJob extends ShellJob {
   ownerStart?: string;
   pgid?: number;
   pgidStart?: string;
+  /** The panel's name for the `run` that started it (jobs.ts RunInput). */
+  request?: string;
   /** The output file holds the output from this position (characters) to `size`. */
   logFrom: number;
 }
@@ -60,6 +62,7 @@ export function storedJob(raw: unknown): StoredJob | undefined {
     ...(typeof j.ownerStart === "string" ? { ownerStart: j.ownerStart } : {}),
     ...(num(j.pgid) ? { pgid: j.pgid } : {}),
     ...(typeof j.pgidStart === "string" ? { pgidStart: j.pgidStart } : {}),
+    ...(typeof j.request === "string" ? { request: j.request } : {}),
     logFrom: num(j.logFrom) ? j.logFrom : j.dropped,
   };
 }
@@ -149,5 +152,23 @@ export class Store {
 
   async removeJob(key: string, id: string): Promise<void> {
     await Promise.all([".json", ".log", ".cwd"].map((ext) => fs.rm(path.join(this.dir(key), `${id}${ext}`), { force: true })));
+  }
+
+  /** The session folders kept (their keys). */
+  async keys(): Promise<string[]> {
+    const names = await fs.readdir(this.root).catch(() => [] as string[]);
+    return names.filter((n) => /^[0-9a-f]{16}$/.test(n));
+  }
+
+  /** When a session folder's files last changed (ms), or undefined when there are none. */
+  async lastChange(key: string): Promise<number | undefined> {
+    const dir = this.dir(key);
+    const names = await fs.readdir(dir).catch(() => [] as string[]);
+    const times = await Promise.all(names.map((n) => fs.stat(path.join(dir, n)).then((s) => s.mtimeMs, () => 0)));
+    return times.length > 0 ? Math.max(...times) : undefined;
+  }
+
+  removeFolder(key: string): Promise<void> {
+    return fs.rm(this.dir(key), { recursive: true, force: true });
   }
 }

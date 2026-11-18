@@ -17,6 +17,16 @@ const PAGE_LINES = 2000;
 const STOP_TO_KILL_MS = 3000;
 /** Characters read at once of an ended command's earlier output. */
 const READ_CHARS = 1024 * 1024;
+/** Times a `run` that got no answer is sent again by itself. */
+const RUN_RESENDS = 2;
+
+/** The call may have reached the daemon part, and its answer did not come back (Gasho's server, gasho-daemon, the SDK). */
+const unknownResult = (error: string): boolean => /応答がありません|結果が分かりません/.test(error);
+
+/** A name for a `run` (types.ts RUN_REQUEST). getRandomValues, since randomUUID needs https. */
+function newRequest(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export function ShellPanel({ machine, session, docked }: PanelProps) {
   const daemon = useDaemonReady(machine.id);
@@ -37,6 +47,8 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
   const measureRef = useRef<HTMLSpanElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const atBottom = useRef(true);
+  /** The `run` last sent that has had no answer yet (what it asked for, and its request). */
+  const unanswered = useRef<{ key: string; request: string }>(undefined);
 
   const running = state.jobs.filter((j) => j.state === "running");
   const now = useNow(running.length > 0 ? 1000 : 60_000);
@@ -92,12 +104,25 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
 
   const run = async (params: { command: string } | { again: string }, command: string): Promise<boolean> => {
     setError(undefined);
+    // The same request until it has an answer: the daemon part answers the record it started for it, if any.
+    const key = JSON.stringify(params);
+    const request = unanswered.current?.key === key ? unanswered.current.request : newRequest();
+    unanswered.current = { key, request };
     const cols = columns(rootRef.current, measureRef.current);
-    const r = await call<ShellJob>(target("run", { ...params, ...(cols ? { cols } : {}) }, logCommands === false ? "コマンドを実行" : commandSummary(command)));
+    const send = () =>
+      call<ShellJob>(target("run", { ...params, request, ...(cols ? { cols } : {}) }, logCommands === false ? "コマンドを実行" : commandSummary(command)));
+    let r = await send();
+    let resent = 0;
+    for (; resent < RUN_RESENDS && !r.ok && unknownResult(r.error); resent++) {
+      setNotice("working server からの応答が遅れています。実行されたかを確かめています…");
+      r = await send();
+    }
+    if (resent > 0) setNotice(undefined);
     if (!r.ok) {
-      setError(r.error);
+      setError(unknownResult(r.error) ? `${r.error}実行されたかは分かりません。もう一度実行すると、実行されていればその記録を出します（二重には実行しません）。` : r.error);
       return false;
     }
+    if (unanswered.current?.request === request) unanswered.current = undefined;
     atBottom.current = true;
     update((s) => addJob(s, r.data));
     setOpened((o) => ({ ...o, [r.data.id]: PAGE_LINES }));
