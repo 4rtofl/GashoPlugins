@@ -289,10 +289,12 @@ export const SHOWN_FILES = 50;
  * tracks, or with a commit that is neither on a branch of a remote nor the pull request's head. Files git does not
  * track (untracked or ignored, such as .env.local) go only once the person agreed to lose them: `agreed` is the
  * `token` of an answer that listed them, and still holds while they are the same. `check`: only says what would go.
+ * `anyName`: the worktree on its branch counts too, whatever its name (a merge asked to clean it up). Never the
+ * primary checkout.
  */
-export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { agreed?: string; check?: boolean } = {}): Promise<Removed> {
+export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { agreed?: string; check?: boolean; anyName?: boolean } = {}): Promise<Removed> {
   const wt = prWorktree(clone, pr);
-  if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
+  if (!wt || wt.path === clone.path || !(wt.review || o.anyName)) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
   const changes = (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean).length;
   if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
   // The pull request's head counts as pushed: its branch may be gone from origin once merged. A head pushed after the

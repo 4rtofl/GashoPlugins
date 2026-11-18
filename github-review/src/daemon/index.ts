@@ -150,13 +150,15 @@ export default defineDaemonPlugin({
       }
     },
     /**
-     * Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed).
-     * Files git does not track go only with { agreed } (the `token` of an answer that listed them); { check: true } only
-     * says what would go.
+     * Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed);
+     * a worktree of any other name only when "マージしてもらう" asked for it to be cleaned up. Files git does not track go
+     * only with { agreed } (the `token` of an answer that listed them); { check: true } only says what would go.
      */
     async remove(params, ctx) {
       const { clone, head, p } = await target(params, ctx);
+      const asked = await cleanups?.get(repoArg(p.repo), head.number);
       return removeWorktree(ctx.exec, clone, head, {
+        anyName: asked?.kind === "merge",
         ...(typeof p.agreed === "string" ? { agreed: p.agreed } : {}),
         ...(p.check === true ? { check: true } : {}),
       });

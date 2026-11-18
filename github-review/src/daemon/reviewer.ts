@@ -6,7 +6,7 @@
 // again.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { cleanupDone } from "../cleanup.ts";
+import { cleanable, cleanupDone } from "../cleanup.ts";
 import { reviewPosted } from "../review-session.ts";
 import { inOrder, openWords, repoWords } from "../search.ts";
 import { MAX_QUERY, MAX_REPOS, SEARCH_LIMIT, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
@@ -280,9 +280,12 @@ export class Reviewer {
       else if (!watchedRepos.some((r) => sameRepo(r, o.github ?? ""))) watchedRepos.push(o.github);
     }
     const isWatched = (r: string) => watchedRepos.some((w) => sameRepo(w, r));
+    // A merged pull request leaves the lists: those asked to be cleaned up are read too, whatever their worktree's name.
+    const cleanups = this.deps.cleanups;
+    const followed = (await cleanups?.all().catch(() => [])) ?? [];
     const lookups: Lookup[] = [];
     for (const c of clones) {
-      const numbers = reviewNumbers(c);
+      const numbers = [...reviewNumbers(c), ...followed.filter((e) => sameRepo(e.repo, c.github)).map((e) => e.number)];
       if (numbers.length === 0) continue;
       const l = lookups.find((x) => sameRepo(x.repo, c.github));
       if (l) l.numbers.push(...numbers);
@@ -313,13 +316,19 @@ export class Reviewer {
     const answer = parseList(json, asked);
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));
 
-    // Those whose review worktree is gone from every clone of their repository here are forgotten.
-    const cleanups = this.deps.cleanups;
+    // Those whose worktree is gone from every clone of their repository here are forgotten. A worktree of another name
+    // is found by the pull request's branch: one GitHub did not answer for is kept until it does.
     if (cleanups) {
+      const read = [...answer.requested.prs, ...answer.watched.flatMap((w) => w.prs), ...answer.lookups.flat()];
       await cleanups
         .prune((e) => {
           const of = clones.filter((c) => sameRepo(c.github, e.repo));
-          return of.length > 0 && !of.some((c) => reviewNumbers(c).includes(e.number));
+          if (of.length === 0 || of.some((c) => reviewNumbers(c).includes(e.number))) return false;
+          const pr = read.find((p) => sameRepo(p.repo, e.repo) && p.number === e.number);
+          return pr !== undefined && !of.some((c) => {
+            const w = prWorktree(c, pr);
+            return w !== undefined && cleanable(e.kind, w, c.path);
+          });
         })
         .catch((e: unknown) => this.deps.log("github-review: could not forget the worktrees cleaned up", e));
     }
@@ -329,7 +338,7 @@ export class Reviewer {
       const c = this.choose(clones, pr.repo, pr);
       if (!c) return undefined;
       const worktree = prWorktree(c, pr);
-      const e = worktree?.review ? toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number) : undefined;
+      const e = worktree && toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && cleanable(x.kind, worktree, c.path));
       const cleanup = e && { kind: e.kind, done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
       const finishedSessions = sent.filter((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && reviewPosted(pr.mark, x)).map((x) => x.sessionId);
       return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}), ...(finishedSessions.length > 0 ? { finishedSessions } : {}) };
@@ -356,7 +365,8 @@ export class Reviewer {
     const keptUrls = new Set(answer.kept.flatMap((k) => k.urls));
     const keptAll = answer.kept.every((k) => k.all);
     for (const pr of answer.lookups.flat()) {
-      if (shown.has(pr.url) || !placeOf(pr)?.worktree?.review) continue;
+      const place = placeOf(pr);
+      if (shown.has(pr.url) || !(place?.worktree?.review || place?.cleanup)) continue;
       // An open one shows when the words find it: in a watched repository the search says (one past the first ones is
       // in its total), else the search of those repositories, when it read all it found.
       if (pr.state === "open" && (isWatched(pr.repo) || open === undefined || (names && !names(pr.repo)) || (keptAll && !keptUrls.has(pr.url)))) continue;
