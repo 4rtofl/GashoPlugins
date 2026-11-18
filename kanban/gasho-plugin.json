@@ -1,7 +1,7 @@
 {
   "id": "kanban",
   "name": "カンバン",
-  "version": "1.1.3",
+  "version": "1.1.5",
   "description": "選んだ repo の worktree と自分の Pull request を、列のボードに並べる（working server の git と gh を使う）",
   "genre": "workflow",
   "api": "1.5",
