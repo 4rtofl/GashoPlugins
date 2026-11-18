@@ -84,7 +84,7 @@ const REVIEWS: Record<ReviewState, { text: string; className?: string }> = {
 export const PROGRESS: Record<ReviewProgress, { text: string; tone: BadgeTone; hint: string }> = {
   reviewing: { text: "レビュー中", tone: "neutral", hint: "worktree のセッションが作業していて、今の head についてのレビュー結果のコメントがまだありません" },
   mergeable: { text: "マージ可能", tone: "success", hint: "今の head をレビューして、マージしてよいと判定しました" },
-  changes: { text: "要修正", tone: "danger", hint: "今の head をレビューして、直すところがあると判定しました" },
+  changes: { text: "要修正", tone: "danger", hint: "今の head をレビューして、マージの前に直すところがあると判定しました" },
   stale: { text: "再レビューが要る", tone: "warning", hint: "レビューのあとに push がありました" },
 };
 

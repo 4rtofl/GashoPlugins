@@ -66,7 +66,7 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.deepEqual(f.launched, [DIR]);
   assert.equal(f.sent.length, 1);
   assert.match(f.sent[0] ?? "", /^s-new: #5 をレビュー\n/);
-  assert.deepEqual(f.efforts, ["xhigh"]);
+  assert.deepEqual(f.efforts, ["high"]);
   assert.deepEqual(f.opened, []);
   const n = f.last();
   assert.equal(n?.text, "#5 のセッションを起動し、「レビューする」を送りました。");

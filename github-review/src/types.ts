@@ -38,7 +38,7 @@ export interface PrWorktree {
  */
 export interface Cleanup {
   kind: CleanupKind;
-  /** The head whose verdict it was asked of (the mark's sha); absent for one asked before github-review 1.17.0. */
+  /** The head whose verdict it was asked of (the mark's sha); absent for one asked before github-review 1.24.0. */
   sha?: string;
   /** The pull request was merged, or I requested changes on it, after it was asked. */
   done: boolean;
