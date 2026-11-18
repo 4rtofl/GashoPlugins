@@ -96,7 +96,7 @@ test("a body comes whole, as the edit box starts from it and saves it back", () 
 });
 
 test("an edit that started from another title or body than GitHub's now is refused before anything is written", async () => {
-  const github = { title: "t", body: "b\r\n- [x] done" };
+  const github = { number: 3, url: "https://github.com/o/r/pull/3", state: "OPEN", title: "t", body: "b\r\n- [x] done" };
   const calls: { args: string[]; options?: GitHubReadOptions }[] = [];
   const writes: string[][] = [];
   const ctx = {
@@ -107,8 +107,10 @@ test("an edit that started from another title or body than GitHub's now is refus
     log() {},
   } as unknown as DaemonContext;
   await edit.run({ repo: "o/r", kind: "pulls", number: 3, body: "new", was: { body: "b\r\n- [x] done" } }, ctx);
-  // GitHub's body is read anew, not from what gasho-daemon kept.
-  assert.deepEqual(calls, [{ args: ["pr", "view", "3", "--repo", "o/r", "--json", "body"], options: { repo: "o/r", maxAgeSeconds: 0 } }]);
+  // GitHub's body is read anew, with the args of the screen's read: what gasho-daemon keeps for that read is renewed.
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.args, detailArgs("o/r", "pulls", 3, []));
+  assert.equal(calls[0]?.options?.maxAgeSeconds, 0);
   await assert.rejects(edit.run({ repo: "o/r", kind: "pulls", number: 3, body: "new", was: { body: "b\r\n- [ ] done" } }, ctx), /本文が変わりました/);
   await assert.rejects(edit.run({ repo: "o/r", kind: "issues", number: 3, title: "u", was: { title: "s" } }, ctx), /題が変わりました/);
   // Assignees and labels start from nothing typed: they are written without a read.

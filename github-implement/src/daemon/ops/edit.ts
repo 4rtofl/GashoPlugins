@@ -4,8 +4,8 @@
 // task list's checkbox).
 import { PluginError } from "@gasho/plugin-sdk/daemon";
 import type { GitHubKind } from "../../types.ts";
-import { gh, type Ctx } from "../core.ts";
-import { cmd, kindArg, labelsArg, loginsArg, numberArg, repoArg, str, textArg } from "../gh.ts";
+import { gh, readDetail, type Ctx } from "../core.ts";
+import { cmd, kindArg, labelsArg, loginsArg, numberArg, repoArg, textArg } from "../gh.ts";
 import type { Op } from "../op.ts";
 
 // Values go after "=" (--body=…), so that a text starting with "-" is never taken as a flag.
@@ -29,13 +29,12 @@ function wasArg(v: unknown): { title?: string; body?: string } | undefined {
 }
 
 async function checkUnchanged(ctx: Ctx, repo: string, kind: GitHubKind, number: number, was: { title?: string; body?: string }): Promise<void> {
-  const fields = [...(was.title !== undefined ? ["title"] : []), ...(was.body !== undefined ? ["body"] : [])];
-  if (fields.length === 0) return;
-  // Read the same way as the screen's (gh … view --json), so that the same text compares equal.
-  const { stdout } = await gh(`read ${kind} #${number}`, () => ctx.github.read([cmd(kind), "view", String(number), "--repo", repo, "--json", fields.join(",")], { repo, maxAgeSeconds: 0 }), ctx);
-  const now = JSON.parse(stdout) as Record<string, unknown> | null;
-  if (was.title !== undefined && str(now?.title) !== was.title) throw new PluginError("編集を始めたあとに、GitHub で題が変わりました。保存していません。読み直した題を確かめてください。");
-  if (was.body !== undefined && (str(now?.body) ?? "") !== was.body) throw new PluginError("編集を始めたあとに、GitHub で本文が変わりました。保存していません。読み直した本文を確かめてください。");
+  if (was.title === undefined && was.body === undefined) return;
+  // The screen's own read, made fresh: when the edit is refused, gasho-daemon already holds the changed item for the
+  // screen's read right after, which then shows the change. A read with other args would leave the old one kept.
+  const now = await gh(`read ${kind} #${number}`, () => readDetail(ctx, repo, kind, number, { fresh: true }), ctx);
+  if (was.title !== undefined && now.title !== was.title) throw new PluginError("編集を始めたあとに、GitHub で題が変わりました。保存していません。読み直した題を確かめてください。");
+  if (was.body !== undefined && now.body !== was.body) throw new PluginError("編集を始めたあとに、GitHub で本文が変わりました。保存していません。読み直した本文を確かめてください。");
 }
 
 export default {
