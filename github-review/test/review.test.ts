@@ -6,7 +6,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { batchTargets, pageItems } from "../src/items.ts";
-import { listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries } from "../src/daemon/gh.ts";
+import { authorWords, listArgs, namesArgs, ownWanted, parseList, parseNames, requestedQuery, SEARCH_LIMIT, upperSearches, watchedQueries } from "../src/daemon/gh.ts";
 import { createWorktree, projectFiles, prWorktree, readClone, removeWorktree, repoName, ReviewError, reviewName, reviewNumbers, type Clone, type Exec, type OnGitHub } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
 import { fillTemplate, parseTemplates } from "../src/template.ts";
@@ -326,9 +326,12 @@ test("gh: the watched repositories are split into searches GitHub takes, each wi
 
 test("gh: each part of the answer comes back to its part of the query, with what GitHub could not answer", () => {
   const lookups = [{ repo: "o/r", numbers: [12, 99] }];
-  const args = listArgs({ requested: requestedQuery(""), watched: ["is:pr repo:o/r", "is:pr repo:o/s"], lookups });
+  const args = listArgs({ ...upperSearches(""), watched: ["is:pr repo:o/r", "is:pr repo:o/s"], lookups });
   const query = args[args.indexOf("-f") + 1] ?? "";
   assert.match(query, /req: search\(query: \$req/);
+  assert.match(query, /own: search\(query: \$own, type: ISSUE, first: 50\)/);
+  assert.match(query, /both: search\(query: \$both, type: ISSUE, first: 0\) \{ issueCount \}/);
+  assert.match(query, /viewer \{ login \}/);
   assert.match(query, /w1: search\(query: \$w1/);
   assert.match(query, /l0: repository\(owner: \$o0, name: \$n0\) \{ p12: pullRequest\(number: 12\)/);
   assert.ok(args.includes("w1=is:pr repo:o/s") && args.includes("o0=o") && args.includes("n0=r"));
@@ -370,6 +373,160 @@ test("gh: each part of the answer comes back to its part of the query, with what
     [[[12, "merged"]]],
   );
   assert.deepEqual(answer.errors, ["Could not resolve to a PullRequest with the number of 99."]);
+});
+
+/** A pull request of the upper part as GitHub answers it. */
+const upperPr = <T extends Record<string, unknown>>(number: number, over: T = {} as T) => ({
+  number,
+  title: `t${number}`,
+  url: `https://github.com/o/r/pull/${number}`,
+  state: "OPEN",
+  headRefName: `feat/${number}`,
+  repository: { nameWithOwner: "o/r" },
+  createdAt: `2026-11-${String(number).padStart(2, "0")}T00:00:00Z`,
+  ...over,
+});
+const upper = (data: Record<string, unknown>, words = "") => parseList(JSON.stringify({ data: { viewer: { login: "Me" }, ...data } }), { watched: 0, lookups: [], words }).requested;
+const numbers = (r: { prs: { number: number }[] }) => r.prs.map((p) => p.number);
+
+test("gh: the upper part searches for mine with the search words, in the one query", () => {
+  assert.deepEqual(upperSearches("is:open label:bug"), {
+    requested: "is:pr review-requested:@me archived:false is:open label:bug sort:created-desc",
+    own: "is:pr author:@me archived:false is:open label:bug sort:created-desc",
+    both: "is:pr author:@me review-requested:@me archived:false is:open label:bug",
+  });
+  assert.equal(upperSearches("sort:updated-asc").own, "is:pr author:@me archived:false sort:updated-asc");
+  const args = listArgs({ ...upperSearches("is:open"), watched: [], lookups: [] });
+  assert.equal(args.filter((a) => a === "graphql").length, 1);
+  assert.ok(args.includes("own=is:pr author:@me archived:false is:open sort:created-desc"));
+});
+
+test("gh: the words about the author stay out of the search of mine, which GitHub would widen or undo with them", () => {
+  assert.deepEqual(authorWords('is:open author:octocat -author:"Hubot" "author:phrase" author: AUTHOR:x'), {
+    rest: 'is:open "author:phrase" author: AUTHOR:x',
+    only: ["octocat"],
+    not: ["hubot"],
+  });
+  const { requested, own, both } = upperSearches("is:open author:octocat -author:hubot");
+  assert.equal(requested, "is:pr review-requested:@me archived:false is:open author:octocat -author:hubot sort:created-desc");
+  assert.equal(own, "is:pr author:@me archived:false is:open sort:created-desc");
+  assert.equal(both, "is:pr author:@me review-requested:@me archived:false is:open");
+});
+
+test("gh: mine are shown as the words about the author say", () => {
+  for (const words of ["", "is:open", "author:@me", "author:@ME", "author:me", 'author:"ME"', "author:octocat author:me", "-author:octocat", "author:me -author:octocat", '"author:octocat"', "author:", "AUTHOR:octocat"]) {
+    assert.equal(ownWanted(words, "Me"), true, words);
+  }
+  for (const words of ["author:octocat", "author:octocat -author:me", "-author:@me", "-author:me", "author:@me -author:@me", 'author:""']) {
+    assert.equal(ownWanted(words, "Me"), false, words);
+  }
+  // Without the answer of who I am, only @me is known to be me.
+  assert.equal(ownWanted("author:me", undefined), false);
+  assert.equal(ownWanted("author:@me", undefined), true);
+});
+
+test("gh: the upper part shows a pull request both searches found once, and leaves mine out when the words do", () => {
+  const data = {
+    req: { issueCount: 2, nodes: [upperPr(3), upperPr(1)] },
+    own: { issueCount: 2, nodes: [upperPr(3), upperPr(2)] },
+    both: { issueCount: 1 },
+  };
+  const all = upper(data);
+  assert.deepEqual(numbers(all), [3, 2, 1]);
+  assert.equal(all.more, 0);
+  const others = upper(data, "author:octocat");
+  assert.deepEqual(numbers(others), [3, 1]);
+  assert.equal(others.more, 0);
+});
+
+test("gh: the upper part is in the order of the first sort: of the words, the newest first without one", () => {
+  const a = upperPr(1, { updatedAt: "2026-11-10T00:00:00Z", totalCommentsCount: 5, reactions: { totalCount: 0 }, reactionGroups: [{ content: "HEART", reactors: { totalCount: 1 } }] });
+  const b = upperPr(2, { updatedAt: "2026-11-30T00:00:00Z", totalCommentsCount: 1, reactions: { totalCount: 9 }, reactionGroups: [{ content: "HEART", reactors: { totalCount: 3 } }] });
+  const c = upperPr(3, { updatedAt: "2026-11-20T00:00:00Z", totalCommentsCount: 3, reactions: { totalCount: 1 }, reactionGroups: [{ content: "THUMBS_UP", reactors: { totalCount: 1 } }] });
+  const sortedBy = (words: string, key: (x: typeof a) => number) => {
+    const list = (xs: (typeof a)[]) => ({ issueCount: xs.length, nodes: [...xs].sort((x, y) => key(x) - key(y)) });
+    return numbers(upper({ req: list([a, c]), own: list([b]) }, words));
+  };
+  const time = (v: unknown) => Date.parse(String(v));
+  assert.deepEqual(sortedBy("", (x) => -time(x.createdAt)), [3, 2, 1]);
+  assert.deepEqual(sortedBy("sort:nonsense", (x) => -time(x.createdAt)), [3, 2, 1]);
+  assert.deepEqual(sortedBy("sort:created-asc", (x) => time(x.createdAt)), [1, 2, 3]);
+  assert.deepEqual(sortedBy("sort:CREATED-ASC", (x) => time(x.createdAt)), [1, 2, 3]);
+  assert.deepEqual(sortedBy("sort:updated", (x) => -time(x.updatedAt)), [2, 3, 1]);
+  assert.deepEqual(sortedBy("sort:updated-asc sort:created-desc", (x) => time(x.updatedAt)), [1, 3, 2]);
+  assert.deepEqual(sortedBy("sort:comments-desc", (x) => -x.totalCommentsCount), [1, 3, 2]);
+  assert.deepEqual(sortedBy("sort:reactions-desc", (x) => -x.reactions.totalCount), [2, 3, 1]);
+  assert.deepEqual(sortedBy("sort:interactions-desc", (x) => -(x.totalCommentsCount + x.reactions.totalCount)), [2, 1, 3]);
+  const hearts = (x: typeof a) => x.reactionGroups.find((g) => g.content === "HEART")?.reactors.totalCount ?? 0;
+  assert.deepEqual(sortedBy("sort:reactions-heart-desc", (x) => -hearts(x)), [2, 1, 3]);
+});
+
+test("gh: the upper part stops at the limit of one search and counts the rest of the two once", () => {
+  const nodes = (from: number, n: number) => Array.from({ length: n }, (_, i) => upperPr(from - i, { createdAt: new Date(Date.UTC(2026, 0, 1) + (from - i) * 60_000).toISOString() }));
+  // 40 + 30 read, 5 of them in both: 65 in all, 50 shown.
+  const asked = nodes(200, 40);
+  const mine = [...asked.slice(0, 5), ...nodes(100, 25)];
+  const some = upper({ req: { issueCount: 40, nodes: asked }, own: { issueCount: 30, nodes: mine }, both: { issueCount: 5 } });
+  assert.equal(some.prs.length, SEARCH_LIMIT);
+  assert.equal(new Set(numbers(some)).size, SEARCH_LIMIT);
+  assert.deepEqual(numbers(some).slice(38, 42), [162, 161, 100, 99]);
+  assert.equal(some.more, 15);
+
+  // GitHub found more than either search reads: those not read count too.
+  const many = upper({ req: { issueCount: 120, nodes: nodes(400, 50) }, own: { issueCount: 80, nodes: nodes(300, 50) }, both: { issueCount: 10 } });
+  assert.equal(many.prs.length, SEARCH_LIMIT);
+  assert.equal(many.more, 140);
+
+  // Exactly the limit: nothing more to say.
+  const full = upper({ req: { issueCount: 30, nodes: nodes(200, 30) }, own: { issueCount: 20, nodes: nodes(100, 20) }, both: { issueCount: 0 } });
+  assert.equal(full.prs.length, SEARCH_LIMIT);
+  assert.equal(full.more, 0);
+
+  // Mine left out by the words do not count.
+  const others = upper({ req: { issueCount: 60, nodes: nodes(200, 50) }, own: { issueCount: 500, nodes: nodes(100, 50) }, both: { issueCount: 3 } }, "author:octocat");
+  assert.equal(others.prs.length, SEARCH_LIMIT);
+  assert.equal(others.more, 10);
+
+  // GitHub could not count those in both: the ones it read are still counted once.
+  const uncounted = upper({ req: { issueCount: 2, nodes: [upperPr(2), upperPr(1)] }, own: { issueCount: 2, nodes: [upperPr(2), upperPr(1)] }, both: null });
+  assert.deepEqual(numbers(uncounted), [2, 1]);
+  assert.equal(uncounted.more, 0);
+
+  // One search GitHub could not answer leaves the other's.
+  const half = upper({ req: null, own: { issueCount: 1, nodes: [upperPr(1)] } });
+  assert.deepEqual(numbers(half), [1]);
+});
+
+test("list: my own pull request comes in the upper part once with where it is here; one without a clone here is left out of the page", async () => {
+  const s = await setup();
+  const file = path.join(s.root, "watched.json");
+  const github: GitHubRead = async (args) => {
+    const query = args[args.indexOf("-f") + 1] ?? "";
+    if (!query.includes("search(")) return { stdout: JSON.stringify({ data: { r0: { nameWithOwner: "o/r" } } }) };
+    const mine = (n: number, repo = "o/r") => upperPr(n, { viewerDidAuthor: true, repository: { nameWithOwner: repo }, url: `https://github.com/${repo}/pull/${n}` });
+    return {
+      stdout: JSON.stringify({
+        data: {
+          viewer: { login: "me" },
+          req: { issueCount: 2, nodes: [upperPr(4), mine(3)] },
+          own: { issueCount: 2, nodes: [mine(3), mine(2, "x/no-clone")] },
+          both: { issueCount: 1 },
+        },
+      }),
+    };
+  };
+  const origin = await git(s.primary, "remote", "get-url", "origin");
+  await git(s.primary, "remote", "set-url", "origin", "https://github.com/o/r.git");
+  const reviewer = new Reviewer({ exec, folders: () => [s.primary], file, log: () => {} });
+  const listing = await reviewer.list(github, "is:open", false);
+  await git(s.primary, "remote", "set-url", "origin", origin);
+  assert.deepEqual(listing.requested.map((p) => [p.repo, p.number, p.own, p.place?.primary]), [
+    ["o/r", 4, undefined, s.primary],
+    ["o/r", 3, true, s.primary],
+    ["x/no-clone", 2, true, undefined],
+  ]);
+  assert.equal(listing.requestedMore, undefined);
+  assert.deepEqual(pageItems([{ machine: "m", listing }]).requested.map((i) => i.pr.number), [4, 3]);
 });
 
 test("gh: the names GitHub has now come back by the name each repository was asked with; one GitHub does not find has none", () => {
@@ -554,5 +711,24 @@ test("まとめてレビューさせる: the pull requests with no worktree on a
   assert.deepEqual(
     batchTargets(withEnded, "A").map((x) => x.item.pr.number),
     [1],
+  );
+
+  // My own: one with no worktree is done like any other; the one I made in its worktree, or from my fork, is not.
+  const { requested: withOwn } = pageItems([
+    {
+      machine: "A",
+      listing: {
+        ...a,
+        requested: [
+          { ...row(7, { primary: "/a/r" }), own: true },
+          { ...row(8, { primary: "/a/r", worktree: { path: "/a/my-work", branch: "feat/8", review: false } }), own: true },
+          { ...row(9, { primary: "/a/r" }), own: true, fork: true },
+        ],
+      },
+    },
+  ]);
+  assert.deepEqual(
+    batchTargets(withOwn, "A").map((x) => x.item.pr.number),
+    [7],
   );
 });

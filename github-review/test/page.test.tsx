@@ -78,16 +78,26 @@ describe("ReviewPage", () => {
     respond({ list: { loading: true } });
     render(<ReviewPage params={{}} />);
     expect(screen.queryByText(/\d+ 件/)).toBeNull();
-    expect(screen.queryByText(/Pull request はありません/)).toBeNull();
+    expect(screen.queryByText(/Pull request もありません/)).toBeNull();
     expect(screen.queryByText(/対象リポジトリを選ぶと/)).toBeNull();
   });
 
   it("with no repository watched, offers to choose some, which opens the dialog", async () => {
     respond({ list: listed({ watched: [] }), options: { data: [] } });
     render(<ReviewPage params={{}} />);
-    expect(screen.getByText("検索の語に合う、レビューを頼まれた Pull request はありません。")).toBeTruthy();
+    expect(screen.getByText("検索の語に合う、レビューを頼まれた Pull request も、自分の Pull request もありません。")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "対象リポジトリを選ぶ" }));
     expect(await screen.findByRole("dialog", { name: "対象リポジトリ" })).toBeTruthy();
+  });
+
+  it("says that the upper part holds my own pull requests too, in its heading, its description and when it is empty", async () => {
+    respond({ list: listed() });
+    render(<ReviewPage params={{}} />);
+    expect(screen.getByRole("heading", { name: /^レビューを頼まれた Pull request と自分の Pull request/ })).toBeTruthy();
+    expect(screen.getByText(/^レビューを頼まれた Pull request と自分の Pull request、対象リポジトリの Pull request。/)).toBeTruthy();
+    await userEvent.clear(screen.getByRole("textbox", { name: "Pull request を探す" }));
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByText("レビューを頼まれた Pull request も、自分の Pull request もありません。")).toBeTruthy();
   });
 
   it("says how many more GitHub found, and why a repository not watched is there", () => {

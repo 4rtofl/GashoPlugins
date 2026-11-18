@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
+import { detailArgs, listArgs, parseDetail, parseList, upperSearches } from "../src/daemon/gh.ts";
 import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING, reviewInstruction } from "../src/instructions.ts";
 import { ASK_RECHECK_MS, ASK_SETTLE_MS, askEndUnseen, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, underway, withoutMark, workEndUnseen, working, workRechecking, type Asked, type Recheck, type ReviewMark } from "../src/verdict.ts";
 
@@ -165,7 +165,7 @@ test("effort: the review at high, merge and send back at medium, mend at the ses
 });
 
 test("gh: the list reads the marks of the latest comments, whether I opened it, its conflict and whether the maintainers may push", () => {
-  const args = listArgs({ requested: requestedQuery(""), watched: [], lookups: [] });
+  const args = listArgs({ ...upperSearches(""), watched: [], lookups: [] });
   const query = args[args.indexOf("-f") + 1] ?? "";
   assert.match(query, /recent: comments\(last: 10\) \{ nodes \{ viewerDidAuthor body url createdAt \} \}/);
   assert.match(query, /viewerDidAuthor mergeable maintainerCanModify/);
