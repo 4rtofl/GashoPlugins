@@ -128,6 +128,51 @@ describe("KanbanPage", () => {
     sdk.launchSession.mockReturnValue({ ok: false, error: "trust", needsTrust: true });
     render(<KanbanPage params={{}} />);
     await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
+  it("keeps a card's question while the board is left, shows it once the board is back, and then starts the session and opens it", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    respond({ board: { data: board() } });
+    let answer!: (r: LaunchResult) => void;
+    sdk.launchSession.mockImplementationOnce(() => new Promise<LaunchResult>((resolve) => (answer = resolve)) as unknown as LaunchResult);
+    const page = render(<KanbanPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+    // Left while Claude Code answers: a session opened from the notice, a card or the sidebar closes the board.
+    page.unmount();
+    await act(async () => answer({ ok: false, error: "trust", needsTrust: true }));
+    render(<KanbanPage params={{}} />);
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "信頼して起動する");
+    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
+    expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/issue-1-x", trust: true });
+  });
+
+  it("asks about two cards' folders one after the other, in the order they were asked, and opens the last to start", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    const two = board();
+    two.repos[0]!.worktrees.push({ branch: "feat/2-y", path: "/work/issue-2-y" });
+    respond({ board: { data: two } });
+    const answers: Record<string, (r: LaunchResult) => void> = {};
+    sdk.launchSession.mockImplementation((input) =>
+      input.trust ? { ok: true, sessionId: `s-${input.cwd.slice(-3)}` } : (new Promise<LaunchResult>((resolve) => (answers[input.cwd] = resolve)) as unknown as LaunchResult),
+    );
+    render(<KanbanPage params={{}} />);
+    for (const label of ["issue-2-y", "issue-1-x"]) {
+      await userEvent.click(screen.getByRole("button", { name: `${label} のメニュー` }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+    }
+    await act(async () => {
+      answers["/work/issue-1-x"]!({ ok: false, error: "trust", needsTrust: true });
+      answers["/work/issue-2-y"]!({ ok: false, error: "trust", needsTrust: true });
+    });
+    const asked = () => within(screen.getByRole("dialog", { name: "このフォルダーを信頼しますか" }));
+    await waitFor(() => expect(asked().getByText("/work/issue-1-x")).toBeTruthy());
+    await answerTrust(screen.getByRole("dialog"), "信頼して起動する");
+    await waitFor(() => expect(asked().getByText("/work/issue-2-y")).toBeTruthy());
+    expect(sdk.nav.openSession).not.toHaveBeenCalled();
+    await answerTrust(screen.getByRole("dialog"), "信頼して起動する");
+    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-2-y"));
+    expect(sdk.launchSession.mock.calls.flatMap(([input]) => (input.trust ? [input.cwd] : []))).toEqual(["/work/issue-1-x", "/work/issue-2-y"]);
+  });
+
     await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
     await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

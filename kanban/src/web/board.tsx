@@ -6,7 +6,7 @@
 import { ArrowUpDown, Check, FileDown, LoaderCircle, RefreshCw, Settings2, SquareKanban, X } from "lucide-react";
 import { AnimatePresence, LayoutGroup, motion, MotionConfig } from "framer-motion";
 import { Dialog, Popover } from "radix-ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   cn,
   useCall,
@@ -158,6 +158,60 @@ function BoardSource({ machine, refreshAsk, onChange }: { machine: MachineInfo; 
   return null;
 }
 
+/** Claude Code's question whether to trust a card's folder, and how the person's answer gets back to the card. */
+type TrustQuestion = { path: string; warnings: string[]; answer: (yes: boolean) => void };
+
+/**
+ * What the cards' menus ask, in the order they asked, kept here rather than in the board: a card asks once Claude Code
+ * has answered its launch, and the board may be gone by then (a session opened from the notice, a card or the sidebar).
+ * They wait till the board is open again, which shows the first.
+ */
+let trustLine: TrustQuestion[] = [];
+const trustWatchers = new Set<() => void>();
+const setTrustLine = (next: TrustQuestion[]) => {
+  trustLine = next;
+  for (const w of trustWatchers) w();
+};
+const watchTrusts = (w: () => void) => {
+  trustWatchers.add(w);
+  return () => {
+    trustWatchers.delete(w);
+  };
+};
+
+/** Where the board open now shows the notices of the cards' work, that of a board that was left too. */
+let openBoard: Pick<CardActions, "notify" | "dismiss"> | undefined;
+/** How many sessions the cards are starting, on this board and on one that was left. */
+let starting = 0;
+
+const cardActions: CardActions = {
+  notify: (n) => openBoard?.notify(n),
+  dismiss: (n) => openBoard?.dismiss(n),
+  askTrust: (q) =>
+    new Promise<boolean>((resolve) => {
+      const asked: TrustQuestion = {
+        ...q,
+        answer: (yes) => {
+          // Once: answered twice before the board draws again, the next one is not answered with it.
+          if (!trustLine.includes(asked)) return;
+          setTrustLine(trustLine.filter((x) => x !== asked));
+          resolve(yes);
+        },
+      };
+      setTrustLine([...trustLine, asked]);
+    }),
+  begin: () => {
+    starting++;
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      starting--;
+    };
+  },
+  starting: () => starting,
+};
+
 export function KanbanPage(_: PageProps) {
   const machines = useMachines();
   const now = useNow(15_000);
@@ -179,8 +233,14 @@ export function KanbanPage(_: PageProps) {
   const [tab, setTab] = useState<KanbanColumn>("mine");
   // What a card's menu is doing or did: starting a session.
   const [notice, setNotice] = useState<Notice>();
-  // Each card that starts a session waits for its own answer: one asked while another is shown waits for it.
-  const [trusts, setTrusts] = useState<{ path: string; warnings: string[]; answer: (yes: boolean) => void }[]>([]);
+  useEffect(() => {
+    const here = { notify: setNotice, dismiss: (n: Notice) => setNotice((cur) => (cur === n ? undefined : cur)) };
+    openBoard = here;
+    return () => {
+      if (openBoard === here) openBoard = undefined;
+    };
+  }, []);
+  const trust = useSyncExternalStore(watchTrusts, () => trustLine[0]);
   // How many repositories each working server watched when last read, kept while the page is open: an offline one
   // is named above the board.
   const [lastWatched, setLastWatched] = usePluginState<Record<string, number>>("lastWatched", {});
@@ -232,30 +292,6 @@ export function KanbanPage(_: PageProps) {
     return () => clearTimeout(t);
   }, [asked]);
 
-  const starting = useRef(0);
-  const actions = useMemo<CardActions>(
-    () => ({
-      notify: setNotice,
-      dismiss: (n) => setNotice((cur) => (cur === n ? undefined : cur)),
-      askTrust: (q) => new Promise<boolean>((resolve) => setTrusts((cur) => [...cur, { ...q, answer: resolve }])),
-      begin: () => {
-        starting.current++;
-        let ended = false;
-        return () => {
-          if (ended) return;
-          ended = true;
-          starting.current--;
-        };
-      },
-      starting: () => starting.current,
-    }),
-    [],
-  );
-  const answerTrust = (yes: boolean) => {
-    trusts[0]?.answer(yes);
-    setTrusts((cur) => cur.slice(1));
-  };
-
   const call = useCall();
   const [exporting, setExporting] = useState(false);
   /** Writes each working server's cards, as `state` gets them, to its board plugins' folder (cards/), for check.ts. */
@@ -303,7 +339,7 @@ export function KanbanPage(_: PageProps) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <CardActionsContext.Provider value={actions}>
+      <CardActionsContext.Provider value={cardActions}>
         {machines.map((m) => (
           <BoardSource key={m.id} machine={m} refreshAsk={refreshAsk} onChange={onSource} />
         ))}
@@ -492,10 +528,10 @@ export function KanbanPage(_: PageProps) {
             reload={(id) => sources[id]?.reload()}
           />
           {/* Opens anew for the next folder, so that it shows as another question rather than the same one changing. */}
-          <TrustDialog key={trusts[0]?.path} question={trusts[0]} onAnswer={answerTrust} />
+          <TrustDialog key={trust?.path} question={trust} onAnswer={(yes) => trust?.answer(yes)} />
           <Toast
             notice={notice}
-            asking={trusts.length > 0}
+            asking={trust !== undefined}
             onClose={() => setNotice(undefined)}
             onOpen={(s) => {
               setNotice(undefined);

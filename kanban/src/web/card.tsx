@@ -376,8 +376,9 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
                   void startSession(row, launch, actions).then((sessionId) => {
                     if (!sessionId) return;
                     const session = { machine: machine.id, sessionId };
-                    // Leaving the board would drop the question of another card still starting one: the board stays,
-                    // and the last to start is opened (the others are in the sidebar).
+                    // Leaving the board, the question of another card still starting one would wait unseen till the
+                    // person is back (board.tsx): the board stays, and the last to start is opened (the others are in
+                    // the sidebar).
                     if (actions.starting() > 0) {
                       actions.notify({ text: `${card.label} でセッションを起動しました。ほかのカードの起動中だったので、カンバンのままにしました。`, session });
                       return;

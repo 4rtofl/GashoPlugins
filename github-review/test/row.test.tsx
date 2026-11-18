@@ -140,6 +140,41 @@ describe("a pull request without a worktree", () => {
     sdk.sendInput.mockReturnValueOnce({ ok: false, error: "the session is not ready" });
     render(<ReviewPage params={{}} />);
     await choose("レビュー");
+  it("keeps the question of a row's work while the page is left, shows it once the page is back, and the work goes on", async () => {
+    let made!: () => void;
+    answerCalls({ create: () => new Promise((resolve) => (made = () => resolve({ ok: true, data: { path: "/work/review-7", created: true } }))) });
+    sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true });
+    stopClock();
+    const page = render(<ReviewPage params={{}} />);
+    await choose("レビュー");
+    // Left while the worktree is made: a session opened from the notice or the sidebar closes the page.
+    page.unmount();
+    await act(async () => made());
+    await waitFor(() => expect(sdk.launchSession).toHaveBeenCalledTimes(1));
+    render(<ReviewPage params={{}} />);
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "信頼して起動する");
+    await waitFor(() => expect(sdk.sendInput).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "launched", text: expect.stringMatching(/^#7 をレビューして/) })));
+    expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/review-7", trust: true });
+    expect(await screen.findByText("#7 のセッションを起動し、「レビュー」を送りました。")).toBeTruthy();
+  });
+
+  it("shows a question once while the page and a panel are both open", async () => {
+    answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
+    sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true });
+    stopClock();
+    // Two parts of the screen that draw the rows, as the review page and the panel of a pull request do.
+    render(<ReviewPage params={{}} />);
+    render(<ReviewPage params={{}} />);
+    await userEvent.click(screen.getAllByRole("button", { name: /worktree を作る/ })[0]!);
+    await userEvent.click(await screen.findByRole("menuitem", { name: "何も送らない" }));
+    const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
+    // Counted in the document: Radix hides from the roles all but the dialog in front.
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    await answerTrust(dialog, "信頼して起動する");
+    await waitFor(() => expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/review-7", trust: true }));
+    expect(sdk.launchSession).toHaveBeenCalledTimes(2);
+  });
+
     expect((await screen.findByRole("alert")).textContent).toContain("セッションは起動しましたが、「レビュー」を送れませんでした：the session is not ready");
     expect(sdk.nav.openSession).not.toHaveBeenCalled();
   });
