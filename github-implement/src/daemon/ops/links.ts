@@ -1,16 +1,16 @@
 // What a pull request closes when it is merged, and what closes an issue (GitHub's "Development"): { repo, kind,
 // number, fresh? } → ItemLinks. For a pull request, also the repository's open issues it could be linked to. One
 // GraphQL query (1 or 2 points), read when the screen shows, not in the background.
-import type { GitHubKind } from "../../types.ts";
+import type { CloseReason, GitHubKind } from "../../types.ts";
 import { gh, itemRead } from "../core.ts";
-import { httpsUrl, kindArg, num, numberArg, repoArg, str } from "../gh.ts";
+import { closeReason, httpsUrl, kindArg, num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
 export interface LinkedIssue {
   number: number;
   title: string;
   state: "open" | "closed";
-  stateReason?: "completed" | "not_planned";
+  stateReason?: CloseReason;
   url: string;
   /** owner/name, when it is of another repository. */
   repo?: string;
@@ -84,11 +84,11 @@ export function parseLinks(json: string, repo: string, kind: GitHubKind): ItemLi
       const link = linkOf(n, repo);
       if (!link) continue;
       const key = `${link.repo ?? ""}#${link.number}`;
-      const reason = str(n.stateReason)?.toUpperCase();
+      const reason = closeReason(n.stateReason);
       const was = closes.get(key) ?? {
         ...link,
         state: str(n.state)?.toUpperCase() === "CLOSED" ? "closed" : "open",
-        ...(reason === "NOT_PLANNED" ? { stateReason: "not_planned" as const } : reason === "COMPLETED" ? { stateReason: "completed" as const } : {}),
+        ...(reason ? { stateReason: reason } : {}),
         manual: false,
         keyword: false,
       };

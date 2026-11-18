@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { execError, fakeContext, loadDaemon } from "../../test/daemon.ts";
 import { forget, KEEP_MS, limitsOf, readLimits, REQUESTS, SCRIPT } from "../src/daemon/usage.ts";
+import type { UsageLimits } from "../src/types.ts";
 
 /** What Claude Code 2.1.325 answered to get_usage on a Claude.ai plan without a 5-hour limit (fields cut down). */
 const ANSWER = {
@@ -116,5 +118,27 @@ test("readLimits says why Claude Code could not be asked", async () => {
   await assert.rejects(readLimits(fail({ code: 127, stdout: "", stderr: "sh: 1: claude: not found" })), /Claude Code が見つかりません/);
   await assert.rejects(readLimits(fail({ killed: true, stdout: "", stderr: "" })), /時間内に読めませんでした/);
   await assert.rejects(readLimits(fail({ code: 1, stdout: "", stderr: "Error: not logged in\nmore" })), /週の上限を読めませんでした（Error: not logged in）/);
+  forget();
+});
+
+test("the daemon part's limits asks Claude Code in the plugin's own folder, and tells the person why it could not", async () => {
+  forget();
+  const daemon = await loadDaemon("usage");
+  const { ctx, calls } = fakeContext({ run: () => out(INIT, ANSWER) });
+  const { at, ...limits } = (await daemon.call("limits", undefined, ctx)) as UsageLimits;
+  assert.equal(typeof at, "number");
+  assert.deepEqual(limits, {
+    available: true,
+    sevenDay: { percent: 36, resetsAt: Date.parse("2026-11-18T08:00:00.027Z") },
+    models: [{ name: "Fable", percent: 0, resetsAt: Date.parse("2026-11-18T08:00:00Z") }],
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.command, "sh");
+  // In its own folder, where gasho-daemon does not take the Claude Code for a session.
+  assert.equal((calls[0]?.options as { cwd?: string }).cwd, ctx.dataDir);
+
+  forget();
+  const missing = fakeContext({ run: () => execError({ code: 127, stderr: "sh: 1: claude: not found" }) });
+  await assert.rejects(daemon.call("limits", undefined, missing.ctx), { message: "Claude Code が見つかりません（gasho-daemon の GASHO_CLAUDE_BIN）。", user: true });
   forget();
 });

@@ -24,7 +24,7 @@ export default {
   async run(p, ctx) {
     const repo = repoArg(p.repo);
     const number = numberArg(p.number);
-    await seenStore(ctx.dataDir).mark(seenKey(repo, number), marksArg(p.marks), Date.now());
+    await seenStore(ctx.dataDir, ctx.log).mark(seenKey(repo, number), marksArg(p.marks), Date.now());
     return { ok: true };
   },
 } satisfies Op;

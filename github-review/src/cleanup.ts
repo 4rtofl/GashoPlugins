@@ -10,6 +10,14 @@ export type CleanupKind = "merge" | "sendBack";
 
 export const CLEANUP_KINDS: readonly CleanupKind[] = ["merge", "sendBack"];
 
+/**
+ * Whether a pull request's worktree may be removed once `kind` is done. After a merge, any worktree of the pull request
+ * may, whatever its name; after a send-back the work goes on, so only one made for the review. Never the primary checkout.
+ */
+export function cleanable(kind: CleanupKind, worktree: { path: string; review: boolean }, primary: string): boolean {
+  return worktree.path !== primary && (kind === "merge" || worktree.review);
+}
+
 /** The clocks of the working server and of GitHub may differ by this much. */
 export const CLOCK_SLACK_MS = 60_000;
 
