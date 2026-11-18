@@ -50,13 +50,14 @@ const LOOKS = {
   issueOpen: look(CircleDot, GREEN, "Open", "success"),
   issueDone: look(CircleCheck, PURPLE, "Closed", "merged"),
   issueNotPlanned: look(CircleSlash, "text-muted-foreground", "Closed（対応しない）", "neutral"),
+  issueDuplicate: look(CircleSlash, "text-muted-foreground", "Closed（重複）", "neutral"),
   pullOpen: look(GitPullRequest, GREEN, "Open", "success"),
   pullDraft: look(GitPullRequestDraft, "text-muted-foreground", "Draft", "neutral"),
   pullMerged: look(GitMerge, PURPLE, "Merged", "merged"),
   pullClosed: look(GitPullRequestClosed, "text-red-600 dark:text-red-400", "Closed", "danger"),
 };
 
-/** How GitHub shows an issue or pull request in its state. An issue closed as a duplicate looks closed as done. */
+/** How GitHub shows an issue or pull request in its state. */
 export function itemLook(i: ItemState): ItemLook {
   if (i.kind === "pulls") {
     if (i.state === "merged") return LOOKS.pullMerged;
@@ -64,8 +65,11 @@ export function itemLook(i: ItemState): ItemLook {
     return i.draft ? LOOKS.pullDraft : LOOKS.pullOpen;
   }
   if (i.state !== "closed") return LOOKS.issueOpen;
-  return i.stateReason === "not_planned" ? LOOKS.issueNotPlanned : LOOKS.issueDone;
+  return i.stateReason === "not_planned" ? LOOKS.issueNotPlanned : i.stateReason === "duplicate" ? LOOKS.issueDuplicate : LOOKS.issueDone;
 }
+
+/** An issue closed as not planned or as a duplicate: GitHub shows it gray, with NOT_PLANNED_ICON. */
+export const closedUndone = (i: Pick<ItemSummary, "state" | "stateReason">): boolean => i.state === "closed" && (i.stateReason === "not_planned" || i.stateReason === "duplicate");
 
 /** The icon of an issue or pull request, by its state. */
 export const itemIcon = (i: ItemState): LucideIcon => itemLook(i).Icon;

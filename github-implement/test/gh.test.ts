@@ -3,8 +3,10 @@ import { test } from "node:test";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
 import type { GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
-import { itemRead, readItems, type Ctx } from "../src/daemon/core.ts";
-import { branchArg, branchNumber, detailArgs, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
+import { askFresh, itemRead, readAgain, readItems, type Ctx } from "../src/daemon/core.ts";
+import { branchArg, branchNumber, detailArgs, fitDetail, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
+import { parseLocked } from "../src/daemon/ops/locked.ts";
+import type { GitHubItemDetail } from "../src/types.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
 import { editArgs } from "../src/daemon/ops/edit.ts";
 import { stateArgs } from "../src/daemon/ops/state.ts";
@@ -74,7 +76,7 @@ test("what the browser sends never becomes a flag of gh", () => {
   assert.throws(() => branchArg("a..b"));
   assert.equal(branchArg("feat/4-github-almighty"), "feat/4-github-almighty");
   // Text that starts with "-" stays the value of its flag.
-  assert.deepEqual(commentArgs("o/r", "issues", 3, "--repo x/y"), ["issue", "comment", "3", "--repo", "o/r", "--body=--repo x/y"]);
+  assert.deepEqual(commentArgs("o/r", "issues", 3, "/tmp/c.md"), ["issue", "comment", "3", "--repo", "o/r", "--body-file=/tmp/c.md"]);
   assert.deepEqual(editArgs("o/r", "pulls", 3, { title: "-t", addAssignees: ["@me"], removeLabels: ["bug"] }), ["pr", "edit", "3", "--repo", "o/r", "--title=-t", "--add-assignee=@me", "--remove-label=bug"]);
   assert.deepEqual(stateArgs("o/r", "issues", 3, "close", "not_planned"), ["issue", "close", "3", "--repo", "o/r", "--reason=not planned"]);
   assert.deepEqual(stateArgs("o/r", "pulls", 3, "close", "not_planned"), ["pr", "close", "3", "--repo", "o/r"]);
@@ -175,4 +177,115 @@ test("the reads of an item use what gasho-daemon kept since its version was read
   await maxAgeOfRead();
   tick(10);
   assert.equal(await maxAgeOfRead(), 10);
+});
+
+/** gh failing as it does on a GraphQL read with errors: the answer on stdout, the message on stderr. */
+const ghFailure = (data: unknown, errors: unknown[], message: string) => Object.assign(new Error("Command failed: gh api graphql"), { code: 1, stdout: JSON.stringify({ data, errors }), stderr: `gh: ${message}` });
+
+test("a repository this login cannot read fails the read of its items, and shows them again once it can", async () => {
+  let readable = false;
+  const ctx = {
+    github: {
+      read: async () => {
+        if (!readable) throw ghFailure({ repository: null }, [{ type: "NOT_FOUND", path: ["repository"] }], "Could not resolve to a Repository with the name 'o/private'.");
+        return { stdout: JSON.stringify({ data: { repository: { pulls: { nodes: [] }, n7: { __typename: "Issue", number: 7, title: "t", state: "OPEN", url: "https://github.com/o/private/issues/7" }, n8: { __typename: "Issue", number: 8, title: "u", state: "OPEN", url: "https://github.com/o/private/issues/8" } } } }), stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as Ctx;
+  // Not as numbers GitHub does not have: the branch's number and the ones added stay asked for.
+  await assert.rejects(readItems(ctx, "o/private", "feat/7-x", [8], 0), (e: { stderr?: string }) => /Could not resolve to a Repository/.test(e.stderr ?? ""));
+  readable = true;
+  const items = await readItems(ctx, "o/private", "feat/7-x", [8], 0);
+  assert.equal(items.named?.number, 7);
+  assert.deepEqual(items.added.map((i) => i.number), [8]);
+});
+
+test("an issue closed as a duplicate is told apart from one closed as done", () => {
+  const raw = { __typename: "Issue", number: 5, title: "t", state: "CLOSED", stateReason: "DUPLICATE", url: "https://github.com/o/r/issues/5" };
+  assert.equal(parseItems(JSON.stringify({ data: { repository: { n5: raw } } }), 5, [], 0).named?.stateReason, "duplicate");
+  assert.equal(parseDetail(JSON.stringify(raw), "issues", [])?.stateReason, "duplicate");
+});
+
+test("a read too large for one message leaves out the oldest comments and reviews", () => {
+  const at = (minute: number) => `2026-11-18T00:${String(minute).padStart(2, "0")}:00Z`;
+  const item: GitHubItemDetail = {
+    kind: "pulls",
+    number: 1,
+    title: "t",
+    url: "https://github.com/o/r/pull/1",
+    createdAt: at(0),
+    updatedAt: at(9),
+    labels: [],
+    state: "open",
+    assignees: [],
+    body: "",
+    comments: [1, 3, 5, 7].map((m) => ({ createdAt: at(m), body: "あ".repeat(100) })),
+    commentsLeftOut: 2,
+    reviews: [2, 6].map((m) => ({ submittedAt: at(m), state: "commented" as const, body: "い".repeat(100) })),
+  };
+  assert.equal(fitDetail(item, 1_000_000), item);
+  const max = Buffer.byteLength(JSON.stringify(item)) - 900;
+  const fit = fitDetail(item, max);
+  assert.ok(Buffer.byteLength(JSON.stringify(fit)) <= max);
+  // 1, 2 and 3 are the oldest: 2 comments and 1 review, on top of the comments already left out.
+  assert.deepEqual(fit.comments?.map((c) => c.createdAt), [at(5), at(7)]);
+  assert.deepEqual(fit.reviews?.map((r) => r.submittedAt), [at(6)]);
+  assert.equal(fit.commentsLeftOut, 4);
+  assert.equal(fit.reviewsLeftOut, 1);
+});
+
+test("after the reload button, the reads of the repository use only what gh read since the press", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 5_000_000 });
+  const maxAges: (number | undefined)[] = [];
+  const ctx = {
+    github: {
+      read: async (_args: string[], o: GitHubReadOptions = {}) => {
+        maxAges.push(o.maxAgeSeconds);
+        return { stdout: JSON.stringify({ data: { repository: { pulls: { nodes: [] } } } }), stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as Ctx;
+  await readItems(ctx, "o/fresh", "main", [], 55);
+  await itemRead(ctx, "o/fresh", 3)(["api", "graphql", "-f", "query=…"]);
+  assert.deepEqual(maxAges.splice(0), [55, 55]);
+  askFresh("O/Fresh");
+  t.mock.timers.tick(2000);
+  await readItems(ctx, "o/fresh", "main", [], 55);
+  await itemRead(ctx, "o/fresh", 3)(["api", "graphql", "-f", "query=…"]);
+  assert.deepEqual(maxAges.splice(0), [2, 2]);
+  // Other repositories, and the same one once the interval has passed, read as before.
+  await readItems(ctx, "o/other", "main", [], 55);
+  t.mock.timers.tick(60_000);
+  await readItems(ctx, "o/fresh", "main", [], 55);
+  assert.deepEqual(maxAges, [55, 55]);
+});
+
+test("the background reads the rest of a worktree when one of its items cannot be read", async () => {
+  const pull = (number: number) => ({ __typename: "PullRequest", number, title: `p${number}`, state: "OPEN", isDraft: false, url: `https://github.com/o/again/pull/${number}` });
+  const read: string[] = [];
+  const logged: unknown[][] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        if (args[0] === "api") return { stdout: JSON.stringify({ data: { repository: { pulls: { nodes: [pull(8), pull(9)] }, n7: { __typename: "Issue", number: 7, title: "i", state: "OPEN", url: "https://github.com/o/again/issues/7" } } } }), stderr: "" };
+        read.push(args[2] ?? "");
+        if (args[2] === "8") throw new Error("gh: HTTP 502");
+        return { stdout: JSON.stringify({ number: Number(args[2]), title: "t", url: `https://github.com/o/again/pull/${args[2]}`, state: "OPEN" }), stderr: "" };
+      },
+    },
+    log: (...a: unknown[]) => void logged.push(a),
+  } as unknown as Ctx;
+  await readAgain(ctx, { repo: "o/again", branch: "feat/7-x", added: [] }, () => false);
+  assert.deepEqual(read, ["7", "8", "9"]);
+  assert.equal(logged.length, 1);
+});
+
+test("the reason a conversation was locked for, as GitHub's REST API names it, is the one gh locks it with again", () => {
+  const reason = (r: string) => parseLocked(JSON.stringify({ locked: true, reason: r })).reason;
+  assert.equal(reason("off-topic"), "off_topic");
+  assert.equal(reason("too heated"), "too_heated");
+  assert.equal(reason("resolved"), "resolved");
+  assert.equal(reason("constructor"), undefined);
 });

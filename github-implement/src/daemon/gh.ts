@@ -4,7 +4,7 @@
 // and answers a read from what it kept when the same arguments were read recently. Everything here only builds
 // arguments and reads output, so that it can be tested without gh.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import type { GitHubItemDetail, GitHubKind, ItemSummary, WorktreeItems } from "../types.ts";
+import type { CloseReason, GitHubItemDetail, GitHubKind, ItemSummary, WorktreeItems } from "../types.ts";
 
 // ---- what comes from the browser ----
 
@@ -88,6 +88,12 @@ export const labelColor = (v: unknown): string | undefined => {
 const TEXT_MAX = 60_000;
 export const clip = (s: string): string => (s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX)}\n\n…（長いので、ここから先は GitHub で読んでください）` : s);
 
+/** An issue's stateReason as GitHub gives it (COMPLETED, NOT_PLANNED, DUPLICATE); undefined for any other (REOPENED, none). */
+export function closeReason(v: unknown): CloseReason | undefined {
+  const r = str(v)?.toUpperCase();
+  return r === "COMPLETED" ? "completed" : r === "NOT_PLANNED" ? "not_planned" : r === "DUPLICATE" ? "duplicate" : undefined;
+}
+
 /** gh's command for an issue or a pull request. */
 export const cmd = (kind: GitHubKind): "issue" | "pr" => (kind === "issues" ? "issue" : "pr");
 
@@ -134,15 +140,14 @@ export function summary(raw: unknown): ItemSummary | undefined {
   if (number === undefined || title === undefined || !url?.startsWith("https://github.com/")) return undefined;
   const kind: GitHubKind = r.__typename === "PullRequest" ? "pulls" : "issues";
   const state = str(r.state)?.toUpperCase();
-  const reason = str(r.stateReason)?.toUpperCase();
+  const reason = kind === "issues" && state === "CLOSED" ? closeReason(r.stateReason) : undefined;
   return {
     kind,
     number,
     title,
     state: state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : "open",
     ...(kind === "pulls" && r.isDraft === true ? { draft: true } : {}),
-    ...(kind === "issues" && state === "CLOSED" && reason === "NOT_PLANNED" ? { stateReason: "not_planned" as const } : {}),
-    ...(kind === "issues" && state === "CLOSED" && reason === "COMPLETED" ? { stateReason: "completed" as const } : {}),
+    ...(reason ? { stateReason: reason } : {}),
     url,
   };
 }
@@ -217,7 +222,7 @@ export function parseDetail(json: string, kind: GitHubKind, parts: DetailPart[])
   const url = str(raw?.url);
   if (!raw || number === undefined || title === undefined || !url?.startsWith("https://github.com/")) return undefined;
   const state = str(raw.state)?.toUpperCase();
-  const reason = str(raw.stateReason)?.toUpperCase();
+  const reason = state === "CLOSED" ? closeReason(raw.stateReason) : undefined;
   const labels = (Array.isArray(raw.labels) ? raw.labels : []).flatMap((l) => {
     const name = str(l?.name);
     const color = labelColor(l?.color);
@@ -233,8 +238,7 @@ export function parseDetail(json: string, kind: GitHubKind, parts: DetailPart[])
     updatedAt: str(raw.updatedAt) ?? "",
     labels,
     state: state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : "open",
-    ...(state === "CLOSED" && reason === "NOT_PLANNED" ? { stateReason: "not_planned" as const } : {}),
-    ...(state === "CLOSED" && reason === "COMPLETED" ? { stateReason: "completed" as const } : {}),
+    ...(reason ? { stateReason: reason } : {}),
     ...(str(raw.closedAt) ? { closedAt: str(raw.closedAt) } : {}),
     ...(str(raw.mergedAt) ? { mergedAt: str(raw.mergedAt) } : {}),
     assignees: (Array.isArray(raw.assignees) ? raw.assignees : []).flatMap((a) => (login(a) ? [login(a) as string] : [])),
@@ -252,7 +256,40 @@ export function parseDetail(json: string, kind: GitHubKind, parts: DetailPart[])
     }
   }
   for (const part of parts) if (part.fields[kind]) part.read(raw, item);
-  return item;
+  return fitDetail(item);
+}
+
+/**
+ * What the read of one item may come to as JSON. Gasho's hub closes the working server's connection on a message past
+ * 16 MB, and the screen asks again while it shows: past this, the oldest comments and reviews are left out.
+ */
+export const DETAIL_MAX_BYTES = 8 * 1024 * 1024;
+
+const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v) ?? "");
+
+export function fitDetail(item: GitHubItemDetail, max = DETAIL_MAX_BYTES): GitHubItemDetail {
+  let over = jsonBytes(item) - max;
+  if (over <= 0) return item;
+  const texts: { at: string; text: unknown }[] = [...(item.comments ?? []).map((c) => ({ at: c.createdAt, text: c })), ...(item.reviews ?? []).map((r) => ({ at: r.submittedAt, text: r }))];
+  texts.sort((a, b) => a.at.localeCompare(b.at));
+  const out = new Set<unknown>();
+  for (const t of texts) {
+    if (over <= 0) break;
+    out.add(t.text);
+    // With the comma between it and the next.
+    over -= jsonBytes(t.text) + 1;
+  }
+  const comments = item.comments?.filter((c) => !out.has(c));
+  const reviews = item.reviews?.filter((r) => !out.has(r));
+  const commentsOut = (item.comments?.length ?? 0) - (comments?.length ?? 0);
+  const reviewsOut = (item.reviews?.length ?? 0) - (reviews?.length ?? 0);
+  return {
+    ...item,
+    ...(comments ? { comments } : {}),
+    ...(reviews ? { reviews } : {}),
+    ...(commentsOut > 0 ? { commentsLeftOut: (item.commentsLeftOut ?? 0) + commentsOut } : {}),
+    ...(reviewsOut > 0 ? { reviewsLeftOut: (item.reviewsLeftOut ?? 0) + reviewsOut } : {}),
+  };
 }
 
 // ---- errors ----
