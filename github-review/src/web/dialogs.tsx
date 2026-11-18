@@ -1,6 +1,7 @@
 // What the page asks and tells around the rows' buttons: whether to start a session in a fork's code, whether Claude
-// Code may trust a folder before a session starts there, whether to remove a review worktree, whether to ask the Agent to merge or to send it back (and to
-// remove its review worktree once that is done), and a notice at the bottom of what a button is doing or did.
+// Code may trust a folder before a session starts there, whether to remove a review worktree, whether to ask the Agent
+// to merge or to send it back (and to remove its review worktree once that is done), and a notice at the bottom of what
+// a button is doing or did.
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
@@ -112,7 +113,7 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
             <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>
             {files.length > 0 ? (
               <div className="space-y-1 text-xs text-amber-700 dark:text-amber-300">
-                <p>この worktree にあるもの。中身を確かめてから起動してください。</p>
+                <p>この worktree の一番上にあるもの。中身を確かめてから起動してください。</p>
                 <ul className="list-disc space-y-0.5 pl-5 font-mono">
                   {files.map((f) => (
                     <li key={f}>{f}</li>
@@ -120,7 +121,7 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
                 </ul>
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">{PROJECT_FILES.join("・")} はありません。</p>
+              <p className="text-xs text-muted-foreground">worktree の一番上に {PROJECT_FILES.join("・")} はありません。</p>
             )}
             <div className="flex justify-end gap-2 border-t border-border pt-4">
               <Button size="sm" onClick={single(() => onAnswer(false))}>
