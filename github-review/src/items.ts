@@ -11,6 +11,7 @@ export interface Spot<M> {
   primary: string;
   worktree?: PrWorktree;
   cleanup?: Cleanup;
+  reviewSessions?: string[];
 }
 
 export interface Item<M> {
