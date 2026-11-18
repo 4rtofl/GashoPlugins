@@ -126,6 +126,21 @@ test("severity: the review sorts its findings into High, Medium and Low, and onl
   assert.ok(m.includes("Medium・Low だけのときも、指摘がないときも mergeable"));
 });
 
+test("scope: the review settles the pull request's scope first, and what is outside it never counts", () => {
+  const m = markInstruction(PR);
+  assert.ok(m.indexOf("この Pull request の範囲を確かめて") < m.indexOf("- High: マージすると実害が出るもの"));
+  assert.ok(m.includes("完了の条件は、書かれている以上に広げて解釈しないでください"));
+  assert.ok(m.includes("その変更で新しく起きる問題"));
+  assert.ok(m.includes("前からある不具合でも、完了の条件に書かれていれば範囲内"));
+  assert.ok(m.includes("High・Medium・Low には入れず、`### 範囲外（参考）` の見出しに"));
+  assert.ok(m.includes("範囲外（参考）の指摘は verdict に含めません"));
+
+  const mark: ReviewMark = { verdict: "changes", sha: SHA, url: "https://github.com/o/r/pull/5#issuecomment-1" };
+  const merge = { method: "merge", deleteBranch: true } as const;
+  assert.ok(askInstruction("sendBack", PR, mark, merge).includes("「範囲外（参考）」の指摘は、本文に入れないでください"));
+  assert.ok(askInstruction("fix", PR, mark, merge).includes("「範囲外（参考）」の指摘は、この Pull request では直さないでください"));
+});
+
 test("severity: send back and mend must deal with the High findings, and say what becomes of Medium and Low", () => {
   const mark: ReviewMark = { verdict: "changes", sha: SHA, url: "https://github.com/o/r/pull/5#issuecomment-1" };
   const merge = { method: "merge", deleteBranch: true } as const;
