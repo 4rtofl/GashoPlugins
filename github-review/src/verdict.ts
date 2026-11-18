@@ -116,9 +116,12 @@ export function askOf(
   return undefined;
 }
 
-/** What a row's button asked the Agent, on the page: of the verdict on `sha`, at `at` (ms since the epoch). */
+/** What a pull request's buttons ask an Agent for: what its verdict calls for, or a review ("レビューする"). */
+export type WorkKind = AskKind | "review";
+
+/** What a row's button asked the Agent, on the page: of the verdict on `sha` (a review: the head without one), at `at` (ms since the epoch). */
 export interface Asked {
-  kind: AskKind;
+  kind: WorkKind;
   sha: string;
   at: number;
 }
@@ -152,7 +155,7 @@ export const ASK_RECHECK_MS = 30_000;
  * (ms since the epoch, by the page's clock).
  */
 export interface Recheck {
-  kind: AskKind;
+  kind: Underway;
   sha: string;
   ended: number;
   refreshed?: number;
@@ -169,9 +172,12 @@ export function askRechecking(
   { recheck, listedAt, now }: { recheck?: Recheck | undefined; listedAt?: number | undefined; now: number },
 ): boolean {
   if (!ask || !mark || !recheck || recheck.kind !== ask.kind || recheck.sha !== mark.sha) return false;
-  if (now - recheck.ended >= ASK_RECHECK_MS) return false;
-  return recheck.refreshed === undefined || (listedAt ?? 0) <= recheck.refreshed;
+  return awaitsReading(recheck, listedAt, now);
 }
+
+/** The list read from GitHub since the end of the work has not come, and it is not too late to wait for it. */
+const awaitsReading = (recheck: Recheck, listedAt: number | undefined, now: number): boolean =>
+  now - recheck.ended < ASK_RECHECK_MS && (recheck.refreshed === undefined || (listedAt ?? 0) <= recheck.refreshed);
 
 /**
  * What was asked on this screen is no longer being done, and GitHub was not read for that since it was asked: its end
@@ -184,4 +190,59 @@ export function askEndUnseen(
 ): boolean {
   if (running || !ask || !mark || !asked || asked.kind !== ask.kind || asked.sha !== mark.sha) return false;
   return recheck === undefined || recheck.ended < asked.at;
+}
+
+/**
+ * What goes on in a pull request's worktree, for which its row shows no button that asks an Agent for something:
+ * - a kind of AskKind: that was asked, and is being done (askRunning);
+ * - review: a review was asked on this screen, or a session sent one is at work;
+ * - session: some other session is at work there. What it does cannot be told (what was asked before the page was opened
+ *   is not kept), and whatever was sent now would wait for it.
+ */
+export type Underway = WorkKind | "session";
+
+/**
+ * What is under way in the worktree of an open pull request; undefined when nothing is. What was asked last on this
+ * screen goes first, then a session sent a review, then what the daemon part kept of an ask.
+ */
+export function underway(
+  ask: Ask | undefined,
+  mark: { sha: string } | undefined,
+  {
+    working,
+    reviewing,
+    asked,
+    followed,
+    now,
+  }: { working: boolean; reviewing: boolean; asked?: Asked | undefined; followed?: { kind: AskKind; sha?: string } | undefined; now: number },
+): Underway | undefined {
+  if (asked?.kind === "review" && (working || now - asked.at < ASK_SETTLE_MS)) return "review";
+  if (ask && askRunning(ask, mark, { working, asked, now })) return ask.kind;
+  if (reviewing) return "review";
+  if (ask && askRunning(ask, mark, { working, followed, now })) return ask.kind;
+  return working ? "session" : undefined;
+}
+
+/**
+ * Once the work is over, its row goes on showing it until the list read from GitHub after that comes: until then, the list
+ * is from before the end of it. What was asked of a verdict is waited for while that verdict stands (askRechecking).
+ */
+export function workRechecking(
+  ask: Ask | undefined,
+  mark: { sha: string } | undefined,
+  { recheck, listedAt, now }: { recheck?: Recheck | undefined; listedAt?: number | undefined; now: number },
+): Underway | undefined {
+  if (!recheck) return undefined;
+  const waits = recheck.kind === "review" || recheck.kind === "session" ? awaitsReading(recheck, listedAt, now) : askRechecking(ask, mark, { recheck, listedAt, now });
+  return waits ? recheck.kind : undefined;
+}
+
+/** What was asked on this screen is over and its end was not seen, as the page was left meanwhile (askEndUnseen). */
+export function workEndUnseen(
+  ask: Ask | undefined,
+  mark: { sha: string } | undefined,
+  { going, asked, recheck }: { going: boolean; asked?: Asked | undefined; recheck?: Recheck | undefined },
+): boolean {
+  if (asked?.kind === "review") return !going && (recheck === undefined || recheck.ended < asked.at);
+  return askEndUnseen(ask, mark, { running: going, asked, recheck });
 }

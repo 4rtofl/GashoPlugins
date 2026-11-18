@@ -8,7 +8,7 @@
 import type { MachineInfo } from "@gasho/plugin-sdk";
 import { headingsWith, KANBAN_COLUMNS, placeWith } from "../plugins/place.ts";
 import type { BoardHeading, CardAction, CardMark, CardSession, KanbanColumn, StateCard, Worktree } from "../plugins/types.ts";
-import type { Board, ClosedPr, OpenPr, RepoMaterial } from "./types.ts";
+import type { Board, ClosedPr, OpenPr, RepoMaterial, ReviewPr } from "./types.ts";
 
 export { KANBAN_COLUMNS };
 export type { BoardHeading, CardAction, CardMark, CardSession, KanbanColumn };
@@ -101,24 +101,47 @@ export function boardHeadings(boards: { machine: MachineInfo; board: Board; plug
 
 const cardSession = (s: SessionLike): CardSession => ({ sessionId: s.sessionId, status: s.status, ...(s.managed ? { managed: true } : {}) });
 
+/** A pull request as a card shows it. */
+interface ShownPr {
+  pr: NonNullable<StateCard["pr"]>;
+  title: string;
+  updatedAt?: string;
+}
+
+const openShown = (p: OpenPr): ShownPr => ({
+  pr: { number: p.number, url: p.url, state: "open", ...(p.isDraft ? { draft: true } : {}) },
+  title: p.title,
+  ...(p.updatedAt ? { updatedAt: p.updatedAt } : {}),
+});
+
+const closedShown = (p: ClosedPr): ShownPr => ({ pr: { number: p.number, url: p.url, state: p.state === "MERGED" ? "merged" : "closed" }, title: p.title });
+
+const reviewShown = (p: ReviewPr): ShownPr => ({
+  pr: { number: p.number, url: p.url, state: p.state, ...(p.isDraft ? { draft: true } : {}) },
+  title: p.title,
+  ...(p.updatedAt ? { updatedAt: p.updatedAt } : {}),
+});
+
 /**
  * The cards of one repository as its board plugin's `state` gets them: its worktrees, its primary checkout while it has
  * an open pull request or a session there works or awaits an answer (work on main is not missed), and my open pull
- * requests without a worktree.
+ * requests without a worktree. A worktree gets the pull request of its branch only from this repository (a fork's
+ * branch of the same name is another one), and a closed one only while it is on that pull request's last commit (a
+ * new worktree on the branch of a pull request merged before is new work); a review worktree, the one it is for.
  */
 export function stateCardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>): StateCard[] {
-  const open = new Map(m.prs.map((p) => [p.headRefName, p]));
+  const open = new Map(m.prs.filter((p) => !p.isCrossRepository).map((p) => [p.headRefName, p]));
   const closedOf = new Map(m.closed.map((p) => [p.headRefName, p]));
+  const reviews = new Map((m.reviews ?? []).map((r) => [r.path, r]));
   const trees: (Worktree & { primary: boolean })[] = [...m.worktrees.map((w) => ({ ...w, primary: false })), { ...m.primary, primary: true }];
   const cards: StateCard[] = [];
-  const card = (t: Partial<Worktree> & { primary: boolean }, pr: OpenPr | undefined, closed: ClosedPr | undefined, sessions: SessionLike[]) => {
-    const shown = pr ?? closed;
+  const card = (t: Partial<Worktree> & { primary: boolean }, shown: ShownPr | undefined, sessions: SessionLike[], review = false) => {
     const issue = issueOf(t.branch);
     cards.push({
       // A pull request without a worktree shows once per clone of its repository, so the clone is part of its id.
-      id: `${m.repo}:${t.path ?? `${m.primary.path}#pr-${pr?.number}`}`,
+      id: `${m.repo}:${t.path ?? `${m.primary.path}#pr-${shown?.pr.number}`}`,
       repo: m.repo,
-      label: t.path ? basename(t.path) : `PR #${pr?.number}`,
+      label: t.path ? basename(t.path) : `PR #${shown?.pr.number}`,
       ...(t.path ? { path: t.path } : {}),
       ...(t.branch ? { branch: t.branch } : {}),
       ...(t.detached ? { detached: true } : {}),
@@ -126,23 +149,24 @@ export function stateCardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>
       ...(t.primary ? { primary: true } : {}),
       title: shown?.title || t.branch || basename(t.path ?? ""),
       ...(issue !== undefined ? { issue } : {}),
-      ...(pr
-        ? { pr: { number: pr.number, url: pr.url, state: "open" as const, ...(pr.isDraft ? { draft: true } : {}) } }
-        : closed
-          ? { pr: { number: closed.number, url: closed.url, state: closed.state === "MERGED" ? ("merged" as const) : ("closed" as const) } }
-          : {}),
-      ...(pr?.updatedAt ? { updatedAt: pr.updatedAt } : {}),
+      ...(shown ? { pr: shown.pr } : {}),
+      ...(review ? { review: true as const } : {}),
+      ...(shown?.updatedAt ? { updatedAt: shown.updatedAt } : {}),
       sessions: sessions.map(cardSession),
     });
   };
+  const taken = new Set<number>();
   for (const t of trees) {
-    const pr = t.branch === undefined ? undefined : open.get(t.branch);
     const sessions = byPath.get(t.path) ?? [];
+    const review = reviews.get(t.path);
+    const pr = review || t.branch === undefined ? undefined : open.get(t.branch);
     if (t.primary && !pr && !sessions.some((s) => s.status === "busy" || s.status === "waiting")) continue;
-    card(t, pr, pr || t.branch === undefined ? undefined : closedOf.get(t.branch), sessions);
+    const closed = review || pr || t.branch === undefined ? undefined : closedOf.get(t.branch);
+    const shown = review ? reviewShown(review) : pr ? openShown(pr) : closed?.headRefOid !== undefined && closed.headRefOid === t.head ? closedShown(closed) : undefined;
+    if (shown) taken.add(shown.pr.number);
+    card(t, shown, sessions, review !== undefined);
   }
-  const taken = new Set(trees.map((t) => t.branch));
-  for (const pr of m.prs) if (!taken.has(pr.headRefName)) card({ branch: pr.headRefName, primary: false }, pr, undefined, []);
+  for (const pr of m.prs) if (!taken.has(pr.number)) card({ branch: pr.headRefName, primary: false }, openShown(pr), []);
   return cards;
 }
 

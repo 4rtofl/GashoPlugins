@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
-import { askedState, recheck } from "../src/web/asked.ts";
+import { askedState, holdSending, recheck } from "../src/web/asked.ts";
 
 const URL = "https://github.com/o/r/pull/5";
 const OF = { kind: "merge", sha: "abc1234" } as const;
@@ -68,4 +68,16 @@ test("recheck: a reading that ends after a later end of the work does not speak 
   } finally {
     mock.timers.reset();
   }
+});
+
+test("holdSending: a pull request is at work until every button that holds it lets go, each once", () => {
+  const url = `${URL}#sending`;
+  const first = holdSending(url);
+  const second = holdSending(url);
+  assert.equal(askedState().sending.get(url), 2);
+  first();
+  first();
+  assert.equal(askedState().sending.get(url), 1);
+  second();
+  assert.equal(askedState().sending.has(url), false);
 });
