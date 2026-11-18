@@ -40,8 +40,10 @@ export interface ItemScope {
   /** The id of the change that runs, if one does. One runs at a time. */
   busy?: string;
   run(change: Change): Promise<boolean>;
-  /** Grows after every change. */
+  /** Grows after every change and every reload. */
   revision: number;
+  /** Reads the item, the tabs and every part again from GitHub (the reload button). */
+  reload(): void;
 }
 
 const ItemContext = createContext<ItemScope | undefined>(undefined);
@@ -54,7 +56,7 @@ export function useItem(): ItemScope {
   return scope;
 }
 
-/** Calls `reload` after every change made on the screen, for what a part reads itself. */
+/** Calls `reload` after every change made on the screen and every press of its reload button, for what a part reads itself. */
 export function useAfterChange(reload: () => void): void {
   const { revision } = useItem();
   const first = useRef(revision);
@@ -105,7 +107,7 @@ export function useDraftsOf(machine: string, worktree: WorktreeInfo, where: Wher
   }, [at]);
 }
 
-/** Runs the changes of one item's screen; `after` reads the item and the tabs again. */
+/** Runs the changes of one item's screen; `after` reads the item and the tabs again. `changed` reads everything again. */
 export function useChanges(machine: string, where: Where | undefined, after: () => void) {
   const write = useWriteOp();
   const toast = useToast();
@@ -138,5 +140,5 @@ export function useChanges(machine: string, where: Where | undefined, after: () 
     });
     return true;
   };
-  return { busy, revision, run };
+  return { busy, revision, run, changed };
 }

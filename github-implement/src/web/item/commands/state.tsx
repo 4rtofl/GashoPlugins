@@ -24,7 +24,9 @@ function useStateCommands(): PaletteCommand[] {
     changes.push({ id: "close", label: "Pull request を閉じる", icon: GitPullRequestClosed, keywords: "close", op: "state", params: { action: "close" }, summary: `${id} を閉じる`, done: "閉じました", undo: reopen });
   } else {
     const reason = item.kind === "issues" ? (item.stateReason ?? "completed") : undefined;
-    changes.push({ id: "reopen", label: `${item.kind === "issues" ? "Issue" : "Pull request"} を開き直す`, icon: item.kind === "issues" ? CircleDot : GitPullRequest, keywords: "reopen", ...reopen, done: "開き直しました", undo: { op: "state", params: { action: "close", ...(reason ? { reason } : {}) }, summary: `${id} を閉じる` } });
+    // gh closes an issue as done or as not planned only: a duplicate is closed again on GitHub.
+    const undo = reason !== "duplicate" && { undo: { op: "state", params: { action: "close", ...(reason ? { reason } : {}) }, summary: `${id} を閉じる` } };
+    changes.push({ id: "reopen", label: `${item.kind === "issues" ? "Issue" : "Pull request"} を開き直す`, icon: item.kind === "issues" ? CircleDot : GitPullRequest, keywords: "reopen", ...reopen, done: "開き直しました", ...undo });
   }
   return changes.map(({ label, icon, keywords, ...c }) => ({ id: `state-${c.id}`, label, icon, keywords, disabled: busy !== undefined, writes: true, run: () => void run(c) }));
 }

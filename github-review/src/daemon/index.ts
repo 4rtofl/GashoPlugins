@@ -8,9 +8,11 @@ import { Cleanups } from "./cleanups.ts";
 import { ghError, headArgs, parseHead } from "./gh.ts";
 import { createWorktree, removeWorktree, ReviewError, type PrHead } from "./git.ts";
 import { Reviewer } from "./reviewer.ts";
+import { SessionRemovals } from "./session-removals.ts";
 
 let reviewer: Reviewer | undefined;
 let cleanups: Cleanups | undefined;
+let removals: SessionRemovals | undefined;
 
 function current(): Reviewer {
   if (!reviewer) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
@@ -28,6 +30,13 @@ function repoArg(v: unknown): string {
 function numberArg(v: unknown): number {
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > 1e9) throw new PluginError("番号が正しくありません。");
   return v;
+}
+
+/** A commit's SHA, whole or its start (a verdict's mark may hold either), in lower case; undefined when not given. */
+function shaArg(v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || !/^[0-9a-f]{7,40}$/i.test(v)) throw new PluginError("判定の commit の指定が正しくありません。");
+  return v.toLowerCase();
 }
 
 /** The pull request as GitHub has it now, and the clone of its repository here: never what the browser says of them. */
@@ -51,13 +60,16 @@ async function target(params: unknown, ctx: DaemonContext) {
 export default defineDaemonPlugin({
   start(ctx) {
     cleanups = new Cleanups({ file: path.join(ctx.dataDir, "cleanups.json"), log: ctx.log });
-    reviewer = new Reviewer({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log, cleanups });
+    removals = new SessionRemovals({ file: path.join(ctx.dataDir, "session-removals.json"), log: ctx.log });
+    reviewer = new Reviewer({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log, cleanups, removals });
     void reviewer.load();
     void cleanups.load();
+    void removals.load();
   },
   stop() {
     reviewer = undefined;
     cleanups = undefined;
+    removals = undefined;
   },
   methods: {
     /** The repositories that can be watched: RepoOption[]. */
@@ -85,9 +97,10 @@ export default defineDaemonPlugin({
     },
     /**
      * The review worktree of { repo, number } once what was asked of its Agent is done (cleanup.ts), by `action`:
-     * "follow" { kind } — remove it once `kind` ("merge" or "sendBack") is done; "forget" — not to be removed (it was,
-     * or the person no longer wants it); "claim" — a page is about to remove it ({ claimed }: false when another page
-     * is at it, or it failed before); "fail" { problem } — it could not be removed, and why.
+     * "follow" { kind, sha } — remove it once `kind` ("merge" or "sendBack") is done, asked of the verdict on `sha` (the
+     * head its mark names, by which the page tells the ask is of the verdict it shows); "forget" — not to be removed
+     * (it was, or the person no longer wants it); "claim" — a page is about to remove it ({ claimed }: false when
+     * another page is at it, or it failed before); "fail" { problem } — it could not be removed, and why.
      */
     async cleanup(params) {
       if (!cleanups) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
@@ -97,7 +110,7 @@ export default defineDaemonPlugin({
       switch (p.action) {
         case "follow": {
           if (!CLEANUP_KINDS.includes(p.kind as CleanupKind)) throw new PluginError("頼んだことの指定が正しくありません。");
-          await cleanups.follow(repo, number, p.kind as CleanupKind);
+          await cleanups.follow(repo, number, p.kind as CleanupKind, shaArg(p.sha));
           return { ok: true };
         }
         case "forget":
@@ -114,10 +127,38 @@ export default defineDaemonPlugin({
           throw new PluginError("片付けの指定が正しくありません。");
       }
     },
-    /** Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed). */
+    /**
+     * The session { sessionId } a review is sent to (review-session.ts), by `action`: "track" { repo, number, before? } —
+     * remove it once the review is posted; "forget" — not to be removed; "claim" — a page is about to remove it
+     * ({ claimed }: false when another page is at it).
+     */
+    async reviewSession(params) {
+      if (!removals) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
+      const p = objArg(params);
+      if (typeof p.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(p.sessionId)) throw new PluginError("セッションの指定が正しくありません。");
+      switch (p.action) {
+        case "track": {
+          if (p.before !== undefined && (typeof p.before !== "string" || p.before.length > 500)) throw new PluginError("レビューの結果のコメントの指定が正しくありません。");
+          await removals.track(p.sessionId, repoArg(p.repo), numberArg(p.number), p.before);
+          return { ok: true };
+        }
+        case "forget":
+          await removals.forget(p.sessionId);
+          return { ok: true };
+        case "claim":
+          return { claimed: await removals.claim(p.sessionId) };
+        default:
+          throw new PluginError("セッションの削除の指定が正しくありません。");
+      }
+    },
+    /**
+     * Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed);
+     * a worktree of any other name only when "マージしてもらう" asked for it to be cleaned up.
+     */
     async remove(params, ctx) {
       const { clone, head } = await target(params, ctx);
-      return removeWorktree(ctx.exec, clone, head);
+      const asked = await cleanups?.get(repoArg(objArg(params).repo), head.number);
+      return removeWorktree(ctx.exec, clone, head, { anyName: asked?.kind === "merge" });
     },
   },
 });

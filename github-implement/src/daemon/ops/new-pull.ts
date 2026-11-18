@@ -2,7 +2,8 @@
 // Whether the branch is on GitHub (gh only makes a pull request of a pushed branch), the branches it can go into, the
 // repository's pull request templates, and how the branch stands against the base (the default branch when no base is
 // given). When the call names a session in the worktree, also its HEAD against the branch on GitHub: the commits not
-// pushed yet. One GraphQL query, and one more for the comparison when the branch is on GitHub.
+// pushed yet. One GraphQL query, one more per 100 branches past the first 100 (BRANCH_PAGES), and one for the
+// comparison when the branch is on GitHub.
 import type { DaemonContext } from "@gasho/plugin-sdk/daemon";
 import type { NewPull } from "../../types.ts";
 import { gh, maxAge, type Ctx } from "../core.ts";
@@ -13,7 +14,7 @@ declare module "../../types.ts" {
   /** What the form for a new pull request starts from (ops/new-pull.ts). */
   interface NewPull {
     defaultBranch?: string;
-    /** What it can go into: the default branch first, then the branches with the latest commits (100 at most), never the branch itself. */
+    /** What it can go into: the default branch first, then the branches by their latest commits, newest first (100 at most), never the branch itself. */
     branches: string[];
     /** The latest commit of the branch on GitHub; absent when it is not pushed. */
     headOid?: string;
@@ -39,13 +40,45 @@ declare module "../../types.ts" {
 
 const OID = /^[0-9a-f]{40}$/;
 
+/**
+ * Branches are read 100 a query, this many queries at most (1 point each). GitHub orders refs by commit date only for
+ * tags, so all of them are read by name and put in order here; past 1000, the newest of the first 1000 by name.
+ */
+export const BRANCH_PAGES = 10;
+const CANDIDATES_MAX = 100;
+const refsOf = (after: string) => `refs(refPrefix: "refs/heads/", first: 100${after}, orderBy: {field: ALPHABETICAL, direction: ASC}) { pageInfo { hasNextPage endCursor } nodes { name target { ... on Commit { committedDate } } } }`;
+
 export function newPullArgs(repo: string, branch: string): string[] {
   const [owner, name] = repo.split("/") as [string, string];
   const query =
     "query($owner: String!, $name: String!, $head: String!) { repository(owner: $owner, name: $name) { " +
-    "defaultBranchRef { name } head: ref(qualifiedName: $head) { target { oid } } pullRequestTemplates { filename body } " +
-    'refs(refPrefix: "refs/heads/", first: 100, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) { nodes { name } } } }';
+    `defaultBranchRef { name } head: ref(qualifiedName: $head) { target { oid } } pullRequestTemplates { filename body } ${refsOf("")} } }`;
   return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `head=refs/heads/${branch}`];
+}
+
+/** The branches after `after` (the endCursor of the page before). */
+export function branchPageArgs(repo: string, after: string): string[] {
+  const [owner, name] = repo.split("/") as [string, string];
+  const query = `query($owner: String!, $name: String!, $after: String!) { repository(owner: $owner, name: $name) { ${refsOf(", after: $after")} } }`;
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `after=${after}`];
+}
+
+/** A branch and when its latest commit was made ("" when GitHub did not say). */
+export interface BranchRef {
+  name: string;
+  at: string;
+}
+
+/** The branches of the output of newPullArgs or branchPageArgs, and the cursor of the next page when there is one. */
+export function parseBranchPage(json: string): { refs: BranchRef[]; next?: string } {
+  const refs = repository(json)?.refs as { nodes?: unknown[]; pageInfo?: { hasNextPage?: unknown; endCursor?: unknown } } | null | undefined;
+  const nodes = (refs?.nodes ?? []).flatMap((n): BranchRef[] => {
+    const r = (n ?? {}) as Record<string, unknown>;
+    const name = str(r.name);
+    return name ? [{ name, at: str((r.target as Record<string, unknown> | null)?.committedDate) ?? "" }] : [];
+  });
+  const next = refs?.pageInfo?.hasNextPage === true ? str(refs.pageInfo.endCursor) : undefined;
+  return { refs: nodes, ...(next ? { next } : {}) };
 }
 
 /** The commits `branch` has and `base` does not. Only for a branch on GitHub: GitHub fails the query for one it does not have. */
@@ -63,12 +96,14 @@ const repository = (json: string): Repository => (JSON.parse(json) as { data?: {
 /** GitHub's default template is pull_request_template.md (in the root, .github/ or docs/); more are in a folder of that name. */
 const DEFAULT_TEMPLATE = /^pull_request_template\.md$/i;
 
-export function parseNewPull(json: string, branch: string): NewPull {
+/** The output of newPullArgs; `refs`: every branch read, of it and of the pages after it. */
+export function parseNewPull(json: string, branch: string, refs: BranchRef[] = parseBranchPage(json).refs): NewPull {
   const r = repository(json) ?? {};
   const defaultBranch = str((r.defaultBranchRef as Record<string, unknown> | null)?.name);
   const oid = str(((r.head as Record<string, unknown> | null)?.target as Record<string, unknown> | null)?.oid);
-  const names = (((r.refs as { nodes?: unknown[] } | null)?.nodes ?? []) as unknown[]).flatMap((n) => str((n as Record<string, unknown> | null)?.name) ?? []);
-  const branches = [...new Set([...(defaultBranch ? [defaultBranch] : []), ...names])].filter((b) => b !== branch);
+  // ISO 8601 in UTC, as GitHub gives them, sort as text.
+  const names = [...refs].sort((a, b) => b.at.localeCompare(a.at)).map((b) => b.name);
+  const branches = [...new Set([...(defaultBranch ? [defaultBranch] : []), ...names])].filter((b) => b !== branch).slice(0, CANDIDATES_MAX);
   const templates = (Array.isArray(r.pullRequestTemplates) ? r.pullRequestTemplates : [])
     .flatMap((t: Record<string, unknown> | null) => {
       const filename = str(t?.filename);
@@ -128,7 +163,15 @@ export default {
     if (!branch) return { branches: [], templates: [] } satisfies NewPull;
     const given = branchArg(p.base);
     const age = maxAge(p);
-    const pull = parseNewPull(await gh("read the branches", () => read(ctx, repo, newPullArgs(repo, branch), age), ctx), branch);
+    const first = await gh("read the branches", () => read(ctx, repo, newPullArgs(repo, branch), age), ctx);
+    let page = parseBranchPage(first);
+    const refs = [...page.refs];
+    for (let n = 1; page.next && n < BRANCH_PAGES; n++) {
+      const after = page.next;
+      page = parseBranchPage(await gh("read the branches", () => read(ctx, repo, branchPageArgs(repo, after), age), ctx));
+      refs.push(...page.refs);
+    }
+    const pull = parseNewPull(first, branch, refs);
     const base = given ?? pull.defaultBranch;
     const oid = pull.headOid;
     if (!oid) return pull;

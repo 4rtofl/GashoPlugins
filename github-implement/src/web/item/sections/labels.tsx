@@ -1,9 +1,12 @@
 // The labels, each a Badge in its color with an ×, and a list of the repository's labels with a box that narrows it by
 // name. Several are checked and unchecked in a row, and go to GitHub in one edit when the list closes, as on GitHub. A
 // name no label has can be made a new label with a color, and put on at once. An Undo Toast can put each change back.
+// A repository with more labels than "meta" reads has what is typed looked up on GitHub too (the operation "labels"),
+// and a name is offered as new only once GitHub has not found it.
 import { Check, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { cn, Popover, useRequest } from "@gasho/plugin-sdk";
+import type { FoundLabels } from "../../../daemon/ops/labels.ts";
 import type { RepoMeta } from "../../../types.ts";
 import { readOp, useWriteOp } from "../../daemon.ts";
 import { Badge } from "../../ui/badge.tsx";
@@ -11,6 +14,7 @@ import { Button } from "../../ui/button.tsx";
 import { isComposing } from "../../ui/input.ts";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
+import { useSettled } from "../picker.tsx";
 import { Row } from "../row.tsx";
 
 type Label = RepoMeta["labels"][number];
@@ -51,13 +55,13 @@ function Labels() {
         </Badge>
       ))}
       {item.labels.length === 0 && <span className="text-muted-foreground">なし</span>}
-      <LabelMenu labels={meta.data?.labels} error={meta.error} reload={meta.reload} disabled={busy !== undefined} />
+      <LabelMenu labels={meta.data?.labels} more={meta.data?.labelsMore === true} error={meta.error} reload={meta.reload} disabled={busy !== undefined} />
     </Row>
   );
 }
 
-function LabelMenu({ labels, error, reload, disabled }: { labels?: Label[]; error?: string; reload: () => void; disabled: boolean }) {
-  const { item, where, run } = useItem();
+function LabelMenu({ labels, more, error, reload, disabled }: { labels?: Label[]; more: boolean; error?: string; reload: () => void; disabled: boolean }) {
+  const { machine, item, where, run } = useItem();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   // Checked (true) or unchecked (false) since the list opened.
@@ -102,9 +106,16 @@ function LabelMenu({ labels, error, reload, disabled }: { labels?: Label[]; erro
   };
 
   const q = query.trim().toLowerCase();
+  const asked = useSettled(query, open && more);
+  const found = useRequest<FoundLabels>(more && open && asked ? readOp(machine, "labels", { repo: where.repo, query: asked }) : undefined, { staleSeconds: 30 });
+  // Only what GitHub found of what is typed now.
+  const searched = more && asked !== "" && asked.toLowerCase() === q ? found.data : undefined;
+  const searching = more && q !== "" && searched === undefined && !found.error;
   const all = labels && [...first, ...labels.filter((l) => !first.some((f) => f.name === l.name))];
-  const shown = all?.filter((l) => !q || l.name.toLowerCase().includes(q));
-  const canMake = labels !== undefined && q !== "" && !labels.some((l) => l.name.toLowerCase() === q);
+  // GitHub also finds labels by a word of their descriptions: those stay though their names do not have it.
+  const shown = all && [...all.filter((l) => !q || l.name.toLowerCase().includes(q)), ...(searched?.labels.filter((l) => !all.some((a) => a.name === l.name)) ?? [])];
+  const known = (name: string) => [...(labels ?? []), ...(searched?.labels ?? [])].some((l) => l.name.toLowerCase() === name.trim().toLowerCase());
+  const canMake = labels !== undefined && q !== "" && !known(q) && (!more || (searched !== undefined && !searched.more));
   const startMaking = () => setMaking({ name: query.trim(), color: COLORS[Math.floor(Math.random() * COLORS.length)] ?? "ededed", description: "" });
   const changes = adding.length + removing.length;
 
@@ -128,7 +139,7 @@ function LabelMenu({ labels, error, reload, disabled }: { labels?: Label[]; erro
         <NewLabelForm
           draft={making}
           onChange={setMaking}
-          taken={labels?.some((l) => l.name.toLowerCase() === making.name.trim().toLowerCase()) ?? false}
+          taken={known(making.name)}
           onBack={() => setMaking(undefined)}
           onMade={(name) => {
             reload();
@@ -155,7 +166,8 @@ function LabelMenu({ labels, error, reload, disabled }: { labels?: Label[]; erro
           <div className="max-h-64 overflow-y-auto" role="group" aria-label="ラベル">
             {error && <p className="px-2 py-1.5 text-xs text-red-500 dark:text-red-400">{error}</p>}
             {!labels && !error && <p className="px-2 py-1.5 text-xs text-muted-foreground">読み込み中…</p>}
-            {labels && shown?.length === 0 && !canMake && <p className="px-2 py-1.5 text-xs text-muted-foreground">{q ? `「${query}」に合うラベルがありません。` : "ラベルがありません。"}</p>}
+            {found.error && <p className="px-2 py-1.5 text-xs text-red-500 dark:text-red-400">GitHub で探せませんでした：{found.error}</p>}
+            {labels && shown?.length === 0 && !canMake && !searching && <p className="px-2 py-1.5 text-xs text-muted-foreground">{q ? `「${query}」に合うラベルがありません。` : "ラベルがありません。"}</p>}
             {shown?.map((l) => {
               const on = isOn(l.name);
               return (
@@ -180,6 +192,8 @@ function LabelMenu({ labels, error, reload, disabled }: { labels?: Label[]; erro
                 <span className="min-w-0 truncate">「{query.trim()}」を新しく作る</span>
               </button>
             )}
+            {searching && <p className="px-2 py-1.5 text-xs text-muted-foreground">GitHub で探しています…</p>}
+            {more && !searching && (q === "" || searched?.more) && <p className="px-2 py-1.5 text-xs text-muted-foreground">ほかにもあります。名前で探してください。</p>}
           </div>
           {changes > 0 && (
             <div className="mt-1 flex items-center justify-between gap-2 border-t border-border px-1 pt-1.5">

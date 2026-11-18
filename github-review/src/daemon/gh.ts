@@ -167,7 +167,7 @@ function searchResult(v: unknown): { prs: ParsedPr[]; more: number } | undefined
 }
 
 /**
- * The answer of listArgs' query. GitHub answers what it can and lists the rest in `errors` (a review-<number> folder
+ * The answer of listArgs' query. GitHub answers what it can and lists the rest in `errors` (a review worktree
  * whose number is no pull request, say); gh then fails, with the answer on its output.
  */
 export function parseList(json: string, p: { watched: number; lookups: Lookup[] }): ListAnswer {

@@ -5,7 +5,7 @@
 import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
 import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
-import { readOp } from "../daemon.ts";
+import { readOp, useFreshReload } from "../daemon.ts";
 import { itemsTarget, useRefreshOptions } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
 import { Button, buttonClass } from "../ui/button.tsx";
@@ -51,6 +51,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
     r.reload();
     tabs.reload();
   });
+  const reload = useFreshReload(machine.id, repo, changes.changed);
   // Not before the read: what GitHub changed since the clock last ticked would read as "in 1 minute".
   const now = Math.max(clock, r.at ?? 0);
   const item = r.data;
@@ -68,7 +69,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
               GitHub <ExternalLink />
             </a>
           )}
-          <Button variant="ghost" size="icon" onClick={r.reload} disabled={r.loading || !where || !daemon.ready} aria-label="再読み込み" title="再読み込み">
+          <Button variant="ghost" size="icon" onClick={reload} disabled={r.loading || !where || !daemon.ready} aria-label="再読み込み" title="再読み込み">
             <RefreshCw className={cn(r.loading && "animate-spin")} />
           </Button>
         </div>
@@ -81,7 +82,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
         <Alert
           tone="danger"
           action={
-            <Button size="xs" onClick={r.reload} isLoading={r.loading}>
+            <Button size="xs" onClick={reload} isLoading={r.loading}>
               読み直す
             </Button>
           }
@@ -91,7 +92,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
       )}
       {!item && r.loading && <DetailSkeleton />}
       {item && where && (
-        <ItemProvider value={{ machine: machine.id, machineInfo: machine, worktree, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision }}>
+        <ItemProvider value={{ machine: machine.id, machineInfo: machine, worktree, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision, reload }}>
           <Detail />
           <ItemPalette worktree={worktree} />
         </ItemProvider>

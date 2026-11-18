@@ -72,3 +72,9 @@ test("pull requests based on each other end the parents instead of going round",
   assert.deepEqual(numbers(s.parents), [2]);
   assert.deepEqual(s.root, { name: "a" });
 });
+
+test("a pull request from a fork has no count of commits behind: GitHub compares a branch of the base's repository", () => {
+  // A branch of the same name as the fork's head is not the head.
+  const json = answer({ pullRequest: { isCrossRepository: true }, baseRef: { name: "main", compare: { behindBy: 40 } }, parent: { nodes: [] } });
+  assert.deepEqual(parseStack(json, 3, "main").base, { name: "main" });
+});
