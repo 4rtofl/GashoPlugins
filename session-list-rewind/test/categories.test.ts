@@ -107,6 +107,25 @@ test("a registered repository without a session has its category after the other
   assert.equal(got[1]!.launch, daichoo.key);
 });
 
+test("headings of the same name on a working server tell the folder they are in", () => {
+  // A session in the folder that holds the repository GashoPlugins and its worktrees (not a repository itself).
+  const container = worktree(mac, "/u/Project/GashoPlugins");
+  const inner = worktree(mac, "/u/Project/GashoPlugins/GashoPlugins", { repo: "/u/Project/GashoPlugins/GashoPlugins", branch: "main", repoName: "GashoPlugins" });
+  const got = categories(context([mac], [container, inner, gasho], [["a", container, 3], ["b", inner, 2], ["c", gasho, 1]]));
+  assert.deepEqual(
+    got.map((c) => `${c.title} ${c.description ?? "-"}`),
+    ["GashoPlugins …/Project", "GashoPlugins …/GashoPlugins", "Gasho -"],
+  );
+
+  // On two working servers, the server's name comes first; the same name on another server is told by it alone.
+  const ubuntu = machine("ubuntu");
+  const there = worktree(ubuntu, "/u/Project/GashoPlugins/GashoPlugins", { repo: "/u/Project/GashoPlugins/GashoPlugins", repoName: "GashoPlugins" });
+  assert.deepEqual(
+    categories(context([mac, ubuntu], [container, inner, there], [["a", container, 3], ["b", inner, 2], ["c", there, 1]])).map((c) => c.description),
+    ["mac · …/Project", "mac · …/GashoPlugins", "ubuntu"],
+  );
+});
+
 test("no session and nothing registered: no category", () => {
   assert.deepEqual(categories(context([mac], [], [])), []);
 });

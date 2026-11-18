@@ -4,7 +4,7 @@ import type { Transition } from "framer-motion";
 
 /** The surface of every tile on Gasho's home screen (components/ui/stat-card.tsx). */
 export const TILE =
-  "min-w-0 rounded-2xl bg-white text-neutral-700 ring-1 ring-black/[0.07] dark:bg-[#0b0b0c] dark:text-neutral-300 dark:ring-white/[0.07]";
+  "min-w-0 rounded-2xl bg-white text-neutral-700 ring-1 ring-black/[0.07] dark:bg-background dark:text-neutral-300 dark:ring-white/[0.07]";
 export const TILE_SHADOW = "0 1px 2px rgba(0,0,0,0.04), 0 18px 36px -28px rgba(0,0,0,0.2)";
 
 /** Gasho's dialogs (components/dialog-styles.ts): a dimmed backdrop and a centred panel that scrolls when too tall. */

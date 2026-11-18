@@ -599,7 +599,7 @@ function Column({
             <CardSkeleton />
           </>
         ) : rows.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-black/[0.08] px-3 py-5 text-center text-xs text-neutral-500 dark:border-white/[0.06] dark:text-neutral-600">なし</p>
+          <p className="rounded-xl border border-dashed border-black/[0.08] px-3 py-5 text-center text-xs text-neutral-500 dark:border-white/[0.06]">なし</p>
         ) : (
           <AnimatePresence initial={false} mode="popLayout">
             {shown.map((row) => (
@@ -818,7 +818,7 @@ function ModeSwitch({ id, label, compact, onChange }: { id: KanbanColumn; label:
 function ColumnTabs({ value, onChange, count }: { value: KanbanColumn; onChange: (id: KanbanColumn) => void; count: (id: KanbanColumn) => number }) {
   return (
     <div className="scrollbar-none -mx-4 overflow-x-auto px-4">
-      <div role="tablist" aria-label="列" className="inline-flex gap-1 rounded-full border border-border bg-surface-raised p-1 dark:border-[#1F1F1F] dark:bg-[#0E0E0E]">
+      <div role="tablist" aria-label="列" className="inline-flex gap-1 rounded-full border border-border bg-surface-raised p-1 dark:border-neutral-800 dark:bg-neutral-950">
         {KANBAN_COLUMNS.map((c) => {
           const active = c.id === value;
           return (
@@ -837,7 +837,7 @@ function ColumnTabs({ value, onChange, count }: { value: KanbanColumn; onChange:
                 <motion.span
                   layoutId="kanban-column-tab"
                   transition={motionTransitions.springMorph}
-                  className="absolute inset-0 rounded-full border border-border-hover bg-surface shadow-xs dark:border-[#1F1F1F] dark:bg-[#141414]"
+                  className="absolute inset-0 rounded-full border border-border-hover bg-surface shadow-xs dark:border-neutral-800 dark:bg-neutral-900"
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">

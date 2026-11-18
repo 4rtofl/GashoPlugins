@@ -26,7 +26,7 @@ function worktree(path: string, sessions: SessionStatus[], m = machine("mac")): 
 
 const shown = (cs: ReturnType<typeof statusCategories>) => cs.map((c) => `${c.title}: ${c.worktrees.map((w) => w.key.split("\u001f")[1]).join(",")}`);
 
-test("the worktrees go in 確認待ち, 作業中, 待機中, オフライン and セッションなし, in that order, and empty ones are left out", () => {
+test("the worktrees go in 確認待ち, 作業中, 待機中, オフライン and セッションなし, in that order", () => {
   const offline = machine("pc", false);
   const ctx: WorktreeListContext = {
     machines: [machine("mac"), offline],
@@ -58,10 +58,14 @@ test("the worktrees go in 確認待ち, 作業中, 待機中, オフライン an
   assert.ok(got.every((c) => c.worktrees.every((w) => !("description" in w))));
   assert.ok(got.every((c) => c.hint && !c.launch));
 
-  // Nothing waits and nothing is offline: those categories are not there.
+  // Nothing waits and nothing is offline: those categories are still there, as headings alone. Gasho keeps the order
+  // dragged into only for the categories shown then, and would put them first when a worktree comes in.
   assert.deepEqual(shown(statusCategories({ machines: ctx.machines, worktrees: [worktree("/repos/b", ["idle"]), worktree("/repos/d", ["busy"])] })), [
+    "確認待ち: ",
     "作業中: /repos/d",
     "待機中: /repos/b",
+    "オフライン: ",
+    "セッションなし: ",
   ]);
   assert.deepEqual(statusCategories({ machines: ctx.machines, worktrees: [] }), []);
 });

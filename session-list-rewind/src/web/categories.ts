@@ -2,19 +2,31 @@
 // one per folder for the sessions outside a repository (Gasho's docs/plugins.md, P17). The sessions come the one used
 // last first, so the categories come out in the order they were last used, and the sessions in each too. Gasho draws
 // them, and puts over this order the one the person dragged things into.
-import type { SessionCategory, SessionListContext, SessionListWorktree } from "@gasho/plugin-sdk";
+import type { MachineInfo, SessionCategory, SessionListContext, SessionListWorktree } from "@gasho/plugin-sdk";
 
 const basename = (path: string) => path.split("/").filter(Boolean).pop() ?? path;
 
 /** A worktree's name under a session: its branch, or its folder's name (HEAD detached, or outside a repository). */
 const worktreeName = (w: SessionListWorktree) => w.branch ?? basename(w.path);
 
+/**
+ * For folders of the same name, the end of the path of the folder each is in, as far up as it takes to tell them apart:
+ * …/Project and …/GashoPlugins for /u/Project/GashoPlugins and /u/Project/GashoPlugins/GashoPlugins.
+ */
+function parentLabels(folders: readonly string[]): string[] {
+  const parents = folders.map((f) => f.split("/").filter(Boolean).slice(0, -1));
+  for (let n = 1; ; n++) {
+    const labels = parents.map((p) => (n >= p.length ? `/${p.join("/")}` : `…/${p.slice(-n).join("/")}`));
+    if (new Set(labels).size === labels.length || parents.every((p) => n >= p.length)) return labels;
+  }
+}
+
 interface Category {
   id: string;
+  machine: MachineInfo;
   /** The repository's folder (of its main worktree), or the folder outside a repository. */
   folder: string;
   title: string;
-  description?: string;
   hint: string;
   /** Its worktrees, the one of the session used last first. */
   worktrees: SessionListWorktree[];
@@ -34,9 +46,9 @@ export function categories(ctx: SessionListContext): SessionCategory[] {
     if (!c) {
       c = {
         id,
+        machine: w.machine,
         folder,
         title: w.repoName ?? basename(folder),
-        ...(several ? { description: w.machine.name } : {}),
         hint: `${w.machine.name} · ${folder}`,
         worktrees: [],
         sessions: [],
@@ -53,8 +65,24 @@ export function categories(ctx: SessionListContext): SessionCategory[] {
   }
   // A repository registered with its working server has its category even without a session, for its "＋".
   for (const w of ctx.worktrees) if (w.registered) categoryOf(w);
+  const categories = [...byId.values()];
 
-  return [...byId.values()].map((c) => {
+  // Headings of the same name on a working server (a folder outside a repository and the repository in it, a fork and
+  // its upstream in two clones) tell the folder they are in, shown even on a phone, where the hint is not.
+  const sameName = new Map<string, Category[]>();
+  for (const c of categories) {
+    const k = `${c.machine.id}\u001f${c.title}`;
+    sameName.set(k, [...(sameName.get(k) ?? []), c]);
+  }
+  const where = new Map<string, string>();
+  for (const cs of sameName.values()) {
+    if (cs.length < 2) continue;
+    const labels = parentLabels(cs.map((c) => c.folder));
+    cs.forEach((c, i) => where.set(c.id, labels[i]!));
+  }
+
+  return categories.map((c) => {
+    const description = [several ? c.machine.name : undefined, where.get(c.id)].filter(Boolean).join(" · ");
     // The worktree a session is in is told only when they are not all in one.
     const spread = new Set(c.sessions.map((s) => s.worktree.key)).size > 1;
     // "＋" starts in the repository's main worktree; without it here (a bare repository), in the one used last.
@@ -62,7 +90,7 @@ export function categories(ctx: SessionListContext): SessionCategory[] {
     return {
       id: c.id,
       title: c.title,
-      ...(c.description ? { description: c.description } : {}),
+      ...(description ? { description } : {}),
       hint: c.hint,
       ...(launch ? { launch: launch.key } : {}),
       sessions: c.sessions.map((s) => ({
