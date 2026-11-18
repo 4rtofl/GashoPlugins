@@ -147,6 +147,24 @@ test("create: when the effort level could not be switched, it says why and stays
   assert.deepEqual(f.opened, ["m1/s-new"]);
 });
 
+test("create: while the person is asked to trust the folder, the notice hides; it is back once they say yes", async () => {
+  const f = fake();
+  let asked = 0;
+  const launch = f.tools.launch;
+  f.tools.launch = (async (input: Parameters<Tools["launch"]>[0]) =>
+    input.trust ? launch(input) : { ok: false, error: "信頼されていません", needsTrust: true, trustWarnings: [] }) as Tools["launch"];
+  f.tools.actions.askTrust = async () => {
+    asked += 1;
+    return true;
+  };
+  await createWorktree(f.item, f.spot, undefined, f.tools);
+  assert.equal(asked, 1);
+  assert.deepEqual(
+    f.notices.map((n) => n?.text ?? null),
+    ["#5 のレビュー用の worktree を作っています…", "review-5 でセッションを起動しています…", null, "review-5 でセッションを起動しています…", "#5 のセッションを起動しました。"],
+  );
+});
+
 test("follow: what may be removed is kept; any other ask forgets the one before it", async () => {
   const asked = async (kind: CleanupKind, cleanup: boolean, worktree: { path: string; review: boolean }) => {
     const f = fake();
