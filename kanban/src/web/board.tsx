@@ -117,7 +117,7 @@ function BoardSource({ machine, refreshAsk, onChange }: { machine: MachineInfo; 
   const call = useCall();
   const { reload } = r;
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string>();
+  const [refreshError, setRefreshError] = useState<{ error: string; at: number }>();
   const asked = useRef(refreshAsk);
   useEffect(() => {
     if (refreshAsk === asked.current || !on) return;
@@ -127,7 +127,11 @@ function BoardSource({ machine, refreshAsk, onChange }: { machine: MachineInfo; 
     void call<Board>({ machine: machine.id, method: "refresh" }).then((res) => {
       if (!live) return;
       setRefreshing(false);
-      setRefreshError(res.ok ? undefined : res.error);
+      if (!res.ok) {
+        setRefreshError({ error: res.error, at: Date.now() });
+        return;
+      }
+      setRefreshError(undefined);
       reload();
     });
     return () => {
@@ -135,7 +139,9 @@ function BoardSource({ machine, refreshAsk, onChange }: { machine: MachineInfo; 
     };
   }, [refreshAsk]);
 
-  const error = refreshError ?? r.error ?? set.error;
+  // A failed "今すぐ見直す" shows until the board is read after it.
+  const refreshFailed = refreshError && !((r.at ?? 0) > refreshError.at) ? refreshError.error : undefined;
+  const error = refreshFailed ?? r.error ?? set.error;
   useEffect(() => {
     onChange(machine.id, {
       ready: on,
@@ -210,6 +216,8 @@ export function KanbanPage(_: PageProps) {
   const byColumn = (id: KanbanColumn) => cards.filter((c) => c.card.column === id);
   // An offline working server that watched repositories keeps the board, empty, rather than asking to choose some.
   const showBoard = watched > 0 || pending || offline.length > 0;
+  // No working server has answered yet: what they watch is not known, so neither a board nor the request to choose shows.
+  const firstLoad = pending && boards.length === 0;
 
   const counts = JSON.stringify(Object.fromEntries(boards.map((b) => [b.machine.id, b.board.watched.length])));
   useEffect(() => {
@@ -292,9 +300,7 @@ export function KanbanPage(_: PageProps) {
           <header className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold tracking-tight">カンバン</h1>
-              <p className="text-sm text-muted-foreground">
-                {watched} 個の repo・{cards.length} 枚のカード
-              </p>
+              <p className="text-sm text-muted-foreground">{firstLoad ? "読み込み中…" : `${watched} 個の repo・${cards.length} 枚のカード`}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {watched > 0 && (
@@ -428,7 +434,9 @@ export function KanbanPage(_: PageProps) {
             </Alert>
           )}
 
-          {!showBoard ? (
+          {firstLoad ? (
+            <FirstLoad />
+          ) : !showBoard ? (
             <EmptyState canChoose={ready.length > 0} onChoose={() => setChoosing(true)} />
           ) : wide ? (
             <LayoutGroup>
@@ -853,6 +861,15 @@ function ColumnTabs({ value, onChange, count }: { value: KanbanColumn; onChange:
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function FirstLoad() {
+  return (
+    <div role="status" className={cn(TILE, "flex items-center justify-center gap-2 px-6 py-12 text-sm text-muted-foreground")} style={{ boxShadow: TILE_SHADOW }}>
+      <LoaderCircle className="size-4 motion-safe:animate-spin" />
+      working server からカンバンを読み込んでいます…
     </div>
   );
 }

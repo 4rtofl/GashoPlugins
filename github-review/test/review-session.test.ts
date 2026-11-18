@@ -102,4 +102,6 @@ test("list: names only the sessions whose own review is posted", async () => {
   const reviewer = new Reviewer({ exec, folders: () => [primary], file: path.join(root, "watched.json"), log: () => undefined, now: () => SENT, removals });
   const listing = await reviewer.list(github, "", false);
   assert.deepEqual(Object.fromEntries(listing.requested.map((p) => [p.number, p.place?.finishedSessions])), { 5: ["posted"], 6: undefined, 7: undefined });
+  // Every session sent its review, whether it has posted it or not.
+  assert.deepEqual(Object.fromEntries(listing.requested.map((p) => [p.number, p.place?.reviewSessions])), { 5: ["posted"], 6: ["earlier"], 7: ["other"] });
 });

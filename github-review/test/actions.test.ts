@@ -53,6 +53,7 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
       askRemove: async () => true,
       askAgentFor: async () => ({ cleanup: true }),
       reload: () => {},
+      refresh: async () => {},
     },
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };
@@ -65,7 +66,7 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.deepEqual(f.launched, [DIR]);
   assert.equal(f.sent.length, 1);
   assert.match(f.sent[0] ?? "", /^s-new: #5 をレビュー\n/);
-  assert.deepEqual(f.efforts, ["xhigh"]);
+  assert.deepEqual(f.efforts, ["high"]);
   assert.deepEqual(f.opened, []);
   const n = f.last();
   assert.equal(n?.text, "#5 のセッションを起動し、「レビューする」を送りました。");
@@ -146,6 +147,24 @@ test("create: when the effort level could not be switched, it says why and stays
   assert.deepEqual(f.opened, ["m1/s-new"]);
 });
 
+test("create: while the person is asked to trust the folder, the notice hides; it is back once they say yes", async () => {
+  const f = fake();
+  let asked = 0;
+  const launch = f.tools.launch;
+  f.tools.launch = (async (input: Parameters<Tools["launch"]>[0]) =>
+    input.trust ? launch(input) : { ok: false, error: "信頼されていません", needsTrust: true, trustWarnings: [] }) as Tools["launch"];
+  f.tools.actions.askTrust = async () => {
+    asked += 1;
+    return true;
+  };
+  await createWorktree(f.item, f.spot, undefined, f.tools);
+  assert.equal(asked, 1);
+  assert.deepEqual(
+    f.notices.map((n) => n?.text ?? null),
+    ["#5 のレビュー用の worktree を作っています…", "review-5 でセッションを起動しています…", null, "review-5 でセッションを起動しています…", "#5 のセッションを起動しました。"],
+  );
+});
+
 test("follow: what may be removed is kept; any other ask forgets the one before it", async () => {
   const asked = async (kind: CleanupKind, cleanup: boolean, worktree: { path: string; review: boolean }) => {
     const f = fake();
@@ -217,4 +236,31 @@ test("a session that cannot be removed stays, says why, and is not tried again",
   assert.deepEqual(f.steps, ["reviewSession:claim", "reviewSession:forget"]);
   assert.equal(f.last()?.tone, "danger");
   assert.match(f.last()?.text ?? "", /削除できません/);
+});
+
+test("reviewIn: tells whether the review went, also when the effort level could not be switched", async () => {
+  const template = { name: "レビューする", body: "x" };
+  const sent = fake();
+  assert.equal(await reviewIn(sent.item, sent.spot, template, sent.tools), true);
+  const warned = fake({ send: "warn" });
+  assert.equal(await reviewIn(warned.item, warned.spot, template, warned.tools), true);
+  assert.equal(warned.last()?.tone, "danger");
+  const failed = fake({ send: "fail" });
+  assert.equal(await reviewIn(failed.item, failed.spot, template, failed.tools), false);
+  const notStarted = fake({ launch: "fail" });
+  assert.equal(await reviewIn(notStarted.item, notStarted.spot, template, notStarted.tools), false);
+});
+
+test("createWorktree: tells whether a review went", async () => {
+  const template = { name: "レビューする", body: "x" };
+  const sent = fake();
+  assert.equal(await createWorktree(sent.item, sent.spot, template, sent.tools), true);
+  const warned = fake({ send: "warn" });
+  assert.equal(await createWorktree(warned.item, warned.spot, template, warned.tools), true);
+  const failed = fake({ send: "fail" });
+  assert.equal(await createWorktree(failed.item, failed.spot, template, failed.tools), false);
+  const none = fake();
+  assert.equal(await createWorktree(none.item, none.spot, undefined, none.tools), false);
+  const there = fake({ created: false });
+  assert.equal(await createWorktree(there.item, there.spot, template, there.tools), false);
 });

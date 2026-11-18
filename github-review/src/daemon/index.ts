@@ -32,6 +32,13 @@ function numberArg(v: unknown): number {
   return v;
 }
 
+/** A commit's SHA, whole or its start (a verdict's mark may hold either), in lower case; undefined when not given. */
+function shaArg(v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || !/^[0-9a-f]{7,40}$/i.test(v)) throw new PluginError("判定の commit の指定が正しくありません。");
+  return v.toLowerCase();
+}
+
 /** The pull request as GitHub has it now, and the clone of its repository here: never what the browser says of them. */
 async function target(params: unknown, ctx: DaemonContext) {
   const p = objArg(params);
@@ -94,9 +101,10 @@ export default defineDaemonPlugin({
     },
     /**
      * The review worktree of { repo, number } once what was asked of its Agent is done (cleanup.ts), by `action`:
-     * "follow" { kind } — remove it once `kind` ("merge" or "sendBack") is done; "forget" — not to be removed (it was,
-     * or the person no longer wants it); "claim" — a page is about to remove it ({ claimed }: false when another page
-     * is at it, or it failed before); "fail" { problem } — it could not be removed, and why.
+     * "follow" { kind, sha } — remove it once `kind` ("merge" or "sendBack") is done, asked of the verdict on `sha` (the
+     * head its mark names, by which the page tells the ask is of the verdict it shows); "forget" — not to be removed
+     * (it was, or the person no longer wants it); "claim" — a page is about to remove it ({ claimed }: false when
+     * another page is at it, or it failed before); "fail" { problem } — it could not be removed, and why.
      */
     async cleanup(params) {
       if (!cleanups) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
@@ -106,7 +114,7 @@ export default defineDaemonPlugin({
       switch (p.action) {
         case "follow": {
           if (!CLEANUP_KINDS.includes(p.kind as CleanupKind)) throw new PluginError("頼んだことの指定が正しくありません。");
-          await cleanups.follow(repo, number, p.kind as CleanupKind);
+          await cleanups.follow(repo, number, p.kind as CleanupKind, shaArg(p.sha));
           return { ok: true };
         }
         case "forget":
