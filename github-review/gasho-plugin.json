@@ -1,11 +1,11 @@
 {
   "id": "github-review",
   "name": "GitHub Review",
-  "version": "1.11.0",
-  "description": "レビューを頼まれた Pull request と、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
+  "version": "1.38.0",
+  "description": "レビューを頼まれた Pull request、自分の Pull request、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
   "genre": "workflow",
-  "api": "1.12",
-  "permissions": ["session.input", "session.launch", "worktree.remove"],
+  "api": "1.15",
+  "permissions": ["session.input", "session.launch", "session.remove", "worktree.remove", "session.notification"],
   "web": { "js": "web.js", "css": "web.css" },
   "daemon": { "js": "daemon.js" },
   "methods": {
@@ -14,8 +14,11 @@
     "detail": { "kind": "read", "timeoutSeconds": 30 },
     "watch": { "kind": "write", "timeoutSeconds": 60 },
     "create": { "kind": "write", "timeoutSeconds": 120 },
+    "projectFiles": { "kind": "read", "timeoutSeconds": 30 },
     "remove": { "kind": "write", "timeoutSeconds": 60 },
-    "cleanup": { "kind": "write", "timeoutSeconds": 30 }
+    "cleanup": { "kind": "write", "timeoutSeconds": 30 },
+    "reviewSession": { "kind": "write", "timeoutSeconds": 30 },
+    "trackReview": { "kind": "write", "timeoutSeconds": 15 }
   },
   "settings": {
     "templates": {

@@ -27,9 +27,11 @@ export interface PrWorktree {
   branch?: string;
   /**
    * review-<repository>-<number> (or review-<number>, the name before) beside the primary checkout: one made for the
-   * review, which "片付ける" removes.
+   * review, which "片付ける" removes. A worktree of another name is removed only when "マージしてもらう" asked for it.
    */
   review: boolean;
+  /** Its folder is gone, though git still has it: it does not open, and is made again or removed. */
+  missing?: boolean;
 }
 
 /**
@@ -38,6 +40,8 @@ export interface PrWorktree {
  */
 export interface Cleanup {
   kind: CleanupKind;
+  /** The head whose verdict it was asked of (the mark's sha); absent for one asked before github-review 1.17.0. */
+  sha?: string;
   /** The pull request was merged, or I requested changes on it, after it was asked. */
   done: boolean;
   /** Why it could not be removed (it is not tried again; "片付ける" still removes it). */
@@ -51,6 +55,10 @@ export interface Place {
   worktree?: PrWorktree;
   /** Its review worktree is to be removed once what was asked is done. */
   cleanup?: Cleanup;
+  /** The sessions sent its review that have posted the result: the page removes them once they are at rest. */
+  finishedSessions?: string[];
+  /** The sessions sent its review, posted or not: while one is at work, the page says the review is under way. */
+  reviewSessions?: string[];
 }
 
 export interface PrRow {
@@ -85,6 +93,8 @@ export interface PrRow {
   mark?: ReviewMark;
   /** When I last requested changes on it (ISO 8601). */
   changesRequestedAt?: string;
+  /** Where the search words put it in the upper part, the smaller first: the same on every working server. */
+  order?: number;
   /** Absent when this working server has no clone of its repository. */
   place?: Place;
 }
@@ -102,7 +112,7 @@ export interface RepoPrs {
 export interface Listing {
   /** The primary checkouts watched, as chosen. */
   watched: string[];
-  /** The open pull requests GitHub asks me to review (all of GitHub), narrowed by the search words. */
+  /** The pull requests GitHub asks me to review (all of GitHub) and those I opened in the watched repositories, narrowed by the search words. */
   requested: PrRow[];
   /** How many more GitHub found than `requested` holds. */
   requestedMore?: number;
@@ -119,6 +129,18 @@ export interface Created {
   /** False: it was there already (the page takes the session used last there, and sends nothing). */
   created: boolean;
   branch?: string;
+}
+
+/**
+ * What Claude Code reads from the top of a session's folder as it starts: the project's settings (hooks, commands,
+ * agents, skills…), its instructions, and its MCP servers.
+ */
+export const PROJECT_FILES = [".claude/", "CLAUDE.md", "CLAUDE.local.md", ".mcp.json"] as const;
+
+/** Which of PROJECT_FILES a review worktree has (the daemon's `projectFiles`). */
+export interface ProjectFiles {
+  path: string;
+  files: string[];
 }
 
 /** What "片付ける" removed. */
@@ -166,3 +188,5 @@ export const canPush = (pr: Pick<PrRow, "fork" | "own" | "canModify">): boolean 
 export const MAX_REPOS = 30;
 /** Search words, at most. */
 export const MAX_QUERY = 200;
+/** Pull requests read per search, and shown in the upper part. */
+export const SEARCH_LIMIT = 50;

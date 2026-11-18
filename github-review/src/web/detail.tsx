@@ -21,8 +21,9 @@ import {
 import type { CheckRunState, PrComment, PrDetail } from "../types.ts";
 import { askOf, withoutMark } from "../verdict.ts";
 import { progressOf, type Item } from "./actions";
+import { useAsked } from "./asked";
 import { DEFAULT_QUERY, useListings } from "./listing";
-import { AgentAsk, openedText, PROGRESS, ProgressBadge, ReviewMenu, RowContext, stateLook } from "./row";
+import { AgentAsk, openedText, PROGRESS, ProgressBadge, ReviewMenu, RowContext, stateLook, type OwnReading } from "./row";
 import { useRowShell } from "./shell";
 import { Alert, AlertDescription, Skeleton } from "./ui/parts";
 
@@ -89,17 +90,44 @@ function PrPanelOf({ repo, number, item, machine }: { repo: string; number: numb
   const now = Math.max(clock, r.at ?? 0);
   const d = r.data;
   const shown: Item | undefined =
-    item ?? (d ? { pr: (({ place: _, ...pr }) => pr)(d.pr), spots: d.pr.place ? [{ machine, primary: d.pr.place.primary, ...(d.pr.place.worktree ? { worktree: d.pr.place.worktree } : {}) }] : [] } : undefined);
+    item ?? (d ? { pr: (({ place: _, ...pr }) => pr)(d.pr), spots: d.pr.place ? [{ machine, primary: d.pr.place.primary, ...(d.pr.place.worktree ? { worktree: d.pr.place.worktree } : {}), ...(d.pr.place.reviewSessions ? { reviewSessions: d.pr.place.reviewSessions } : {}) }] : [] } : undefined);
   const pr = shown?.pr;
+  // Reads GitHub again; the detail asked for next gets what gasho-daemon kept of that.
+  const readFresh = async () => {
+    if (target) await call({ ...target, params: { repo, number, fresh: true } });
+  };
   const refresh = () => {
     if (!target) return;
     setRefreshing(true);
-    // Reads GitHub again; the detail asked for next gets what gasho-daemon kept of that.
-    void call({ ...target, params: { repo, number, fresh: true } }).finally(() => {
+    void readFresh().finally(() => {
       setRefreshing(false);
       r.reload();
     });
   };
+
+  // What was asked of it ended: what the panel read of it is from before that, so it is read from GitHub again. The
+  // lists may no longer hold it by then (merged, with its review worktree removed), and the panel goes by this alone.
+  const { rechecks } = useAsked();
+  const ended = pr ? rechecks.get(pr.url)?.ended : undefined;
+  const [afterEnd, setAfterEnd] = useState<{ ended: number; refreshed: number }>();
+  useEffect(() => {
+    if (ended === undefined || !target) return;
+    // The panel was opened after the end, and has read it since.
+    if (r.at !== undefined && r.at > ended) {
+      setAfterEnd({ ended, refreshed: ended });
+      return;
+    }
+    let live = true;
+    void readFresh().finally(() => {
+      if (!live) return;
+      setAfterEnd({ ended, refreshed: Date.now() });
+      r.reload();
+    });
+    return () => {
+      live = false;
+    };
+  }, [ended, target !== undefined]);
+  const reading: OwnReading | undefined = item ? undefined : { refreshed: afterEnd?.ended === ended ? afterEnd?.refreshed : undefined, at: r.at };
 
   return (
     <Panel
@@ -123,7 +151,7 @@ function PrPanelOf({ repo, number, item, machine }: { repo: string; number: numb
             <AlertDescription>{r.error}</AlertDescription>
           </Alert>
         )}
-        {shown && <Progress item={shown} now={now} />}
+        {shown && <Progress item={shown} now={now} reading={reading} />}
         {!d && r.loading && (
           <div className="space-y-2">
             <Skeleton className="h-4 w-2/3" />
@@ -147,12 +175,12 @@ function StateIcon({ pr }: { pr: Item["pr"] }) {
 }
 
 /** Where the review is, the button its verdict calls for, and "レビューする" on my own pull request. */
-function Progress({ item, now }: { item: Item; now: number }) {
+function Progress({ item, now, reading }: { item: Item; now: number; reading: OwnReading | undefined }) {
   const shared = useContext(RowContext);
   const { pr } = item;
   const progress = progressOf(item);
   const ask = askOf(pr, progress);
-  const placed = item.spots.some((s) => s.worktree);
+  const placed = item.spots.some((s) => s.worktree && !s.worktree.missing);
   return (
     <div className="space-y-2 rounded-xl border border-border bg-surface px-3 py-2.5">
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -168,8 +196,8 @@ function Progress({ item, now }: { item: Item; now: number }) {
       </div>
       {(ask || (pr.own && pr.state === "open")) && placed && shared && (
         <div className="flex flex-wrap items-center gap-2">
-          <AgentAsk item={item} />
-          <ReviewMenu item={item} />
+          <AgentAsk item={item} reading={reading} />
+          <ReviewMenu item={item} reading={reading} />
           {ask?.blocked && <span className="text-xs text-amber-700 dark:text-amber-300">{ask.blocked}</span>}
         </div>
       )}
