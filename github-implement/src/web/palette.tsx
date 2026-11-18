@@ -5,6 +5,7 @@ import { ExternalLink, ListPlus, RefreshCw, Search } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ComponentType, type KeyboardEvent } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { GitHubKind, WorktreeItems } from "../types.ts";
+import { useFreshReload } from "./daemon.ts";
 import { itemLook, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
 
 export interface PaletteCommand {
@@ -183,8 +184,9 @@ export function HomePalette({ machine, worktree }: { machine: string; worktree: 
   const r = useRequest<WorktreeItems>(itemsTarget(machine, worktree, daemon.ready), useRefreshOptions());
   const items = useWorktreeCommands(machine, worktree);
   const github = worktree.github;
+  const reload = useFreshReload(machine, github && `${github.owner}/${github.name}`, r.reload);
   const commands: PaletteCommand[] = [
-    { id: "reload", label: "再読み込み", icon: RefreshCw, keywords: "reload refresh", run: r.reload },
+    { id: "reload", label: "再読み込み", icon: RefreshCw, keywords: "reload refresh", run: reload },
     ...(github ? [{ id: "github", label: "GitHub でリポジトリを開く", icon: ExternalLink, keywords: "open browser", run: () => void window.open(github.url, "_blank", "noopener") }] : []),
   ];
   return (
