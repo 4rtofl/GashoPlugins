@@ -7,9 +7,10 @@ import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { pageItems } from "../src/items.ts";
 import { listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries } from "../src/daemon/gh.ts";
-import { createWorktree, prWorktree, readClone, removeWorktree, ReviewError, type Clone, type Exec } from "../src/daemon/git.ts";
+import { createWorktree, prWorktree, readClone, removeWorktree, ReviewError, reviewNumbers, type Clone, type Exec } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
-import { fillTemplate, parseTemplates } from "../src/template.ts";
+import { inOrder, openWords, repoWords } from "../src/search.ts";
+import { fillTemplate, readTemplates } from "../src/template.ts";
 import type { Listing, PrRow } from "../src/types.ts";
 
 const run = promisify(execFile);
@@ -85,25 +86,60 @@ test("worktree: a pull request from a fork is checked out at its head, detached;
   // The fork's branch is "main", which says nothing of the primary checkout on main.
   assert.equal(prWorktree(await s.clone(), { number: 8, branch: "main", fork: true }), undefined);
 
+  // Another repository's review-9 beside it (the same parent folder): this one's gets the repository's name.
   await fs.mkdir(path.join(s.root, "r", "review-9"));
-  await assert.rejects(createWorktree(exec, await s.clone(), { number: 9, branch: "feat/6-b", fork: false }), (e: unknown) => e instanceof ReviewError && /がもうあります/.test(e.message));
+  const named = await createWorktree(exec, await s.clone(), { number: 9, branch: "feat/6-b", fork: false });
+  assert.equal(named.path, path.join(s.root, "r", "review-r-9"));
+  assert.match(named.note ?? "", /review-9 がほかのものに使われているので/);
+  assert.deepEqual(prWorktree(await s.clone(), { number: 9, branch: "feat/6-b" }), { path: named.path, branch: "feat/6-b", review: true });
+  assert.deepEqual(reviewNumbers(await s.clone()), [7, 9]);
+  await fs.mkdir(path.join(s.root, "r", "review-10"));
+  await fs.mkdir(path.join(s.root, "r", "review-r-10"));
+  await assert.rejects(createWorktree(exec, await s.clone(), { number: 10, branch: "feat/5-a", fork: false }), (e: unknown) => e instanceof ReviewError && /この repo の worktree ではない/.test(e.message));
 });
 
-test("worktree: a local branch of the pull request's name is moved up to origin's, unless it has commits origin lacks", async () => {
+test("worktree: a local branch of the pull request's name is moved up to origin's; one with commits origin lacks stays, and the worktree is detached", async () => {
   const s = await setup();
   await git(s.primary, "branch", "feat/6-b", "origin/main");
   const made = await createWorktree(exec, await s.clone(), { number: 6, branch: "feat/6-b", fork: false });
   assert.equal(await git(made.path, "rev-parse", "HEAD"), await s.sha("feat/6-b"));
   assert.equal(await git(made.path, "rev-parse", "--abbrev-ref", "@{upstream}"), "origin/feat/6-b");
 
+  // The author force-pushed after the reviewer's local branch was made: pushing that branch would undo it.
   await git(s.primary, "fetch", "origin", "feat/5-a:feat/5-a");
   await git(s.primary, "checkout", "feat/5-a");
   await fs.writeFile(path.join(s.primary, "g.txt"), "mine\n");
   await git(s.primary, "add", ".");
   await git(s.primary, "commit", "-m", "mine");
   await git(s.primary, "checkout", "main");
-  await assert.rejects(createWorktree(exec, await s.clone(), { number: 5, branch: "feat/5-a", fork: false }), (e: unknown) => e instanceof ReviewError && /origin に無い commit/.test(e.message));
-  await assert.rejects(fs.lstat(path.join(s.root, "r", "review-5")));
+  const mine = await git(s.primary, "rev-parse", "feat/5-a");
+  const kept = await createWorktree(exec, await s.clone(), { number: 5, branch: "feat/5-a", fork: false });
+  assert.deepEqual([kept.path, kept.created, kept.branch], [path.join(s.root, "r", "review-5"), true, undefined]);
+  assert.match(kept.note ?? "", /ローカルのブランチ feat\/5-a に origin に無い commit があるので、そのままにして/);
+  assert.equal(await git(kept.path, "rev-parse", "HEAD"), await s.sha("feat/5-a"));
+  assert.equal(await git(s.primary, "rev-parse", "feat/5-a"), mine);
+});
+
+test("worktree: a clone of one branch tracks the pull request's branch; one whose branch is gone from origin is made at refs/pull/<number>/head", async () => {
+  const s = await setup();
+  const single = path.join(s.root, "s", "main");
+  await fs.mkdir(path.dirname(single));
+  await run("git", ["clone", "--single-branch", "--depth", "1", `file://${path.join(s.root, "origin.git")}`, single]);
+  const clone = await readClone(exec, { path: single, github: "o/r" });
+  const made = await createWorktree(exec, clone, { number: 5, branch: "feat/5-a", fork: false });
+  assert.deepEqual(made, { path: path.join(s.root, "s", "review-5"), created: true, branch: "feat/5-a" });
+  assert.equal(await git(made.path, "rev-parse", "HEAD"), await s.sha("feat/5-a"));
+  assert.deepEqual([await git(single, "config", "branch.feat/5-a.remote"), await git(single, "config", "branch.feat/5-a.merge")], ["origin", "refs/heads/feat/5-a"]);
+
+  // Merged, and its branch deleted: GitHub keeps the pull request's head.
+  const origin = path.join(s.root, "origin.git");
+  const head = await s.sha("feat/6-b");
+  await git(origin, "update-ref", "refs/pull/6/head", head);
+  await git(origin, "branch", "-D", "feat/6-b");
+  const gone = await createWorktree(exec, await s.clone(), { number: 6, branch: "feat/6-b", fork: false });
+  assert.deepEqual([gone.created, gone.branch], [true, undefined]);
+  assert.match(gone.note ?? "", /Pull request の head を detached HEAD で取ってきました/);
+  assert.equal(await git(gone.path, "rev-parse", "HEAD"), head);
 });
 
 test("remove: not while something would be lost; then the worktree and its local branch go, and a merged branch gone from origin counts as pushed", async () => {
@@ -111,8 +147,10 @@ test("remove: not while something would be lost; then the worktree and its local
   const pr = { number: 5, branch: "feat/5-a", fork: false };
   const { path: dest } = await createWorktree(exec, await s.clone(), pr);
 
-  await fs.writeFile(path.join(dest, "new.txt"), "draft\n");
+  await fs.writeFile(path.join(dest, "f.txt"), "changed\n");
   await assert.rejects(removeWorktree(exec, await s.clone(), pr), (e: unknown) => e instanceof ReviewError && /未コミットの変更が 1 件/.test(e.message));
+  await git(dest, "checkout", "--", "f.txt");
+  await fs.writeFile(path.join(dest, "new.txt"), "draft\n");
   await git(dest, "add", ".");
   await git(dest, "commit", "-m", "fix");
   await assert.rejects(removeWorktree(exec, await s.clone(), pr), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
@@ -123,7 +161,19 @@ test("remove: not while something would be lost; then the worktree and its local
   await git(s.root, "--git-dir", path.join(s.root, "origin.git"), "branch", "-D", "feat/5-a");
   await git(s.primary, "fetch", "--prune", "origin");
   await assert.rejects(removeWorktree(exec, await s.clone(), pr), (e: unknown) => e instanceof ReviewError && /push していない commit が 2 個/.test(e.message));
-  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr, head }), { path: dest, branch: "feat/5-a" });
+
+  // Files git does not track go only as the person saw them, whatever status.showUntrackedFiles says.
+  await git(dest, "config", "status.showUntrackedFiles", "no");
+  await fs.writeFile(path.join(dest, ".gitignore"), ".env.local\n");
+  await fs.writeFile(path.join(dest, ".env.local"), "TOKEN=x\n");
+  const listed = await removeWorktree(exec, await s.clone(), { ...pr, head }, { check: true });
+  assert.deepEqual([listed.removed, listed.files, listed.fileCount], [false, [".env.local", ".gitignore"], 2]);
+  await fs.writeFile(path.join(dest, "notes.txt"), "mine\n");
+  const changed = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(listed.token ? { agreed: listed.token } : {}) });
+  assert.deepEqual([changed.removed, changed.files], [false, [".env.local", ".gitignore", "notes.txt"]]);
+  await fs.lstat(path.join(dest, "notes.txt"));
+  const gone = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(changed.token ? { agreed: changed.token } : {}) });
+  assert.deepEqual([gone.path, gone.branch, gone.removed, gone.fileCount], [dest, "feat/5-a", true, 3]);
   await assert.rejects(fs.lstat(dest));
   assert.equal(await git(s.primary, "branch", "--list", "feat/5-a"), "");
 
@@ -137,7 +187,7 @@ test("remove: not while something would be lost; then the worktree and its local
   await git(s.primary, "remote", "set-url", "origin", path.join(s.root, "nowhere.git"));
   await assert.rejects(removeWorktree(exec, await s.clone(), { ...fork, head: next }), (e: unknown) => e instanceof ReviewError && /head を取ってこられなかった/.test(e.message));
   await git(s.primary, "remote", "set-url", "origin", origin);
-  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...fork, head: next }), { path: forkDest });
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...fork, head: next }), { path: forkDest, removed: true, files: [], fileCount: 0 });
 
   // Only review worktrees are removed: a worktree of the branch made by hand only opens.
   await git(s.primary, "worktree", "add", path.join(s.root, "r", "issue-6"), "-b", "feat/6-b", "origin/feat/6-b");
@@ -154,18 +204,42 @@ test("gh: the watched repositories are split into searches GitHub takes, each wi
     assert.match(q, /^is:pr repo:.* label:bug sort:created-desc$/);
   }
   assert.deepEqual(qs.flatMap((q) => [...q.matchAll(/repo:(\S+)/g)].map((m) => m[1])), repos);
-  assert.equal(requestedQuery("is:open sort:updated-desc"), "is:pr review-requested:@me archived:false is:open sort:updated-desc");
   assert.deepEqual(watchedQueries([], "is:open"), []);
+});
+
+test("search words: the upper part reads only open pull requests; repo:, org: and user: narrow the watched repositories instead of going to GitHub", () => {
+  assert.equal(requestedQuery("sort:updated-desc"), "is:pr is:open review-requested:@me archived:false sort:updated-desc");
+  assert.equal(requestedQuery("is:open label:bug"), "is:pr is:open review-requested:@me archived:false label:bug sort:created-desc");
+  assert.equal(requestedQuery("-is:closed"), "is:pr is:open review-requested:@me archived:false sort:created-desc");
+  for (const words of ["is:merged", "is:closed author:x", "-is:open", "state:closed", "-is:unmerged"]) assert.equal(requestedQuery(words), undefined, words);
+  assert.equal(openWords('label:"good first issue" is:open'), 'label:"good first issue"');
+
+  const { words, names } = repoWords("org:Other repo:o/r -repo:o/s is:open");
+  assert.equal(words, "-repo:o/s is:open");
+  assert.deepEqual(["o/r", "O/s", "other/x", "o/t"].filter((r) => names?.(r)), ["o/r", "other/x"]);
+  assert.equal(repoWords("is:open").names, undefined);
+
+  // Searches put together in the order of the words; one the page cannot follow keeps theirs.
+  const at = (n: number, createdAt: string, updatedAt = createdAt) => ({ n, createdAt, updatedAt });
+  const prs = [at(1, "2026-11-01T00:00:00Z", "2026-11-09T00:00:00Z"), at(2, "2026-11-03T00:00:00Z"), at(3, "2026-11-02T00:00:00Z")];
+  assert.deepEqual(inOrder(prs, "is:open").map((p) => p.n), [2, 3, 1]);
+  assert.deepEqual(inOrder(prs, "sort:updated-desc").map((p) => p.n), [1, 2, 3]);
+  assert.deepEqual(inOrder(prs, "sort:created-asc").map((p) => p.n), [1, 3, 2]);
+  assert.deepEqual(inOrder(prs, "sort:reactions-desc").map((p) => p.n), [1, 2, 3]);
 });
 
 test("gh: each part of the answer comes back to its part of the query, with what GitHub could not answer", () => {
   const lookups = [{ repo: "o/r", numbers: [12, 99] }];
-  const args = listArgs({ requested: requestedQuery(""), watched: ["is:pr repo:o/r", "is:pr repo:o/s"], lookups });
+  const args = listArgs({ requested: requestedQuery(""), watched: ["is:pr repo:o/r", "is:pr repo:o/s"], counts: ["is:pr repo:o/r"], kept: ["is:pr is:open repo:x/z"], lookups });
   const query = args[args.indexOf("-f") + 1] ?? "";
   assert.match(query, /req: search\(query: \$req/);
   assert.match(query, /w1: search\(query: \$w1/);
+  assert.match(query, /c0: search\(query: \$c0, type: ISSUE, first: 0\) \{ issueCount  \}/);
+  assert.match(query, /k0: search\(query: \$k0, type: ISSUE, first: 50\) \{ issueCount nodes \{ \.\.\. on PullRequest \{ url \} \} \}/);
   assert.match(query, /l0: repository\(owner: \$o0, name: \$n0\) \{ p12: pullRequest\(number: 12\)/);
   assert.ok(args.includes("w1=is:pr repo:o/s") && args.includes("o0=o") && args.includes("n0=r"));
+  // The upper part is not read when the words find no open pull request.
+  assert.doesNotMatch(listArgs({ watched: [], counts: [], kept: [], lookups: [] })[3] ?? "", /req:/);
 
   const pr = (repo: string, number: number, over: Record<string, unknown> = {}) => ({
     number,
@@ -184,21 +258,26 @@ test("gh: each part of the answer comes back to its part of the query, with what
         req: { issueCount: 3, nodes: [pr("x/y", 1, { isCrossRepository: true, reviewDecision: "CHANGES_REQUESTED" }), {}] },
         w0: { issueCount: 1, nodes: [pr("o/r", 2, { isDraft: true })] },
         w1: null,
+        c0: { issueCount: 7 },
+        k0: { issueCount: 2, nodes: [{ url: "https://github.com/x/z/pull/4" }] },
         l0: { p12: pr("o/r", 12, { state: "MERGED" }), p99: null },
       },
       errors: [{ message: "Could not resolve to a PullRequest with the number of 99." }],
     }),
-    { watched: 2, lookups },
+    { watched: ["is:pr repo:o/r", "is:pr repo:o/s"], counts: ["is:pr repo:o/r"], kept: ["is:pr is:open repo:x/z"], lookups },
   );
   assert.deepEqual(
     answer.requested.prs.map((p) => [p.repo, p.number, p.fork, p.review, p.checks, p.labels]),
     [["x/y", 1, true, "changes_requested", "failure", [{ name: "bug", color: "d73a4a" }]]],
   );
-  assert.equal(answer.requested.more, 1);
+  assert.equal(answer.requested.total, 3);
   assert.deepEqual(
     answer.watched.map((w) => w.prs.map((p) => [p.number, p.draft])),
     [[[2, true]], []],
   );
+  assert.deepEqual(answer.counts, [7]);
+  // GitHub found 2 but gave 1: whether another is kept cannot be said from it.
+  assert.deepEqual(answer.kept, [{ urls: ["https://github.com/x/z/pull/4"], all: false }]);
   assert.deepEqual(
     answer.lookups.map((l) => l.map((p) => [p.number, p.state])),
     [[[12, "merged"]]],
@@ -246,11 +325,15 @@ test("list: a clone whose origin says its owner's old name lists its pull reques
   const listing = await reviewer.list(github, "", false);
   assert.deepEqual(listing.errors, []);
   assert.deepEqual(listing.requested.map((p) => [p.repo, p.number, p.place?.primary]), [["new/r", 5, s.primary]]);
-  assert.deepEqual(
-    listing.repos.map((r) => [r.repo, r.watched, r.prs.map((p) => [p.number, p.place?.worktree?.review ?? false])]),
-    [["new/r", true, [[5, false], [6, false], [12, true]]]],
-  );
-  assert.equal(pageItems([{ machine: "m", listing }]).requested.length, 1);
+  // #12 is merged: the search with is:open does not find it, and it is kept for its review worktree.
+  const parts = (l: Listing) => l.repos.map((r) => [r.repo, r.watched, r.total, r.prs.map((p) => p.number), r.kept.map((p) => [p.number, p.place?.worktree?.review])]);
+  assert.deepEqual(parts(listing), [["new/r", true, 2, [5, 6], [[12, true]]]]);
+  assert.equal(pageItems([{ machine: "m", listing }], "").requested.length, 1);
+  // Words that name other repositories leave the watched one unsearched, rather than search them all with it.
+  const before = asked.length;
+  const other = await reviewer.list(github, "org:someone is:open", false);
+  assert.equal(asked.slice(before).flat().filter((a) => a.startsWith("w0=")).length, 0);
+  assert.deepEqual(parts(other), [["new/r", true, 0, [], [[12, true]]]]);
 
   // The name is read once, then again only when it is an hour old.
   const names = () => asked.filter((a) => !(a[a.indexOf("-f") + 1] ?? "").includes("search(")).length;
@@ -265,12 +348,89 @@ test("list: a clone whose origin says its owner's old name lists its pull reques
   assert.equal(names(), 2);
 });
 
-test("template: the placeholders become the pull request's, once; a setting that is not a list of templates gives none", () => {
+// A list that waited for the folders would wait on `hold` for ever: the timeout says so.
+test("list: the folders listed again do not hold up the answer; a broken watched.json starts from none and says so", { timeout: 180_000 }, async () => {
+  const s = await setup();
+  await git(s.primary, "remote", "set-url", "origin", "https://github.com/o/r.git");
+  const file = path.join(s.root, "watched.json");
+  await fs.writeFile(file, "{ broken");
+  let hold: Promise<void> | undefined;
+  let listings = 0;
+  // Listing the folders waits on `hold`, as git does on a busy working server.
+  const slow: Exec = async (command, args, o) => {
+    if (args.includes("--git-common-dir")) {
+      listings++;
+      await hold;
+    }
+    return exec(command, args, o);
+  };
+  const github: GitHubRead = async () => ({ stdout: JSON.stringify({ data: {} }) });
+  let at = 0;
+  const reviewer = new Reviewer({ exec: slow, folders: () => [s.primary], file, log: () => {}, now: () => at });
+  const first = await reviewer.list(github, "", false);
+  assert.match(first.errors.join("\n"), /watched\.json）が壊れていた/);
+  assert.deepEqual([first.watched, await reviewer.watching()], [[], []]);
+  assert.deepEqual(await reviewer.watch([s.primary]), [s.primary]);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), { paths: [s.primary] });
+  assert.deepEqual((await reviewer.list(github, "", false)).errors, []);
+
+  at = 5 * 60_000;
+  let release = () => {};
+  hold = new Promise((r) => (release = r));
+  const was = listings;
+  const later = await reviewer.list(github, "", false);
+  assert.equal(listings, was + 1);
+  assert.deepEqual(later.repos.map((r) => r.repo), ["o/r"]);
+  release();
+  await reviewer.repoOptions();
+});
+
+test("list and create take the same clone of a repository cloned twice: the one with the pull request's worktree, else the watched one, else the first by path", async () => {
+  const s = await setup();
+  const second = path.join(s.root, "q", "main");
+  await fs.mkdir(path.dirname(second));
+  await run("git", ["clone", path.join(s.root, "origin.git"), second]);
+  for (const p of [s.primary, second]) await git(p, "remote", "set-url", "origin", "https://github.com/o/r.git");
+  await git(second, "worktree", "add", "--detach", path.join(s.root, "q", "review-6"), "HEAD");
+  const file = path.join(s.root, "watched.json");
+  const pr = (number: number, state = "OPEN") => ({ number, title: `t${number}`, url: `https://github.com/o/r/pull/${number}`, state, headRefName: `feat/${number}`, repository: { nameWithOwner: "o/r" } });
+  const github: GitHubRead = async (args) => {
+    const query = args[args.indexOf("-f") + 1] ?? "";
+    if (!query.includes("search(")) return { stdout: JSON.stringify({ data: { r0: { nameWithOwner: "o/r" } } }) };
+    return { stdout: JSON.stringify({ data: { req: { issueCount: 1, nodes: [pr(5)] }, l0: { p6: pr(6, "MERGED") } } }) };
+  };
+  // The folders in an order other than by path.
+  const reviewer = new Reviewer({ exec, folders: () => [s.primary, second], file, log: () => {} });
+  const places = async () => {
+    const l = await reviewer.list(github, "", false);
+    return [l.requested[0]?.place?.primary, l.repos[0]?.kept[0]?.place?.primary];
+  };
+  const made = async (number: number) => (await reviewer.cloneOf(github, "o/r", { pr: { number, branch: `feat/${number}` }, wait: true }))?.path;
+  assert.deepEqual(await places(), [second, second]);
+  assert.deepEqual([await made(5), await made(6)], [second, second]);
+  await reviewer.watch([s.primary]);
+  assert.deepEqual(await places(), [s.primary, second]);
+  assert.deepEqual([await made(5), await made(6)], [s.primary, second]);
+  // The worktrees are not read with git while their files stay as they were, and are once they change.
+  await git(second, "worktree", "add", path.join(s.root, "q", "review-5"), "-b", "feat/5", "HEAD");
+  assert.deepEqual(await places(), [second, second]);
+  await git(path.join(s.root, "q", "review-5"), "checkout", "-b", "feat/other");
+  assert.equal((await reviewer.cloneOf(github, "o/r", { pr: { number: 5, branch: "feat/5" } }))?.worktrees.find((w) => w.path.endsWith("review-5"))?.branch, "feat/other");
+});
+
+test("template: the placeholders become the pull request's, once ({branch} of a fork's is OWNER:BRANCH); a setting with what is not a template says so", () => {
   const pr = { number: 3, title: "Fix {url}", branch: "feat/3-x", url: "https://github.com/o/r/pull/3" };
   assert.equal(fillTemplate("#{number} {title} ({branch}) {url} {other}", pr), "#3 Fix {url} (feat/3-x) https://github.com/o/r/pull/3 {other}");
-  assert.deepEqual(parseTemplates('[{"name":" A ","body":"x"},{"name":"","body":"y"},{"name":"B"},"z"]'), [{ name: "A", body: "x" }]);
-  assert.deepEqual(parseTemplates("not json"), []);
-  assert.deepEqual(parseTemplates('{"name":"A","body":"x"}'), []);
+  assert.equal(fillTemplate("{branch}", { ...pr, branch: "main", fork: true, headOwner: "someone" }), "someone:main");
+  const mixed = readTemplates('[{"name":" A ","body":"x"},{"name":"","body":"y"},{"name":"B"},"z"]');
+  assert.deepEqual(mixed.templates, [{ name: "A", body: "x" }]);
+  assert.match(mixed.problem ?? "", /3 個は、使えないので出していません/);
+  for (const raw of ["not json", '{"name":"A","body":"x"}']) {
+    const r = readTemplates(raw);
+    assert.deepEqual(r.templates, []);
+    assert.match(r.problem ?? "", /テンプレートを使えません/);
+  }
+  assert.deepEqual(readTemplates(""), { templates: [] });
 });
 
 test("page: a pull request listed by several working servers shows once, with where it is on each; one without a clone anywhere is left out", () => {
@@ -285,31 +445,59 @@ test("page: a pull request listed by several working servers shows once, with wh
     branch: `feat/${number}`,
     ...over,
   });
+  // Both working servers watch o/r: what GitHub found there counts once.
   const a: Listing = {
     watched: ["/a/r"],
     requested: [row(1, { place: { primary: "/a/r" } }), row(4, { repo: "x/y" })],
-    repos: [{ repo: "o/r", watched: true, prs: [row(1, { place: { primary: "/a/r" } }), row(2)] }],
+    requestedTotal: 7,
+    repos: [{ repo: "o/r", watched: true, prs: [row(1, { place: { primary: "/a/r" } }), row(2, { place: { primary: "/a/r" } })], total: 60, kept: [] }],
     errors: [],
   };
   const b: Listing = {
-    watched: [],
+    watched: ["/b/r"],
     requested: [row(1, { place: { primary: "/b/r", worktree: { path: "/b/review-1", branch: "feat/1", review: true } } })],
-    repos: [{ repo: "O/R", watched: false, prs: [row(3, { state: "merged", place: { primary: "/b/r", worktree: { path: "/b/review-3", review: true } } })] }],
-    requestedMore: 4,
+    requestedTotal: 7,
+    repos: [{ repo: "O/R", watched: true, prs: [row(2, { place: { primary: "/b/r" } })], total: 60, kept: [row(3, { state: "merged", place: { primary: "/b/r", worktree: { path: "/b/review-3", review: true } } })] }],
     errors: [],
   };
-  const page = pageItems([
-    { machine: "A", listing: a },
-    { machine: "B", listing: b },
-  ]);
+  const page = pageItems(
+    [
+      { machine: "A", listing: a },
+      { machine: "B", listing: b },
+    ],
+    "is:open",
+  );
   assert.deepEqual(
     page.requested.map((i) => [i.pr.number, i.spots.map((s) => [s.machine, s.worktree?.path])]),
     [[1, [["A", undefined], ["B", "/b/review-1"]]]],
   );
   assert.deepEqual(
-    page.groups.map((g) => [g.repo, g.watched, g.items.map((i) => [i.pr.number, i.spots.length])]),
-    [["o/r", true, [[1, 2], [3, 1]]]],
+    page.groups.map((g) => [g.repo, g.watched, g.total, g.items.map((i) => [i.pr.number, i.spots.length])]),
+    [["o/r", true, 60, [[1, 2], [2, 2], [3, 1]]]],
   );
   assert.equal("place" in (page.requested[0]?.pr ?? {}), false);
-  assert.equal(page.requestedMore, 4);
+  // #4 was read but has no clone anywhere; 7 found, 2 read.
+  assert.deepEqual([page.requestedNoClone, page.requestedMore, page.watchedMore], [1, 5, 58]);
+
+  // Watched repositories in several searches: the newest SEARCH_LIMIT of them all.
+  const day = (n: number) => `2026-10-${String(n).padStart(2, "0")}T00:00:00Z`;
+  const many = (repo: string, from: number): PrRow[] =>
+    Array.from({ length: 30 }, (_, i) => row(from + i, { repo, url: `https://github.com/${repo}/pull/${from + i}`, createdAt: day(1 + ((from + i) % 31)), place: { primary: `/c/${repo}` } }));
+  const c: Listing = {
+    watched: ["/c/p/a", "/c/p/b"],
+    requested: [],
+    requestedTotal: 0,
+    repos: [
+      { repo: "p/a", watched: true, prs: many("p/a", 0), total: 30, kept: [] },
+      { repo: "p/b", watched: true, prs: many("p/b", 30), total: 30, kept: [] },
+    ],
+    errors: [],
+  };
+  const capped = pageItems([{ machine: "C", listing: c }], "");
+  const shown = capped.groups.flatMap((g) => g.items);
+  assert.equal(shown.length, 50);
+  assert.equal(capped.watchedMore, 10);
+  const oldestShown = Math.min(...shown.map((i) => Date.parse(i.pr.createdAt ?? "")));
+  const all = c.repos.flatMap((r) => r.prs);
+  assert.ok(all.filter((p) => !shown.some((i) => i.pr.url === p.url)).every((p) => Date.parse(p.createdAt ?? "") <= oldestShown));
 });

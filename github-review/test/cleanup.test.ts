@@ -48,7 +48,7 @@ test("done: a merge once the pull request is merged; a send-back once I requeste
 });
 
 test("gh: the query reads the reviews that request changes; only mine count, the latest", () => {
-  const args = listArgs({ requested: requestedQuery(""), watched: [], lookups: [] });
+  const args = listArgs({ requested: requestedQuery(""), watched: [], counts: [], kept: [], lookups: [] });
   assert.match(args[args.indexOf("-f") + 1] ?? "", /changes: reviews\(last: 5, states: \[CHANGES_REQUESTED\]\) \{ nodes \{ viewerDidAuthor submittedAt \} \}/);
   const pr = (changes: unknown) =>
     parsePr({ number: 3, title: "t", url: "https://github.com/o/r/pull/3", state: "OPEN", headRefName: "feat/3", repository: { nameWithOwner: "o/r" }, changes });
@@ -136,7 +136,7 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
       stdout: JSON.stringify({
         data: {
           req: { issueCount: 0, nodes: [] },
-          w0: { issueCount: 0, nodes: [] },
+          w0: { issueCount: 2, nodes: [pr(6, { changes: { nodes: [{ viewerDidAuthor: true, submittedAt: "2026-11-17T09:00:00Z" }] } }), pr(7)] },
           l0: {
             p5: pr(5, { state: "MERGED" }),
             p6: pr(6, { changes: { nodes: [{ viewerDidAuthor: true, submittedAt: "2026-11-17T09:00:00Z" }] } }),
@@ -149,10 +149,10 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
   const reviewer = new Reviewer({ exec, folders: () => [primary], file, log: () => {}, now: () => asked, cleanups });
   const listing = await reviewer.list(github, "", false);
   assert.deepEqual(listing.errors, []);
-  const byNumber = Object.fromEntries(listing.repos.flatMap((r) => r.prs).map((p) => [p.number, p.place?.cleanup]));
+  const byNumber = Object.fromEntries(listing.repos.flatMap((r) => [...r.prs, ...r.kept]).map((p) => [p.number, p.place?.cleanup]));
   assert.deepEqual(byNumber, { 5: { kind: "merge", done: true }, 6: { kind: "sendBack", done: false }, 7: undefined });
   // The page's spots carry it.
-  assert.deepEqual(pageItems([{ machine: "m", listing }]).groups[0]?.items.find((i) => i.pr.number === 5)?.spots[0]?.cleanup, { kind: "merge", done: true });
+  assert.deepEqual(pageItems([{ machine: "m", listing }], "").groups[0]?.items.find((i) => i.pr.number === 5)?.spots[0]?.cleanup, { kind: "merge", done: true });
   // #8 has no review worktree here (removed by hand): forgotten.
   assert.deepEqual((await cleanups.all()).map((e) => e.number), [5, 6]);
 });

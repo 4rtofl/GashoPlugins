@@ -1,7 +1,9 @@
 // git for github-review, run with ctx.exec (no shell, no terminal, no prompts), and only in the clones found in the
 // folders Gasho can start sessions in: a path from a browser never reaches git. A review worktree is review-<number>
-// beside the primary checkout. A pull request of the same repository gets a local branch of its name that tracks
-// origin's, so the reviewer can push to it; one from a fork is checked out at its head, detached, to read and test.
+// beside the primary checkout (review-<repository>-<number> when another repository's is there). A pull request of the
+// same repository gets a local branch of its name that tracks origin's, so the reviewer can push to it; one from a fork
+// is checked out at its head, detached, to read and test.
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PluginError, type DaemonStartContext } from "@gasho/plugin-sdk/daemon";
@@ -52,16 +54,35 @@ export interface Clone {
   worktrees: WorktreeEntry[];
 }
 
-/** The review worktree of a pull request: review-<number> in the folder that holds the primary checkout. */
-export const reviewPath = (primary: string, number: number): string => path.join(path.dirname(primary), `review-${number}`);
+/**
+ * The repository's name in a review worktree's name: REPO of OWNER/REPO, keeping only what GitHub allows in one
+ * (letters, digits, ".", "-", "_"), so the folder name is safe whatever the clone's folder is called.
+ */
+export const repoName = (github: string): string => (github.split("/").pop() ?? "").replace(/[^A-Za-z0-9._-]/g, "").replace(/^\.+/, "");
 
-/** The pull requests that have a review worktree in a clone. */
+/** A pull request's review worktree's folder name with its repository's: review-<repository>-<number>. */
+export const reviewName = (github: string, number: number): string => {
+  const repo = repoName(github);
+  return repo ? `review-${repo}-${number}` : `review-${number}`;
+};
+
+/**
+ * Where the review worktree of a pull request goes: review-<number> in the folder that holds the primary checkout, or,
+ * when another repository's (or another folder) has that name, review-<repository>-<number>.
+ */
+export function reviewPaths(clone: Pick<Clone, "path" | "github">, number: number): [string, string] {
+  const dir = path.dirname(clone.path);
+  return [path.join(dir, `review-${number}`), path.join(dir, reviewName(clone.github, number))];
+}
+
+/** The pull requests that have a review worktree in a clone, under either name. */
 export function reviewNumbers(clone: Clone): number[] {
-  return clone.worktrees.flatMap((w) => {
-    const m = /^review-(\d{1,9})$/.exec(path.basename(w.path));
+  const numbers = clone.worktrees.flatMap((w) => {
+    const m = /^review-(?:.+-)?(\d{1,9})$/.exec(path.basename(w.path));
     const n = Number(m?.[1]);
-    return m && n >= 1 && w.path === reviewPath(clone.path, n) ? [n] : [];
+    return m && n >= 1 && reviewPaths(clone, n).includes(w.path) ? [n] : [];
   });
+  return [...new Set(numbers)];
 }
 
 /**
@@ -69,8 +90,8 @@ export function reviewNumbers(clone: Clone): number[] {
  * worktree on its branch, which may be the primary checkout. A fork's branch name says nothing about a local branch.
  */
 export function prWorktree(clone: Clone, pr: { number: number; branch: string; fork?: boolean }): PrWorktree | undefined {
-  const review = reviewPath(clone.path, pr.number);
-  const at = clone.worktrees.find((w) => w.path === review);
+  const review = reviewPaths(clone, pr.number);
+  const at = clone.worktrees.find((w) => review.includes(w.path));
   if (at) return { path: at.path, ...(at.branch ? { branch: at.branch } : {}), review: true };
   if (pr.fork) return undefined;
   const on = clone.worktrees.find((w) => w.branch === pr.branch);
@@ -117,21 +138,62 @@ async function realPath(p: string): Promise<string> {
 }
 
 /**
+ * How many git commands run at once over many folders. Starting git can take a third of a second, and a working server
+ * can have a hundred folders: one after another, they took longer than a call may wait.
+ */
+export const PARALLEL_GIT = 8;
+
+/** `fn` of each of `items`, `n` at a time, in the order of `items`. */
+export async function inParallel<T, R>(items: readonly T[], n: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i] as T);
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return out;
+}
+
+/**
  * The repositories in `folders` (those Gasho can start sessions in), one per repository however many of its worktrees
  * are there, by their primary checkout. Folders that are not in a repository and bare repositories are left out.
  */
 export async function repoOptions(exec: Exec, folders: readonly string[]): Promise<RepoOption[]> {
-  const found = new Map<string, RepoOption>();
-  for (const dir of folders) {
-    const common = await git(exec, dir, ["rev-parse", "--git-common-dir"]).then((s) => path.resolve(dir, s.trim()), () => undefined);
-    if (!common || found.has(common)) continue;
+  const commons = await inParallel(folders, PARALLEL_GIT, (dir) =>
+    git(exec, dir, ["rev-parse", "--git-common-dir"]).then((s) => path.resolve(dir, s.trim()), () => undefined),
+  );
+  // One folder of each repository, however many of its worktrees are among the folders.
+  const repos = new Map<string, string>();
+  folders.forEach((dir, i) => {
+    const common = commons[i];
+    if (common && !repos.has(common)) repos.set(common, dir);
+  });
+  const found = await inParallel([...repos.values()], PARALLEL_GIT, async (dir): Promise<RepoOption | undefined> => {
     const primary = await git(exec, dir, ["worktree", "list", "--porcelain"]).then((s) => parseWorktrees(s)[0], () => undefined);
-    if (!primary || primary.bare) continue;
+    if (!primary || primary.bare) return undefined;
     const github = await git(exec, primary.path, ["remote", "get-url", "origin"]).then(parseGitHubUrl, () => undefined);
-    found.set(common, { path: await realPath(primary.path), ...(github ? { github } : {}) });
-  }
+    return { path: await realPath(primary.path), ...(github ? { github } : {}) };
+  });
   // Those on GitHub first: the others cannot be watched.
-  return [...found.values()].sort((a, b) => Number(!a.github) - Number(!b.github) || (a.github ?? a.path).localeCompare(b.github ?? b.path));
+  return found
+    .filter((o): o is RepoOption => o !== undefined)
+    .sort((a, b) => Number(!a.github) - Number(!b.github) || (a.github ?? a.path).localeCompare(b.github ?? b.path));
+}
+
+/**
+ * What `git worktree list` of a clone depends on, read without starting git (which takes seconds for a few dozen
+ * clones on a busy working server): each worktree's HEAD (the branch it is on), and the files of the linked worktrees
+ * (one added, removed or moved). Git writes each anew, so a change changes the file. Undefined when the clone's .git
+ * is not a folder (a submodule, --separate-git-dir): git is asked every time.
+ */
+export async function worktreesStamp(primary: string): Promise<string | undefined> {
+  const dir = path.join(primary, ".git");
+  if (!(await fs.stat(dir).then((s) => s.isDirectory(), () => false))) return undefined;
+  const stat = (p: string) => fs.stat(p).then((s) => `${s.ino}:${s.mtimeMs}:${s.size}`, () => "-");
+  const linked = path.join(dir, "worktrees");
+  const names = (await fs.readdir(linked).catch(() => [] as string[])).sort();
+  const parts = await Promise.all([stat(path.join(dir, "HEAD")), stat(linked), ...names.flatMap((n) => [stat(path.join(linked, n, "HEAD")), stat(path.join(linked, n, "gitdir"))])]);
+  return [names.join("/"), ...parts].join("|");
 }
 
 /** A repository's clone as it is now: its worktrees, with real paths. */
@@ -159,48 +221,85 @@ function branchName(b: string): string {
 
 /**
  * Makes the review worktree of a pull request in a clone, or finds the worktree it has. One of the same repository is
- * on a local branch of its name, tracking origin's (made now, or one there already that has nothing origin lacks);
- * one from a fork is at its head, detached.
+ * on a local branch of its name, tracking origin's (made now, or one there already that has nothing origin lacks). One
+ * from a fork is at its head, detached; so is one whose branch is gone from origin (merged and deleted), and one whose
+ * local branch has commits origin lacks (the author rewrote the branch, or they are someone's work), which stays as it
+ * is.
  */
 export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Created> {
   const found = prWorktree(clone, pr);
   if (found) return { path: found.path, created: false, ...(found.branch ? { branch: found.branch } : {}) };
-  const dest = reviewPath(clone.path, pr.number);
-  if (await succeeds(fs.lstat(dest))) {
-    throw new ReviewError(`${dest} がもうあります。この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
+  // Neither is a worktree of this clone (else it was found above): another repository's, or some other folder.
+  const [plain, named] = reviewPaths(clone, pr.number);
+  const taken = await succeeds(fs.lstat(plain));
+  const dest = taken ? named : plain;
+  if (taken && (await succeeds(fs.lstat(named)))) {
+    throw new ReviewError(`${plain} も ${named} もあり、この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
   }
+  const elsewhere = taken ? `${path.basename(plain)} がほかのものに使われているので、${path.basename(named)} に作りました。` : "";
   const w = { write: true, timeoutMs: 60_000 };
-  if (pr.fork) {
-    await step("fork の Pull request を取ってくることが", git(exec, clone.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], w));
+  const made = async (note: string, branch?: string): Promise<Created> => {
+    const all = `${elsewhere}${note}`;
+    return { path: await realPath(dest), created: true, ...(branch ? { branch } : {}), ...(all ? { note: all } : {}) };
+  };
+  /** At the pull request's head, detached. */
+  const detached = async (note: string): Promise<Created> => {
+    await step("Pull request の head を取ってくることが", git(exec, clone.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], w));
     await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--detach", dest, "FETCH_HEAD"], w));
-    return { path: await realPath(dest), created: true };
-  }
+    return made(note);
+  };
+  if (pr.fork) return detached("");
   const branch = branchName(pr.branch);
   const remote = `refs/remotes/origin/${branch}`;
-  await step(`origin の ${branch} を取ってくることが`, git(exec, clone.path, ["fetch", "origin", `+refs/heads/${branch}:${remote}`], w));
+  const fetchFailed = await git(exec, clone.path, ["fetch", "origin", `+refs/heads/${branch}:${remote}`], w).then(
+    () => undefined,
+    (e: unknown) => gitWords(e),
+  );
+  if (fetchFailed) {
+    // GitHub keeps refs/pull/<number>/head after the branch is gone.
+    return detached(`origin の ${branch} を取ってこられなかったので（${fetchFailed}）、Pull request の head を detached HEAD で取ってきました。`).catch((e: unknown) => {
+      throw new ReviewError(`origin の ${branch} を取ってくることができませんでした：${fetchFailed}（Pull request の head も取ってこられませんでした：${e instanceof Error ? e.message : String(e)}）`);
+    });
+  }
+  // The upstream is set by hand: --track takes only a branch the clone fetches (not so in a clone of one branch).
+  const track = () =>
+    step(`ローカルの ${branch} に origin の ${branch} を追わせることが`, (async () => {
+      await git(exec, clone.path, ["config", `branch.${branch}.remote`, "origin"], { write: true });
+      await git(exec, clone.path, ["config", `branch.${branch}.merge`, `refs/heads/${branch}`], { write: true });
+    })());
   const local = await succeeds(git(exec, clone.path, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]));
   if (!local) {
-    await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--track", "-b", branch, dest, remote], w));
-  } else {
-    // A local branch of that name, on no worktree (else it was found above): moved up to origin's, unless it has
-    // commits origin lacks, which are someone's work.
-    if (!(await succeeds(git(exec, clone.path, ["merge-base", "--is-ancestor", `refs/heads/${branch}`, remote])))) {
-      throw new ReviewError(`ローカルのブランチ ${branch} に、origin に無い commit があります。push するか消してから、もう一度作ってください。`);
-    }
-    await step(`ローカルの ${branch} を origin に合わせることが`, git(exec, clone.path, ["branch", "--force", "--track", branch, remote], w));
-    await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", dest, branch], w));
+    await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--no-track", "-b", branch, dest, remote], w));
+    await track();
+    return made("", branch);
   }
-  return { path: await realPath(dest), created: true, branch };
+  // A local branch of that name, on no worktree (else it was found above): moved up to origin's, unless it has commits
+  // origin lacks. Those may be the author's from before a force push, or someone's work: neither is lost, nor pushed.
+  if (!(await succeeds(git(exec, clone.path, ["merge-base", "--is-ancestor", `refs/heads/${branch}`, remote])))) {
+    await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--detach", dest, remote], w));
+    return made(
+      `ローカルのブランチ ${branch} に origin に無い commit があるので、そのままにして、origin の ${branch} を detached HEAD で取ってきました。push するときは git push origin HEAD:${branch} です。`,
+    );
+  }
+  await step(`ローカルの ${branch} を origin に合わせることが`, git(exec, clone.path, ["branch", "--force", "--no-track", branch, remote], w));
+  await track();
+  await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", dest, branch], w));
+  return made("", branch);
 }
 
+/** Files shown with "片付ける", at most: the rest are counted. */
+export const SHOWN_FILES = 50;
+
 /**
- * Removes the review worktree of a pull request and its local branch: only when nothing in it would be lost, that is,
- * no uncommitted change and no commit that is neither on a branch of a remote nor the pull request's head.
+ * Removes the review worktree of a pull request and its local branch: never with uncommitted changes to the files git
+ * tracks, or with a commit that is neither on a branch of a remote nor the pull request's head. Files git does not
+ * track (untracked or ignored, such as .env.local) go only once the person agreed to lose them: `agreed` is the
+ * `token` of an answer that listed them, and still holds while they are the same. `check`: only says what would go.
  */
-export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Removed> {
+export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { agreed?: string; check?: boolean } = {}): Promise<Removed> {
   const wt = prWorktree(clone, pr);
   if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（review-${pr.number}）はありません。`);
-  const changes = (await git(exec, wt.path, ["status", "--porcelain"])).split("\n").filter(Boolean).length;
+  const changes = (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean).length;
   if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
   // The pull request's head counts as pushed: its branch may be gone from origin once merged. A head pushed after the
   // worktree was made is fetched, or the commits before it would be taken for the reviewer's.
@@ -215,7 +314,17 @@ export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
     throw new ReviewError(`Pull request #${pr.number} の head を取ってこられなかったので、${wt.path} の ${ahead} 個の commit が push 済みかを確かめられません。片付けません：${unfetched}`);
   }
   if (ahead > 0) throw new ReviewError(`${wt.path} に、push していない commit が ${ahead} 個あるので、片付けません。`);
-  await step("worktree を消すことが", git(exec, clone.path, ["worktree", "remove", wt.path], { write: true }));
+  // The options say what to list whatever the settings (status.showUntrackedFiles=no hides untracked files): a folder
+  // that holds only such files is one line (node_modules/).
+  const loose = (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=normal", "--ignored=traditional"]))
+    .split("\n")
+    .filter((l) => l.startsWith("?? ") || l.startsWith("!! "))
+    .map((l) => l.slice(3))
+    .sort();
+  const token = loose.length > 0 ? createHash("sha256").update(loose.join("\n")).digest("hex").slice(0, 32) : undefined;
+  const what = { path: wt.path, ...(wt.branch ? { branch: wt.branch } : {}), files: loose.slice(0, SHOWN_FILES), fileCount: loose.length, ...(token ? { token } : {}) };
+  if (o.check || (token && o.agreed !== token)) return { ...what, removed: false };
+  await step("worktree を消すことが", git(exec, clone.path, ["worktree", "remove", ...(token ? ["--force"] : []), wt.path], { write: true }));
   if (wt.branch) await step(`worktree は消しましたが、ローカルのブランチ ${wt.branch} を消すことが`, git(exec, clone.path, ["branch", "-D", wt.branch], { write: true }));
-  return { path: wt.path, ...(wt.branch ? { branch: wt.branch } : {}) };
+  return { ...what, files: [], removed: true };
 }

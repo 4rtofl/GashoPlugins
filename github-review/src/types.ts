@@ -61,6 +61,8 @@ export interface PrRow {
   author?: string;
   /** ISO 8601 */
   createdAt?: string;
+  /** ISO 8601 */
+  updatedAt?: string;
   labels: { name: string; color?: string }[];
   checks?: CheckState;
   review?: ReviewState;
@@ -70,6 +72,8 @@ export interface PrRow {
   branch: string;
   /** Its head is in another repository (a fork). */
   fork?: boolean;
+  /** The owner of the repository its head is in, for one from a fork (GitHub shows its head as OWNER:BRANCH). */
+  headOwner?: string;
   /** The commit of its head. */
   head?: string;
   /** I opened it: GitHub lets me neither approve it nor request changes. */
@@ -92,21 +96,30 @@ export interface RepoPrs {
   repo: string;
   /** Watched ("対象リポジトリ"); otherwise it is here for the review worktrees of its pull requests. */
   watched: boolean;
+  /**
+   * Watched: those GitHub found for the search words, the newest of every watched repository's (at most SEARCH_LIMIT
+   * in all, in the order of the words).
+   */
   prs: PrRow[];
+  /** Watched: how many GitHub found for the search words (0 when the words name other repositories). */
+  total: number;
+  /**
+   * Those here for their review worktree that the search did not find: merged or closed ones, whatever the words, and
+   * open ones of a repository that is not watched, when the words find them.
+   */
+  kept: PrRow[];
 }
 
 /** What the page shows of one working server. */
 export interface Listing {
   /** The primary checkouts watched, as chosen. */
   watched: string[];
-  /** The open pull requests GitHub asks me to review (all of GitHub), narrowed by the search words. */
+  /** The open pull requests GitHub asks me to review (all of GitHub), narrowed by the search words: the newest ones. */
   requested: PrRow[];
-  /** How many more GitHub found than `requested` holds. */
-  requestedMore?: number;
-  /** The watched repositories' pull requests (narrowed by the search words), then those with a review worktree. */
+  /** How many GitHub found for the upper part (`requested` holds at most SEARCH_LIMIT of them). */
+  requestedTotal: number;
+  /** The watched repositories, then those with a review worktree of a pull request the search did not find. */
   repos: RepoPrs[];
-  /** How many more GitHub found for the watched repositories than `repos` holds. */
-  watchedMore?: number;
   errors: string[];
 }
 
@@ -116,13 +129,23 @@ export interface Created {
   /** False: it was there already (the page takes the session used last there, and sends nothing). */
   created: boolean;
   branch?: string;
+  /** Why it was made otherwise than README says (detached HEAD, another folder name…). */
+  note?: string;
 }
 
-/** What "片付ける" removed. */
+/** What "片付ける" removed, or would remove. */
 export interface Removed {
   path: string;
   /** The local branch removed with it. */
   branch?: string;
+  /** False: not yet (only checked, or files would go that the person has not agreed to lose). */
+  removed: boolean;
+  /** Files git does not track (untracked and ignored ones, a folder for all in it) that go with the worktree: the first ones. */
+  files: string[];
+  /** How many there are. */
+  fileCount: number;
+  /** What the person agrees to with `files` (sent back as `agreed`): they go only while they are the same. */
+  token?: string;
 }
 
 export interface PrComment {
@@ -156,6 +179,12 @@ export interface PrDetail {
   checks: PrCheck[];
 }
 
+/**
+ * Its head as GitHub shows it: OWNER:BRANCH for one from a fork, whose branch name alone (main, often) would read as a
+ * branch of the repository.
+ */
+export const headName = (pr: Pick<PrRow, "branch" | "fork" | "headOwner">): string => (pr.fork && pr.headOwner ? `${pr.headOwner}:${pr.branch}` : pr.branch);
+
 /** Its head can be pushed to: in the same repository, in my own fork, or one the maintainers may change. */
 export const canPush = (pr: Pick<PrRow, "fork" | "own" | "canModify">): boolean => !pr.fork || pr.own === true || pr.canModify === true;
 
@@ -163,3 +192,5 @@ export const canPush = (pr: Pick<PrRow, "fork" | "own" | "canModify">): boolean 
 export const MAX_REPOS = 30;
 /** Search words, at most. */
 export const MAX_QUERY = 200;
+/** Pull requests each part of the page shows, at most (and reads per search). */
+export const SEARCH_LIMIT = 50;

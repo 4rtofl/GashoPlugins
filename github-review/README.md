@@ -2,14 +2,23 @@
 
 サイドバーの「レビュー」で、レビューする Pull request を探し、その行からレビュー用の worktree とセッションを用意する。github-implement は worktree を作った実装者がその Issue と Pull request を開くためのもので、こちらは手元にその Pull request の worktree が無いレビューする人のためのもの。working server の git と gh を使う。プラグインの API 1.12（ページのパネルと、送るときの Effort の切り替え）に対応した Gasho サーバーと gasho-daemon が要る。
 
-- ページの上の段に、自分にレビューを頼まれた開いている Pull request（GitHub 全体。`review-requested:@me`）を、下の段に、対象リポジトリの Pull request を出す。対象リポジトリは、ヘッダーの「対象リポジトリ」から working server ごとに選ぶ（1台に30まで）。選べるのは、Gasho がセッションを起動できるフォルダー（Claude Code が信頼しているフォルダー）にある GitHub のリポジトリで、選んだものは working server のこのプラグイン専用のフォルダー（`~/.local/share/gasho/plugin-data/github-review/watched.json`）に覚える
-- 検索欄は1つで、GitHub の Pull request の一覧と同じ書き方（`is:`・`author:`・`label:` など）で上下の段を絞り込む。最初は `is:open`。`sort:` を書かなければ新しく開いた順に並べる。行には、GitHub の一覧と同じく、状態のアイコン（Draft を含む）・題・ラベル・チェックの結果・番号と作者と開いた時刻・レビューの状態・コメントの数を出す。段ごとに50件まで出し、それより多いときは件数を出す。clone が Claude Code の信頼しているフォルダーに無いリポジトリの Pull request は、worktree を作れないので出さない（段の件数も、出す行の数）
-- ページを開いているあいだ、1分おきに読み直す。読むのは GraphQL の問い合わせ1回（1点ほど。GraphQL の上限は1時間に5000点）で、gasho-daemon が30秒は同じ答えを返すので、いくつのブラウザーで開いていても1分に1回ほど。「更新」では、gasho-daemon が覚えている答えを使わずに読む
+- ページの上の段に、自分にレビューを頼まれた開いている Pull request（GitHub 全体。`review-requested:@me`）を、下の段に、対象リポジトリの Pull request を出す。対象リポジトリは、ヘッダーの「対象リポジトリ」から working server ごとに選ぶ（1台に30まで）。選べるのは、Gasho がセッションを起動できるフォルダー（Claude Code が信頼しているフォルダー）にある GitHub のリポジトリで、選んだものは working server のこのプラグイン専用のフォルダー（`~/.local/share/gasho/plugin-data/github-review/watched.json`）に覚える。`watched.json` が JSON として読めないときは、空から始めて、ページの上にそう出す（選び直すと書き直す）
+- 選べるリポジトリは、信頼しているフォルダーごとに git を動かして作る（8本ずつ並べる）。フォルダーが多いと（試した Mac では86個で）1分ほどかかるので、gasho-daemon の起動時に作り始め、作ったものを覚えておく。5分たつかフォルダーが変わると作り直すが、そのあいだも `list` と `detail` は前に作ったものですぐ答える。「対象リポジトリ」のダイアログは、フォルダーが変わったときだけ作り直すのを待つ
+- 検索欄は1つで、GitHub の Pull request の一覧と同じ書き方（`is:`・`author:`・`label:` など）で上下の段を絞り込む。最初は `is:open`。`sort:` を書かなければ新しく開いた順に並べる。行には、GitHub の一覧と同じく、状態のアイコン（Draft を含む）・題・ラベル・チェックの結果・番号と作者と開いた時刻・レビューの状態・コメントの数を出す
+  - 上の段は開いている Pull request だけを出す（検索の語に `is:open` が無くても足し、`is:merged`・`is:closed` などがあれば何も出さない）
+  - `repo:`・`org:`・`user:` は、GitHub には送らずに、下の段の対象リポジトリを、そのどれかに当たるものに絞る（GitHub は、対象リポジトリの `repo:` と一緒に「どれか」として扱い、ほかのリポジトリの Pull request を返すため）。`-repo:` はそのまま送る。上の段には、書いたとおりに送る
+  - 段ごとに、新しい順（`sort:` があればその順。`created` と `updated` 以外の `sort:` では、問い合わせの順）に50件まで出す。対象リポジトリが多く、検索を分けたときも、working server がいくつあっても、合わせて50件にする。それより多いときは「ほかに N 件」を出す。下の段の件数は、リポジトリごとに件数だけを読む検索（`first: 0`）で数えるので、いくつの working server が同じリポジトリを見ていても1回だけ数える
+  - clone が Claude Code の信頼しているフォルダーに無いリポジトリの Pull request は、worktree を作れないので出さず、上の段に「clone が無いリポジトリの N 件は出していません」と出す（読んだ50件のうちの数。50件より後の「まだ読んでいないもの」は、clone があるかは分からない）
+- ページを開いているあいだ、1分おきに読み直す。読むのは GraphQL の問い合わせ1回（1点ほど。GraphQL の上限は1時間に5000点）で、gasho-daemon が30秒は同じ答えを返すので、いくつのブラウザーで開いていても1分に1回ほど。「更新」では、gasho-daemon が覚えている答えを使わずに読む。「更新」が失敗したときのエラーは、そのあと読み直しが成功すると消える。worktree を作った・片付けたあとの読み直しは、そのとき読み直している最中でも、それが終わってからもう一度読む
+- `list` が読めなかったとき（working server から応答が無い、gh が失敗した、など）は、gh を使わない `watched` で選んでいる対象リポジトリを読み、下の段にそのフォルダーを「読めませんでした」と出す（「対象リポジトリを選ぶ」は出さない）
 - 行の「worktree を作る」で、送る指示のテンプレートを選ぶ（いちばん上は「何も送らない」）。primary checkout と同じ親フォルダーに `review-<PR 番号>` を作り、その中でセッションを起動して、選んだテンプレートの指示を送る。セッションの画面には移らずにこのページに留まり、続けてほかの Pull request もレビューに回せる。起動したことを下の通知に出すので、そこの「セッションを開く」で開く。一覧が古くて worktree がもうあったときは、作らずに、そこで最後に使った Gasho のセッション（なければ起動したもの）を通知に出す（指示は送らない）。Claude Code がフォルダーを信頼していないときは、起動する前に確かめる
-  - 同じ repo の Pull request は、`git fetch` してから、同じ名前のローカルのブランチを作って origin のブランチを追う（レビューする人が修正を push できる）。その名前のローカルのブランチがもうあれば、origin に無い commit が無いときだけ、origin に合わせて使う
+  - 同じ repo の Pull request は、`git fetch` してから、同じ名前のローカルのブランチを作って origin のブランチを追う（レビューする人が修正を push できる）。追う設定は `branch.<名前>.remote` と `.merge` に書くので、1ブランチだけの clone（`--single-branch`・`--depth`）でも作れる。その名前のローカルのブランチがもうあれば、origin に無い commit が無いときだけ、origin に合わせて使う
+  - そのローカルのブランチに origin に無い commit があるとき（作者が force-push した、レビューする人の作業がある、など）は、そのブランチには触らずに、origin のブランチを detached HEAD で取ってきて、通知にそう出す（push するときは `git push origin HEAD:<ブランチ>`）
+  - origin に head のブランチが無いとき（マージして消した、など）は、`refs/pull/<番号>/head` を detached HEAD で取ってきて、通知にそう出す
   - fork の Pull request は、`refs/pull/<番号>/head` を取ってきて、detached HEAD にする
   - その Pull request の worktree（`review-<番号>`、同じ repo の Pull request ならそのブランチの worktree）がもうあれば、作らずに、上の段では「開く」を、下の段では「新たにセッションを作成する」を出す。「開く」は、その worktree で最後に使った Gasho のセッションを開く（なければ起動して開く）。「新たにセッションを作成する」は、その worktree で新しいセッションを起動して開く（worktree は増やさない）。worktree が複数の working server にあるときは、どちらもメニューで選ぶ
-  - 同じ名前のフォルダーが、この repo の worktree でないものとしてあれば、作らずに理由を出す
+  - `review-<番号>` が、この repo の worktree でないもの（親フォルダーが同じ別の repo の、同じ番号の Pull request の worktree など）としてあれば、`review-<リポジトリ名>-<番号>`（`4rtofl/GashoPlugins` の #12 なら `review-GashoPlugins-12`）に作り、通知にそう出す。それもあれば、作らずに理由を出す
+  - 同じ repo の clone が信頼しているフォルダーに2つ以上あるときは、その Pull request の worktree がある clone、無ければ対象リポジトリに選んだ clone、無ければパスの順で最初の clone を使う。一覧で照らし合わせる clone と、worktree を作る・片付ける clone は、いつも同じ
   - テンプレートを送るときは、そのセッションの Effort を Max に切り替えてから送る（Gasho の入力欄の Effort のピッカーと同じく、そのセッションだけ）。切り替えられなかったとき（このモデルでは選べないなど）は、テンプレートはそのまま送り、ページの下に理由と「セッションを開く」を出す。Effort を切り替えられない gasho-daemon（0.6.0 より前）では、切り替えずに送る
 - worktree を作ってテンプレートを送るときは、テンプレートの終わりに、レビューの結果を Pull request のコメントとして投稿する指示を足す（設定でテンプレートを直しても、判定が取れなくならないように）。コメントは自分の GitHub アカウントで投稿されるので、1行目を「## 🤖 Agent によるレビュー」にし、最後の行に画面に出ない印 `<!-- gasho-review verdict=mergeable sha=<レビューした head の SHA> -->`（`verdict` は `mergeable` か `changes`）を入れてもらう
 - `list` は、Pull request ごとに最新の10件のコメントを読み、自分が書いた印のうち最新のものを行に付ける（問い合わせは2点ほどになる）。また、自分が request changes を付けたかを見るため、request changes のレビューを最新の5件読む。行には、次のどれかを出す
@@ -25,24 +34,29 @@
   - 「マージしてもらう」と「差し戻す」は、手順に沿って進めるだけなので、セッションの Effort を Medium に切り替えてから送る。「修正してもらう」はコードを直すので、切り替えずに送る（レビューで Max にしたセッションなら Max のまま）。切り替えられなかったときは、送ったうえでページの下に理由を出す
   - 「マージしてもらう」と「差し戻す」の確かめるダイアログに「終わったら worktree を片付ける」があり、最初は選ばれている。選ぶと、gasho-daemon がそれを working server のこのプラグイン専用のフォルダー（`cleanups.json`）に覚え、行に「終わったら片付けます」と出す。Pull request がマージされたら（「マージしてもらう」）、頼んだあとに自分の request changes のレビューが付いたら（「差し戻す」）終わったとみなし、その worktree のセッションの作業が終わっていれば（作業中・応答待ち・入力待ちでなければ）、ページがその `review-<番号>` の worktree とローカルのブランチを、中のセッションと一緒に消す（Gasho の `useRemoveWorktree`、サイドバーの「削除…」と同じ。Pull request の head は push 済みとみなす）。消したら下に知らせを出す
     - マージされなかったとき（コンフリクトの解決で中身が変わって「再レビューが要る」に戻った、チェックが失敗した、など）は消さない。もう一度頼むと、そのときの選び方で覚え直す
-    - 未コミットの変更か push していない commit があれば、消さずに、その理由を行に出す（自動ではもう試さない。「片付ける」は使える）
+    - 未コミットの変更（追跡していないファイルを含む）か push していない commit があれば、消さずに、その理由を行に出す（自動ではもう試さない。「片付ける」は使える）。`.gitignore` で無視されたファイル（`node_modules`・`.env.local` など）は、サイドバーの「削除…」と同じく、確かめずに一緒に消す（頼むときに「終わったら worktree を片付ける」を選んでいるため）
     - 消すのは、ページを開いているブラウザー。開いていないあいだに終わったものは、次にページを開いたときに消す。いくつかのブラウザーで開いていても、gasho-daemon が1つにだけ任せる
     - 手で「片付ける」などで worktree が無くなったら、覚えていたことは忘れる
   - 自分の Pull request は、GitHub の仕様で approve も request changes もできない。「マージしてもらう」では approve せずにマージし、「差し戻す」の代わりに「修正してもらう」を出して、Agent にその worktree で直して push してもらう
   - 設定の「「マージしてもらう」のマージ方法」（merge・squash・rebase。最初は merge）と「マージしたあと GitHub の head のブランチを消す」（最初は消す）は、すべてのブラウザーで共通
-- テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る
-- `review-<番号>` の worktree がある行には「片付ける」を出す。押すと確かめてから、worktree とローカルのブランチを消す。未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも無い commit）があれば、消さずに理由を出す。Pull request がマージか閉じられたら、行に「片付けてよい」と出す。マージか閉じられて上下の段から外れた Pull request も、`review-<番号>` の worktree があるあいだは、下の段のその repo の所に出す（対象リポジトリでなくても出し、検索の語では絞り込まない）
+- テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す（名前の前後の空白は除いて保存する）。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る。fork の Pull request の `{branch}` は、GitHub の表示と同じく `<fork の owner>:<ブランチ>` にする（fork のブランチ名だけだと、`main` などがこの repo のブランチに見えるため）
+  - 設定の JSON が読めないとき、一覧でないとき、テンプレートとして使えないもの（名前か本文が無い、長すぎる、21個目より後）があるときは、設定画面の欄と「worktree を作る」のメニューにそう出す。欄で保存すると、JSON を欄のとおりに書き直す
+- `review-<番号>` の worktree がある行には「片付ける」を出す。押すと、daemon の部分が消えるものを確かめてから、ダイアログで確かめ、worktree とローカルのブランチを消す
+  - git が追跡しているファイルの未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも無い commit）があれば、消さずに理由を出す
+  - git が追跡していないファイル（追跡していないものと、`.gitignore` で無視されたもの。`status.showUntrackedFiles=no` の設定でも数える）があれば、ダイアログに並べ（中のものがすべてそうなら、フォルダーを1行で）、「ファイルも消して片付ける」で消す。並べたあとにファイルが増えたか減ったときは、消さずに、新しい一覧でもう一度確かめる
+- Pull request がマージか閉じられたら、行に「片付けてよい」と出す。`review-<番号>` の worktree があるのに上下の段から外れた Pull request も、下の段のその repo の所に出す。マージか閉じられたものは、対象リポジトリでなくても出し、検索の語では絞り込まない。開いているものは、検索の語に合うときだけ出す（対象リポジトリなら下の段の検索で、そうでなければ、そのリポジトリの開いている Pull request を検索の語で探して確かめる）
 
 ## daemon の部分のメソッド
 
 | メソッド | 種類 | すること |
 |---|---|---|
-| `options` | read | 対象リポジトリに選べるもの（`RepoOption[]`）。`ctx.folders()` のフォルダーから作り、30秒は同じものを返す |
+| `options` | read | 対象リポジトリに選べるもの（`RepoOption[]`）。`ctx.folders()` のフォルダーから作り、30秒は同じものを返す。それより古ければ、前のものを返して作り直す（フォルダーが変わったときは作り直すのを待つ） |
 | `list` | read | `{ query, fresh? }` のページ（`Listing`）。Pull request ごとに、この working server の clone と worktree（`place`）を付ける |
 | `detail` | read | `{ repo, number, fresh? }` のサイドパネルの中身（`PrDetail`）。本文・最新の30件のコメント・head のチェックと、この working server の clone と worktree（`pr.place`） |
+| `watched` | read | 対象リポジトリ（primary checkout のパスの `string[]`）。gh を使わないので、`list` が失敗しても読める。ページは、`list` の結果がまだ無いあいだ、「対象リポジトリ」で選んでいるものをこれで読む |
 | `watch` | write | 対象リポジトリを `{ paths }` に変える。新しく足せるのは `options` にある GitHub の repo だけ |
-| `create` | write | `{ repo, number }` のレビュー用の worktree を作る。もうあれば、その場所を返す（`Created`） |
-| `remove` | write | `{ repo, number }` のレビュー用の worktree とローカルのブランチを消す（`Removed`） |
+| `create` | write | `{ repo, number }` のレビュー用の worktree を作る。もうあれば、その場所を返す（`Created`。README と違う作り方をしたときは `note`） |
+| `remove` | write | `{ repo, number, check?, agreed? }` のレビュー用の worktree とローカルのブランチを消す（`Removed`）。`check` では消さずに、消えるもの（git が追跡していないファイルの `files`・`fileCount` と、同意を表す `token`）を返す。そのファイルは、`agreed` にその `token` を渡したときだけ消す |
 | `cleanup` | write | `{ repo, number, action }` の「終わったら worktree を片付ける」。`follow`（`kind` は `merge` か `sendBack`）で覚え、`forget` で忘れ、`claim` でページが消す役を取り（`{ claimed }`）、`fail`（`problem`）で消せなかった理由を残す。`list` は、覚えている Pull request の `place.cleanup` に、終わったか（`done`）を付ける |
 
 `create` と `remove` は、ブランチ名や fork かどうかを画面から受け取らず、gh で Pull request を読み直して決める。マージ・差し戻し・修正は daemon の部分ではなく、セッションの Agent が gh でする（プラグインは `session.input` で指示を送るだけで、GitHub を変えない）。git を動かすのは、`ctx.folders()` のフォルダーにある clone の中だけにする。「終わったら worktree を片付ける」で消すのは daemon の部分ではなく、ページ（Gasho の `useRemoveWorktree`、権限 `worktree.remove`）で、中のセッションも終わらせる。

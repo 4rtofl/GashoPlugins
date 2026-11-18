@@ -18,7 +18,7 @@ import {
   type MachineInfo,
   type PagePanelProps,
 } from "@gasho/plugin-sdk";
-import type { CheckRunState, PrComment, PrDetail } from "../types.ts";
+import { headName, type CheckRunState, type PrComment, type PrDetail } from "../types.ts";
 import { askOf, withoutMark } from "../verdict.ts";
 import { progressOf, type Item } from "./actions";
 import { DEFAULT_QUERY, useListings } from "./listing";
@@ -158,7 +158,7 @@ function Progress({ item, now }: { item: Item; now: number }) {
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <StateIcon pr={pr} />
         <span>
-          {stateLook(pr).label} · {openedText(pr, now)} · <span className="font-mono">{pr.branch}</span>
+          {stateLook(pr).label} · {openedText(pr, now)} · <span className="font-mono">{headName(pr)}</span>
           {pr.fork && " · fork から"}
         </span>
       </p>

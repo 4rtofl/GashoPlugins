@@ -14,6 +14,8 @@ export interface Source {
   ready: boolean;
   reason?: string;
   listing?: Listing;
+  /** What it watches: the list's, or read on its own while no list has come. */
+  watched?: string[];
   error?: string;
   refreshing: boolean;
   reload: () => void;
@@ -27,10 +29,29 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
   const daemon = useDaemonReady(machine.id);
   const on = machine.connected && daemon.ready;
   const r = useRequest<Listing>(on ? { machine: machine.id, method: "list", params: { query } } : undefined, { staleSeconds: ASK_SECONDS, refreshSeconds: ASK_SECONDS });
+  // gh may fail before any list comes; what it watches is read without gh, so the page can still name them.
+  const w = useRequest<string[]>(on && !r.data ? { machine: machine.id, method: "watched" } : undefined, { staleSeconds: 0 });
+  const watched = r.data?.watched ?? w.data;
   const call = useCall();
-  const { reload } = r;
+  const { reload: reloadList, loading } = r;
+  const { reload: reloadWatched } = w;
+  // useRequest leaves out a reload asked while it reads, whose answer may be from before what was just done (a
+  // worktree made or removed): it is asked again once that read is over.
+  const loadingNow = useRef(loading);
+  loadingNow.current = loading;
+  const again = useRef(false);
+  const reload = useCallback(() => {
+    if (loadingNow.current) again.current = true;
+    else reloadList();
+    reloadWatched();
+  }, [reloadList, reloadWatched]);
+  useEffect(() => {
+    if (loading || !again.current) return;
+    again.current = false;
+    reloadList();
+  }, [loading, reloadList]);
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string>();
+  const [refreshError, setRefreshError] = useState<{ text: string; at: number }>();
   const asked = useRef(freshAsk);
   useEffect(() => {
     if (freshAsk === asked.current || !on) return;
@@ -41,8 +62,10 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
     void call<Listing>({ machine: machine.id, method: "list", params: { query, fresh: true } }).then((res) => {
       if (!live) return;
       setRefreshing(false);
-      setRefreshError(res.ok ? undefined : res.error);
-      reload();
+      if (res.ok) {
+        setRefreshError(undefined);
+        reload();
+      } else setRefreshError({ text: res.error, at: Date.now() });
     });
     return () => {
       live = false;
@@ -50,10 +73,11 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
   }, [freshAsk]);
   useEffect(() => setRefreshError(undefined), [query]);
 
-  const error = refreshError ?? r.error;
+  // A list read after "更新" failed says the error no longer holds.
+  const error = (refreshError && !(r.at !== undefined && r.at > refreshError.at) ? refreshError.text : undefined) ?? r.error;
   useEffect(() => {
-    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, ...(error ? { error } : {}), refreshing, reload });
-  }, [machine.id, on, daemon.reason, r.data, error, refreshing, reload, onChange]);
+    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, watched, ...(error ? { error } : {}), refreshing, reload });
+  }, [machine.id, on, daemon.reason, r.data, watched, error, refreshing, reload, onChange]);
   useEffect(() => () => onChange(machine.id, undefined), [machine.id, onChange]);
   return null;
 }
@@ -89,7 +113,7 @@ export function useListings(query: string, freshAsk: number): Listings {
     const listing = sources[machine.id]?.listing;
     return listing ? [{ machine, listing }] : [];
   });
-  const page = useMemo(() => pageItems(lists), [machines, sources]);
+  const page = useMemo(() => pageItems(lists, query), [machines, sources, query]);
   return {
     sourcesEl: machines.map((m) => <ListingSource key={m.id} machine={m} query={query} freshAsk={freshAsk} onChange={onSource} />),
     machines,

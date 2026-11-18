@@ -42,7 +42,8 @@ export interface Notice {
 export interface Actions {
   notify: (n: Notice | undefined) => void;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
-  askRemove: (q: { item: Item; spot: Spot }) => Promise<boolean>;
+  /** Before removing a review worktree, with what goes with it (`removal`, from the daemon part's check). */
+  askRemove: (q: { item: Item; spot: Spot; removal: Removed }) => Promise<boolean>;
   /**
    * Before asking the Agent to merge or to send it back: what it will do, and whether to remove the review worktree
    * once it is done. Undefined when the person does not ask.
@@ -132,8 +133,13 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
     if (sessionId) sentNotice(machine, sessionId, `#${pr.number} のレビュー用の worktree はもうありました（${folderName(r.data.path)}）。`, t);
     return;
   }
+  // How it was made otherwise than usual (detached HEAD, another folder name…), after what the notice says.
+  const note = r.data.note ? ` ${r.data.note}` : "";
   const sessionId = await start(machine, r.data.path, t);
-  if (!sessionId) return;
+  if (!sessionId) {
+    if (note) t.actions.notify({ text: `#${pr.number} のレビュー用の worktree を作りましたが、セッションを起動しませんでした。${note}`, tone: "danger" });
+    return;
+  }
   if (template) {
     t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
     // The verdict's mark is asked for after the template, whatever it says.
@@ -145,7 +151,7 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
     });
     if (!sent.ok) {
       t.actions.notify({
-        text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`,
+        text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}${note}`,
         tone: "danger",
         action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
       });
@@ -153,7 +159,7 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
     }
     if (sent.data.warning) {
       t.actions.notify({
-        text: `「${template.name}」を送りました。${sent.data.warning}`,
+        text: `「${template.name}」を送りました。${sent.data.warning}${note}`,
         tone: "danger",
         action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
       });
@@ -163,7 +169,7 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
   sentNotice(
     machine,
     sessionId,
-    template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`,
+    (template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`) + note,
     t,
   );
 }
@@ -263,21 +269,39 @@ export async function cleanUp(pr: Pick<PrRow, "repo" | "number" | "head">, machi
   t.actions.reload(machine.id);
 }
 
-/** Removes a pull request's review worktree and its local branch, once the person agrees. */
+/**
+ * Removes a pull request's review worktree and its local branch, once the person agrees: the daemon part first says
+ * what would go (or why it would not), and the files git does not track go only as the person saw them listed.
+ */
 export async function removeWorktree(item: Item, spot: Spot, t: Tools): Promise<void> {
   const { pr } = item;
-  if (!spot.worktree?.review || !(await t.actions.askRemove({ item, spot }))) return;
-  t.actions.notify({ text: `${folderName(spot.worktree.path)} を片付けています…`, busy: true });
-  const r = await t.call<Removed>({
-    machine: spot.machine.id,
-    method: "remove",
-    params: { repo: pr.repo, number: pr.number },
-    summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付ける`,
-  });
-  t.actions.reload(spot.machine.id);
-  t.actions.notify(
-    r.ok
-      ? { text: `${folderName(r.data.path)} を片付けました${r.data.branch ? `（ローカルのブランチ ${r.data.branch} も消しました）` : ""}。` }
-      : { text: r.error, tone: "danger" },
-  );
+  if (!spot.worktree?.review) return;
+  const ask = (params: { check: true } | { agreed?: string }, summary: string) =>
+    t.call<Removed>({ machine: spot.machine.id, method: "remove", params: { repo: pr.repo, number: pr.number, ...params }, summary });
+  t.actions.notify({ text: `${folderName(spot.worktree.path)} を片付けられるか確かめています…`, busy: true });
+  let check = await ask({ check: true }, `${pr.repo}#${pr.number} のレビュー用の worktree を片付けられるか確かめる`);
+  for (;;) {
+    if (!check.ok) {
+      t.actions.notify({ text: check.error, tone: "danger" });
+      return;
+    }
+    t.actions.notify(undefined);
+    const removal = check.data;
+    if (!(await t.actions.askRemove({ item, spot, removal }))) return;
+    t.actions.notify({ text: `${folderName(removal.path)} を片付けています…`, busy: true });
+    const r = await ask(removal.token ? { agreed: removal.token } : {}, `${pr.repo}#${pr.number} のレビュー用の worktree を片付ける`);
+    // Files came or went since they were listed: the person sees the new list.
+    if (r.ok && !r.data.removed) {
+      check = r;
+      continue;
+    }
+    t.actions.reload(spot.machine.id);
+    if (!r.ok) {
+      t.actions.notify({ text: r.error, tone: "danger" });
+      return;
+    }
+    const also = [r.data.branch ? `ローカルのブランチ ${r.data.branch}` : undefined, r.data.fileCount > 0 ? `git が追跡していないファイル ${r.data.fileCount} 件` : undefined].filter(Boolean);
+    t.actions.notify({ text: `${folderName(r.data.path)} を片付けました${also.length > 0 ? `（${also.join("と")}も消しました）` : ""}。` });
+    return;
+  }
 }

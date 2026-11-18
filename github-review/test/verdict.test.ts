@@ -130,7 +130,7 @@ test("effort: the review at max, merge and send back at medium, mend at the sess
 });
 
 test("gh: the list reads the marks of the latest comments, whether I opened it, its conflict and whether the maintainers may push", () => {
-  const args = listArgs({ requested: requestedQuery(""), watched: [], lookups: [] });
+  const args = listArgs({ requested: requestedQuery(""), watched: [], counts: [], kept: [], lookups: [] });
   const query = args[args.indexOf("-f") + 1] ?? "";
   assert.match(query, /recent: comments\(last: 10\) \{ nodes \{ viewerDidAuthor body url createdAt \} \}/);
   assert.match(query, /viewerDidAuthor mergeable maintainerCanModify/);
@@ -167,7 +167,7 @@ test("gh: the list reads the marks of the latest comments, whether I opened it, 
         },
       },
     }),
-    { watched: 0, lookups: [] },
+    { watched: [], counts: [], kept: [], lookups: [] },
   );
   const [a, b] = answer.requested.prs;
   assert.deepEqual([a?.head, a?.own, a?.conflict, a?.canModify, a?.fork, a?.mark], [SHA, true, true, true, true, { verdict: "changes", sha: SHA, url: "c1", at: "2026-11-16T00:00:00Z" }]);

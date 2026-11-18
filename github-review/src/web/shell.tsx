@@ -5,8 +5,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCall, useLaunchSession, useNavigation, useRemoveWorktree, removeWorktreeProblem, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../cleanup.ts";
 import { mergeMethodOf } from "../instructions.ts";
-import { parseTemplates } from "../template.ts";
-import type { Place } from "../types.ts";
+import { readTemplates } from "../template.ts";
+import type { Place, Removed } from "../types.ts";
 import { working } from "../verdict.ts";
 import { cleanUp, type Actions, type Item, type Notice, type Spot, type Tools } from "./actions";
 import { AskDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
@@ -32,13 +32,13 @@ export function useRowShell({
   const send = useSendInput();
   const remove = useRemoveWorktree();
   const [rawTemplates] = useSetting<string>("templates");
-  const templates = useMemo(() => parseTemplates(rawTemplates), [rawTemplates]);
+  const { templates, problem: templatesProblem } = useMemo(() => readTemplates(rawTemplates), [rawTemplates]);
   const [rawMethod] = useSetting<string>("mergeMethod");
   const [rawDelete] = useSetting<boolean>("deleteBranch");
   const merge = useMemo(() => ({ method: mergeMethodOf(rawMethod), deleteBranch: rawDelete !== false }), [rawMethod, rawDelete]);
   const [notice, setNotice] = useState<Notice>();
   const [trust, setTrust] = useState<Question<{ path: string; warnings: string[] }>>();
-  const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot }>>();
+  const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot; removal: Removed }>>();
   const [asking, setAsking] = useState<Question<{ kind: CleanupKind; item: Item; spot: Spot }, { cleanup: boolean } | undefined>>();
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
 
@@ -57,6 +57,7 @@ export function useRowShell({
   const shared: RowShared = {
     tools,
     templates,
+    ...(templatesProblem ? { templatesProblem } : {}),
     busy,
     machines: ready.length > 1,
     merge,
@@ -104,7 +105,7 @@ function useAutoCleanup(sources: Record<string, Source>, ready: MachineInfo[], t
     for (const machine of ready) {
       const listing = sources[machine.id]?.listing;
       if (!listing) continue;
-      for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => r.prs)]) {
+      for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => [...r.prs, ...r.kept])]) {
         const place = pr.place;
         if (!place || !readyToClean(machine, place)) continue;
         const key = `${machine.id} ${pr.url} ${place.worktree?.path}`;
