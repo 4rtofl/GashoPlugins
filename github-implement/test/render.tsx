@@ -33,8 +33,8 @@ export const detail = (over: Partial<GitHubItemDetail> = {}): GitHubItemDetail =
 
 function Scope({ item, worktree, children }: { item: GitHubItemDetail; worktree: WorktreeInfo; children: ReactNode }) {
   const where = { repo: REPO, kind: item.kind, number: item.number };
-  const { busy, run, revision } = useChanges("m1", where, () => {});
-  return <ItemProvider value={{ machine: "m1", machineInfo: machine(), worktree, where, item, now: NOW, busy, run, revision }}>{children}</ItemProvider>;
+  const { busy, run, revision, changed } = useChanges("m1", where, () => {});
+  return <ItemProvider value={{ machine: "m1", machineInfo: machine(), worktree, where, item, now: NOW, busy, run, revision, reload: changed }}>{children}</ItemProvider>;
 }
 
 /** Draws `part` with the toasts it may show. */
