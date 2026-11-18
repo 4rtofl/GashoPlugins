@@ -54,6 +54,11 @@ export function limitsView(read: UsageLimits | undefined, reported: PlanLimits |
   return { source: read ? "usage" : "statusline", at: from.at, rows };
 }
 
+/** The share of a limit the popover shows: none once it has been reset, when the share read before no longer holds. */
+export function shownPercent(w: UsageWindow, now: number): number | undefined {
+  return w.resetsAt <= now ? undefined : clampPercent(w.percent);
+}
+
 const WEEKDAYS = "日月火水木金土";
 
 /** When a limit starts again, in the browser's time zone: "17:00 にリセット" today, "11月18日（水）17:00 にリセット" after. */

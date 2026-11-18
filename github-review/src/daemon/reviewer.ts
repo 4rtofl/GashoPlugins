@@ -4,7 +4,7 @@
 // when the same query was read within 30 seconds, so however many browsers look, GitHub is read about once a minute.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { cleanupDone } from "../cleanup.ts";
+import { cleanable, cleanupDone } from "../cleanup.ts";
 import { reviewPosted } from "../review-session.ts";
 import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
 import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
@@ -220,9 +220,12 @@ export class Reviewer {
       else if (!o.github) errors.push(`${p}：origin が GitHub の repo ではないので、見られません。`);
       else if (!watchedRepos.some((r) => sameRepo(r, o.github ?? ""))) watchedRepos.push(o.github);
     }
+    // A merged pull request leaves the lists: those asked to be cleaned up are read too, whatever their worktree's name.
+    const cleanups = this.deps.cleanups;
+    const followed = (await cleanups?.all().catch(() => [])) ?? [];
     const lookups: Lookup[] = [];
     for (const c of clones) {
-      const numbers = reviewNumbers(c);
+      const numbers = [...reviewNumbers(c), ...followed.filter((e) => sameRepo(e.repo, c.github)).map((e) => e.number)];
       if (numbers.length === 0) continue;
       const l = lookups.find((x) => sameRepo(x.repo, c.github));
       if (l) l.numbers.push(...numbers);
@@ -241,13 +244,19 @@ export class Reviewer {
     const answer = parseList(json, { watched: asked.watched.length, lookups });
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));
 
-    // Those whose review worktree is gone from every clone of their repository here are forgotten.
-    const cleanups = this.deps.cleanups;
+    // Those whose worktree is gone from every clone of their repository here are forgotten. A worktree of another name
+    // is found by the pull request's branch: one GitHub did not answer for is kept until it does.
     if (cleanups) {
+      const read = [...answer.requested.prs, ...answer.watched.flatMap((w) => w.prs), ...answer.lookups.flat()];
       await cleanups
         .prune((e) => {
           const of = clones.filter((c) => sameRepo(c.github, e.repo));
-          return of.length > 0 && !of.some((c) => reviewNumbers(c).includes(e.number));
+          if (of.length === 0 || of.some((c) => reviewNumbers(c).includes(e.number))) return false;
+          const pr = read.find((p) => sameRepo(p.repo, e.repo) && p.number === e.number);
+          return pr !== undefined && !of.some((c) => {
+            const w = prWorktree(c, pr);
+            return w !== undefined && cleanable(e.kind, w, c.path);
+          });
         })
         .catch((e: unknown) => this.deps.log("github-review: could not forget the worktrees cleaned up", e));
     }
@@ -257,7 +266,7 @@ export class Reviewer {
       const c = this.pick(clones, pr.repo);
       if (!c) return undefined;
       const worktree = prWorktree(c, pr);
-      const e = worktree?.review ? toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number) : undefined;
+      const e = worktree && toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && cleanable(x.kind, worktree, c.path));
       const cleanup = e && { kind: e.kind, done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
       const finishedSessions = sent.filter((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && reviewPosted(pr.mark, x)).map((x) => x.sessionId);
       return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}), ...(finishedSessions.length > 0 ? { finishedSessions } : {}) };
@@ -272,7 +281,8 @@ export class Reviewer {
       prs: watchedPrs.filter((p) => sameRepo(p.repo, repo)).map((p) => row(p, placeOf(p))),
     }));
     for (const pr of answer.lookups.flat()) {
-      if (shown.has(pr.url) || !placeOf(pr)?.worktree?.review) continue;
+      const place = placeOf(pr);
+      if (shown.has(pr.url) || !(place?.worktree?.review || place?.cleanup)) continue;
       shown.add(pr.url);
       const group = repos.find((r) => sameRepo(r.repo, pr.repo));
       if (group) group.prs.push(row(pr, placeOf(pr)));

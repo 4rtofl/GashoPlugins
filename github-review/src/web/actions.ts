@@ -17,7 +17,7 @@ import {
   type useRemoveWorktree,
   type useSendInput,
 } from "@gasho/plugin-sdk";
-import { changesProblem, type CleanupKind } from "../cleanup.ts";
+import { cleanable, changesProblem, type CleanupKind } from "../cleanup.ts";
 import type { Item as AnyItem, Spot as AnySpot } from "../items.ts";
 import { effortFor, markInstruction, REVIEW_EFFORT } from "../instructions.ts";
 import { fillTemplate, type Template } from "../template.ts";
@@ -263,19 +263,21 @@ export async function askAgent(spot: Spot, label: string, text: string, effort: 
 
 /**
  * After a merge or a send-back was sent: the daemon part keeps whether to remove the review worktree once it is done
- * (`cleanup`), or forgets what an earlier ask said. Only a review worktree
- * (review-<repository>-<number>, or review-<number> from before) is ever removed.
+ * (`cleanup`), or forgets what an earlier ask said. A merge may remove a worktree of any name, a send-back only a review
+ * worktree (review-<repository>-<number>, or review-<number> from before); the primary checkout is never removed. An ask
+ * that may not remove the worktree forgets the one before it too: a send-back takes the place of the merge asked earlier.
  */
 export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind, cleanup: boolean, t: Tools): Promise<void> {
-  if (!spot.worktree?.review) return;
+  if (!spot.worktree) return;
+  const follow = cleanup && cleanable(kind, spot.worktree, spot.primary);
   const r = await t.call({
     machine: spot.machine.id,
     method: "cleanup",
-    params: { repo: pr.repo, number: pr.number, ...(cleanup ? { action: "follow", kind } : { action: "forget" }) },
-    summary: cleanup ? `${pr.repo}#${pr.number} の${KIND_TEXT[kind]}が終わったら、レビュー用の worktree を片付ける` : `${pr.repo}#${pr.number} のレビュー用の worktree を自動では片付けない`,
+    params: { repo: pr.repo, number: pr.number, ...(follow ? { action: "follow", kind } : { action: "forget" }) },
+    summary: follow ? `${pr.repo}#${pr.number} の${KIND_TEXT[kind]}が終わったら、worktree を片付ける` : `${pr.repo}#${pr.number} の worktree を自動では片付けない`,
   });
   t.actions.reload(spot.machine.id);
-  if (!r.ok && cleanup) t.actions.notify({ text: `指示は送りましたが、終わったら片付けるように覚えられませんでした：${r.error}`, tone: "danger" });
+  if (!r.ok && follow) t.actions.notify({ text: `指示は送りましたが、終わったら片付けるように覚えられませんでした：${r.error}`, tone: "danger" });
 }
 
 const KIND_TEXT: Record<CleanupKind, string> = { merge: "マージ", sendBack: "差し戻し" };
@@ -288,10 +290,10 @@ const KIND_TEXT: Record<CleanupKind, string> = { merge: "マージ", sendBack: "
  */
 export async function cleanUp(pr: Pick<PrRow, "repo" | "number" | "head">, machine: MachineInfo, place: Place, t: Tools): Promise<void> {
   const { worktree, cleanup } = place;
-  if (!worktree?.review || !cleanup) return;
+  if (!worktree || !cleanup) return;
   const target = { machine: machine.id, method: "cleanup" } as const;
   const ref = { repo: pr.repo, number: pr.number };
-  const claim = await t.call<{ claimed: boolean }>({ ...target, params: { ...ref, action: "claim" }, summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付け始める` });
+  const claim = await t.call<{ claimed: boolean }>({ ...target, params: { ...ref, action: "claim" }, summary: `${pr.repo}#${pr.number} の worktree を片付け始める` });
   if (!claim.ok || !claim.data.claimed) return;
   const r = await t.remove({
     machine: machine.id,
@@ -301,28 +303,28 @@ export async function cleanUp(pr: Pick<PrRow, "repo" | "number" | "head">, machi
   });
   const name = folderName(worktree.path);
   if (r.ok) {
-    await t.call({ ...target, params: { ...ref, action: "forget" }, summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付けた` });
+    await t.call({ ...target, params: { ...ref, action: "forget" }, summary: `${pr.repo}#${pr.number} の worktree を片付けた` });
     t.actions.notify({
       text: `#${pr.number} の${KIND_TEXT[cleanup.kind]}が終わったので、${name}${worktree.branch ? "とローカルのブランチ" : ""}を片付けました。${r.warning ? `（${r.warning}）` : ""}`,
     });
   } else {
     const problem = r.changes ? changesProblem(r.changes) : `自動では片付けられませんでした：${r.error}`;
-    await t.call({ ...target, params: { ...ref, action: "fail", problem }, summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付けられなかった` });
+    await t.call({ ...target, params: { ...ref, action: "fail", problem }, summary: `${pr.repo}#${pr.number} の worktree を片付けられなかった` });
     t.actions.notify({ text: `#${pr.number} の ${name}：${problem}`, tone: "danger" });
   }
   t.actions.reload(machine.id);
 }
 
-/** Removes a pull request's review worktree and its local branch, once the person agrees. */
+/** Removes a pull request's review worktree, or the one a merge asked to clean up, and its local branch, once the person agrees. */
 export async function removeWorktree(item: Item, spot: Spot, t: Tools): Promise<void> {
   const { pr } = item;
-  if (!spot.worktree?.review || !(await t.actions.askRemove({ item, spot }))) return;
+  if (!(spot.worktree?.review || spot.cleanup) || !spot.worktree || !(await t.actions.askRemove({ item, spot }))) return;
   t.actions.notify({ text: `${folderName(spot.worktree.path)} を片付けています…`, busy: true });
   const r = await t.call<Removed>({
     machine: spot.machine.id,
     method: "remove",
     params: { repo: pr.repo, number: pr.number },
-    summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付ける`,
+    summary: `${pr.repo}#${pr.number} の worktree を片付ける`,
   });
   t.actions.reload(spot.machine.id);
   t.actions.notify(

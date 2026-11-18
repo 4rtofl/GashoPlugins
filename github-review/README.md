@@ -30,7 +30,7 @@
   - fork の Pull request で head に push できない（maintainer の変更を許していない）ときは、コンフリクトがあれば「マージしてもらう」を押せなくし、理由を出す
   - 「差し戻す」は、確かめてから送る。Agent がレビュー結果のコメントを元に request changes のレビューを付ける
   - 「マージしてもらう」と「差し戻す」は、手順に沿って進めるだけなので、セッションの Effort を Medium に切り替えてから送る。「修正してもらう」はコードを直すので、切り替えずに送る（レビューで xHigh にしたセッションなら xHigh のまま）。切り替えられなかったときは、送ったうえでページの下に理由を出す
-  - 「マージしてもらう」と「差し戻す」の確かめるダイアログに「終わったら worktree を片付ける」があり、最初は選ばれている。選ぶと、gasho-daemon がそれを working server のこのプラグイン専用のフォルダー（`cleanups.json`）に覚え、行に「終わったら片付けます」と出す。Pull request がマージされたら（「マージしてもらう」）、頼んだあとに自分の request changes のレビューが付いたら（「差し戻す」）終わったとみなし、その worktree のセッションの作業が終わっていれば（作業中・応答待ち・入力待ちでなければ）、ページがその `review-<リポジトリ名>-<番号>` の worktree とローカルのブランチを、中のセッションと一緒に消す（Gasho の `useRemoveWorktree`、サイドバーの「削除…」と同じ。Pull request の head は push 済みとみなす）。消したら下に知らせを出す
+  - 「マージしてもらう」と「差し戻す」の確かめるダイアログに「終わったら worktree を片付ける」があり、最初は選ばれている。選ぶと、gasho-daemon がそれを working server のこのプラグイン専用のフォルダー（`cleanups.json`）に覚え、行に「終わったら片付けます」と出す。Pull request がマージされたら（「マージしてもらう」）、頼んだあとに自分の request changes のレビューが付いたら（「差し戻す」）終わったとみなし、その worktree のセッションの作業が終わっていれば（作業中・応答待ち・入力待ちでなければ）、ページがその worktree とローカルのブランチを、中のセッションと一緒に消す（Gasho の `useRemoveWorktree`、サイドバーの「削除…」と同じ。Pull request の head は push 済みとみなす）。消したら下に知らせを出す。「マージしてもらう」では、その Pull request のブランチの worktree なら名前を問わず片付けられる。「差し戻す」で片付けられるのは `review-<リポジトリ名>-<番号>` の worktree だけで、primary checkout はどちらでも消さない。ほかの名前の worktree で「差し戻す」を頼むと、前の「マージしてもらう」で頼んだ片付けは取り消す
     - マージされなかったとき（コンフリクトの解決で中身が変わって「再レビューが要る」に戻った、チェックが失敗した、など）は消さない。もう一度頼むと、そのときの選び方で覚え直す
     - 未コミットの変更か push していない commit があれば、消さずに、その理由を行に出す（自動ではもう試さない。「片付ける」は使える）
     - 消すのは、ページを開いているブラウザー。開いていないあいだに終わったものは、次にページを開いたときに消す。いくつかのブラウザーで開いていても、gasho-daemon が1つにだけ任せる
@@ -38,7 +38,7 @@
   - 自分の Pull request は、GitHub の仕様で approve も request changes もできない。「マージしてもらう」では approve せずにマージし、「差し戻す」の代わりに「修正してもらう」を出して、Agent にその worktree で直して push してもらう
   - 設定の「「マージしてもらう」のマージ方法」（merge・squash・rebase。最初は merge）と「マージしたあと GitHub の head のブランチを消す」（最初は消す）は、すべてのブラウザーで共通
 - テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る
-- `review-<リポジトリ名>-<番号>` の worktree がある行には「片付ける」を出す。押すと確かめてから、worktree とローカルのブランチを消す。未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも、worktree を作ったときの commit にも無い commit）があれば、消さずに理由を出す。worktree を作ったときの commit は、その worktree の HEAD の reflog の最初の行から読むので、作者がそのあと rebase や force-push をしても、レビューした人が commit していなければ片付けられる。Pull request がマージか閉じられたら、行に「片付けてよい」と出す。マージか閉じられて上下の段から外れた Pull request も、`review-<リポジトリ名>-<番号>` の worktree があるあいだは、下の段のその repo の所に出す（対象リポジトリでなくても出し、検索の語では絞り込まない）
+- `review-<リポジトリ名>-<番号>` の worktree と、「マージしてもらう」で片付けると選んだ worktree（名前は問わない）がある行には「片付ける」を出す。押すと確かめてから、worktree とローカルのブランチを消す。未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも、worktree を作ったときの commit にも無い commit）があれば、消さずに理由を出す。worktree を作ったときの commit は、その worktree の HEAD の reflog の最初の行から読むので、作者がそのあと rebase や force-push をしても、レビューした人が commit していなければ片付けられる。Pull request がマージか閉じられたら、`review-<リポジトリ名>-<番号>` の worktree の行に「片付けてよい」と出す。マージか閉じられて上下の段から外れた Pull request も、`review-<リポジトリ名>-<番号>` の worktree か、「マージしてもらう」で片付けると選んだ worktree があるあいだは、下の段のその repo の所に出す（対象リポジトリでなくても出し、検索の語では絞り込まない）
 
 ## daemon の部分のメソッド
 
@@ -49,7 +49,7 @@
 | `detail` | read | `{ repo, number, fresh? }` のサイドパネルの中身（`PrDetail`）。本文・最新の30件のコメント・head のチェックと、この working server の clone と worktree（`pr.place`） |
 | `watch` | write | 対象リポジトリを `{ paths }` に変える。新しく足せるのは `options` にある GitHub の repo だけ |
 | `create` | write | `{ repo, number }` のレビュー用の worktree を作る。もうあれば、その場所を返す（`Created`） |
-| `remove` | write | `{ repo, number }` のレビュー用の worktree とローカルのブランチを消す（`Removed`） |
+| `remove` | write | `{ repo, number }` のレビュー用の worktree か、「マージしてもらう」で片付けると選んだ worktree（名前は問わない）と、ローカルのブランチを消す（`Removed`） |
 | `reviewSession` | write | `{ sessionId, action }` のレビューを送ったセッション。`track`（`repo`・`number`・`before`）で覚え、`forget` で忘れ、`claim` でページが消す役を取る（`{ claimed }`）。`list` は、結果を投稿したセッションを `place.finishedSessions` に入れる |
 | `cleanup` | write | `{ repo, number, action }` の「終わったら worktree を片付ける」。`follow`（`kind` は `merge` か `sendBack`）で覚え、`forget` で忘れ、`claim` でページが消す役を取り（`{ claimed }`）、`fail`（`problem`）で消せなかった理由を残す。`list` は、覚えている Pull request の `place.cleanup` に、終わったか（`done`）を付ける |
 

@@ -27,7 +27,7 @@ export interface PrWorktree {
   branch?: string;
   /**
    * review-<repository>-<number> (or review-<number>, the name before) beside the primary checkout: one made for the
-   * review, which "片付ける" removes.
+   * review, which "片付ける" removes. A worktree of another name is removed only when "マージしてもらう" asked for it.
    */
   review: boolean;
   /** Its folder is gone, though git still has it: it does not open, and is made again or removed. */

@@ -6,7 +6,7 @@ import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
-import type { CleanupKind } from "../cleanup.ts";
+import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
 import { canPush } from "../types.ts";
 import { sessionsIn, type Item, type Notice, type Spot } from "./actions";
@@ -58,7 +58,7 @@ export function RemoveDialog({ question, onAnswer }: { question: { item: Item; s
         <Dialog.Overlay className={DIALOG_OVERLAY} />
         <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
           <div className="space-y-1.5">
-            <Dialog.Title className="text-base font-semibold tracking-tight">レビュー用の worktree を片付けますか</Dialog.Title>
+            <Dialog.Title className="text-base font-semibold tracking-tight">worktree を片付けますか</Dialog.Title>
             <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
               {wt?.missing ? "フォルダーはもうありません。git に残っている worktree の登録" : "worktree のフォルダー"}{wt?.branch ? "とローカルのブランチ" : ""}を消します。未コミットの変更か、push していない commit があるときは、消さずに理由を出します。
             </Dialog.Description>
@@ -113,8 +113,8 @@ const ASK_TEXT: Record<CleanupKind, { title: string; ok: string; done: string }>
 
 /**
  * Before the Agent is asked to merge or to send it back: what it will do (with the settings of the merge), and whether
- * to remove the review worktree once it is done ("終わったら片付ける", on unless it cannot be: no review worktree, or
- * Gasho cannot remove it).
+ * to remove the worktree once it is done ("終わったら片付ける", on unless it cannot be: the primary checkout, a send-back
+ * from a worktree not made for the review, or Gasho cannot remove it).
  */
 export function AskDialog({
   question,
@@ -129,7 +129,14 @@ export function AskDialog({
   const kind = question?.kind ?? "merge";
   const text = ASK_TEXT[kind];
   const wt = question?.spot.worktree;
-  const cannot = !question || !wt ? undefined : !wt.review ? "レビュー用の worktree（review-<リポジトリ名>-<番号>）ではないので、片付けません。" : removeWorktreeProblem(question.spot.machine, { path: wt.path, repo: question.spot.primary });
+  const cannot =
+    !question || !wt
+      ? undefined
+      : wt.path === question.spot.primary
+        ? "リポジトリの本体の checkout なので、片付けません。"
+        : !cleanable(kind, wt, question.spot.primary)
+          ? "差し戻しのあとも作業が続くので、レビュー用の worktree（review-<リポジトリ名>-<番号>）だけを片付けます。"
+          : removeWorktreeProblem(question.spot.machine, { path: wt.path, repo: question.spot.primary });
   const [cleanup, setCleanup] = useState(true);
   // Every question starts checked.
   useEffect(() => setCleanup(true), [question]);

@@ -252,11 +252,12 @@ async function madeAt(exec: Exec, cwd: string, ref: string, tip?: string): Promi
  * Removes the review worktree of a pull request and its local branch: only when nothing in it would be lost, that is,
  * no uncommitted change and no commit that is neither on a branch of a remote, nor the pull request's head, nor the
  * commit the worktree was made at (its author may have rebased or force-pushed since). One whose folder is gone has
- * no uncommitted change to lose, and git forgets it.
+ * no uncommitted change to lose, and git forgets it. `anyName`: the worktree on its branch counts too, whatever its
+ * name (a merge asked to clean it up). Never the primary checkout.
  */
-export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Removed> {
+export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { anyName?: boolean } = {}): Promise<Removed> {
   const wt = prWorktree(clone, pr);
-  if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
+  if (!wt || wt.path === clone.path || !(wt.review || o.anyName)) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
   // One whose folder is gone is read in the primary checkout, which has its HEAD as worktrees/<id>/HEAD; git names a
   // worktree after its folder when it makes it.
   const at = wt.missing

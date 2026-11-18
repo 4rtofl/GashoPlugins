@@ -145,9 +145,9 @@ function useFinishedSessions(sources: Record<string, Source>, ready: MachineInfo
   }, [sources, ready, tools]);
 }
 
-/** A review worktree whose merge or send-back is done, with no session at work in it: the page removes it now. */
+/** A worktree whose merge or send-back is done, with no session at work in it: the page removes it now. */
 function readyToClean(machine: MachineInfo, place: Place): boolean {
   const { worktree, cleanup } = place;
-  if (!worktree?.review || !cleanup?.done || cleanup.problem) return false;
+  if (!worktree || !cleanup?.done || cleanup.problem) return false;
   return !working(machine.sessions, worktree.path) && removeWorktreeProblem(machine, { path: worktree.path, repo: place.primary }) === undefined;
 }

@@ -1,0 +1,8 @@
+{
+  "id": "daemon-mismatch",
+  "name": "Daemon mismatch",
+  "version": "1.0.0",
+  "api": "1.3",
+  "daemon": { "js": "daemon.js" },
+  "methods": { "echo": { "kind": "read" }, "missing": { "kind": "read" } }
+}
