@@ -13,8 +13,19 @@ import { sessionsIn, type ForkQuestion, type Item, type Notice, type Spot } from
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
 
-/** Claude Code asks whether to trust a folder before a session starts there: the person answers here. */
-export function TrustDialog({ question, onAnswer }: { question: { path: string; warnings: string[] } | undefined; onAnswer: (yes: boolean) => void }) {
+/**
+ * Claude Code asks whether to trust a folder before a session starts there: the person answers here. `note`: what else
+ * a yes means where it is asked ("まとめてレビューさせる").
+ */
+export function TrustDialog({
+  question,
+  note,
+  onAnswer,
+}: {
+  question: { path: string; warnings: string[] } | undefined;
+  note?: string;
+  onAnswer: (yes: boolean) => void;
+}) {
   return (
     <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
@@ -24,6 +35,7 @@ export function TrustDialog({ question, onAnswer }: { question: { path: string; 
             <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
             <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
               Claude Code は、このフォルダーをまだ信頼していません。信頼すると、セッションはこのフォルダーのファイルを読み書きし、コマンドを実行できます。
+              {note && <span className="mt-1 block">{note}</span>}
             </Dialog.Description>
           </div>
           <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>

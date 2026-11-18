@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
-import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING } from "../src/instructions.ts";
+import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING, reviewInstruction } from "../src/instructions.ts";
 import { ASK_RECHECK_MS, ASK_SETTLE_MS, askEndUnseen, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, underway, withoutMark, workEndUnseen, working, workRechecking, type Asked, type Recheck, type ReviewMark } from "../src/verdict.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -79,6 +79,8 @@ test("instructions: the review is posted with the heading and the mark; merge, s
   assert.ok(m.includes("gh pr view 5 --json headRefOid -q .headRefOid --repo o/r"));
   // The mark the instruction shows is one the page reads.
   assert.deepEqual(readMark(m.replace("<SHA>", SHA)), { verdict: "mergeable", sha: SHA });
+  // "worktree を作る" and "まとめてレビューさせる" send the template filled in, then the mark's instruction.
+  assert.equal(reviewInstruction({ body: "#{number} {title} をレビューして" }, PR), `#5 直す をレビューして\n${m}`);
 
   const merge = mergeInstruction(PR, mark, { method: "squash", deleteBranch: true, own: false, fork: false, canPush: true });
   assert.ok(merge.includes("gh pr review 5 --approve"));
