@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
-import { askAgent, createWorktree, newSessionIn, openWorktree, removeFinishedSession, reviewIn, type Item, type Notice, type Spot, type Tools } from "../src/web/actions.ts";
+import type { CleanupKind } from "../src/cleanup.ts";
+import { askAgent, createWorktree, followCleanup, newSessionIn, openWorktree, removeFinishedSession, reviewIn, type Item, type Notice, type Spot, type Tools } from "../src/web/actions.ts";
 import type { Created } from "../src/types.ts";
 
 const PR = { repo: "o/r", number: 5, title: "直す", url: "https://github.com/o/r/pull/5", branch: "feat/5-fix" } as Item["pr"];
@@ -17,6 +18,7 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
   const sent: string[] = [];
   const launched: string[] = [];
   const efforts: (string | undefined)[] = [];
+  const calls: unknown[] = [];
   const machine = { id: "m1", name: "m1", canLaunch: true, features: ["effort"], sessions: (opts.sessions ?? []) as SessionInfo[] } as MachineInfo;
   const tools = {
     call: (async ({ method, params }: { method: string; params: { action?: string } }) => {
@@ -25,6 +27,7 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
         tracked.push(params);
         return { ok: true, data: { claimed: opts.claimed ?? true } };
       }
+      calls.push(params);
       return { ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created };
     }) as unknown as Tools["call"],
     launch: (async ({ cwd }: { cwd: string }) => {
@@ -54,7 +57,7 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
     },
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };
-  return { tools, spot, machine, item: { pr: PR, spots: [spot] } as Item, notices, opened, sent, launched, efforts, steps, tracked, removed, last: () => notices.at(-1) };
+  return { tools, spot, machine, item: { pr: PR, spots: [spot] } as Item, notices, opened, sent, launched, efforts, calls, steps, tracked, removed, last: () => notices.at(-1) };
 }
 
 test("create: starts a session and sends the template, but stays on the page; the notice opens the session", async () => {
@@ -142,6 +145,28 @@ test("create: when the effort level could not be switched, it says why and stays
   assert.equal(n?.tone, "danger");
   n?.action?.run();
   assert.deepEqual(f.opened, ["m1/s-new"]);
+});
+
+test("follow: what may be removed is kept; any other ask forgets the one before it", async () => {
+  const asked = async (kind: CleanupKind, cleanup: boolean, worktree: { path: string; review: boolean }) => {
+    const f = fake();
+    await followCleanup(f.item, { ...f.spot, worktree }, kind, cleanup, f.tools);
+    return f.calls;
+  };
+  const named = { path: "/w/r/my-work", review: false };
+  const review = { path: DIR, review: true };
+  const follow = (kind: CleanupKind) => [{ repo: "o/r", number: 5, action: "follow", kind }];
+  const forget = [{ repo: "o/r", number: 5, action: "forget" }];
+
+  assert.deepEqual(await asked("merge", true, named), follow("merge"));
+  assert.deepEqual(await asked("merge", true, review), follow("merge"));
+  assert.deepEqual(await asked("sendBack", true, review), follow("sendBack"));
+  assert.deepEqual(await asked("merge", false, named), forget);
+  // A send-back from a worktree not made for the review: "マージしてもらう" asked before it no longer removes the worktree.
+  assert.deepEqual(await asked("sendBack", false, named), forget);
+  assert.deepEqual(await asked("sendBack", true, named), forget);
+  // The primary checkout is never followed.
+  assert.deepEqual(await asked("merge", true, { path: "/w/r", review: false }), forget);
 });
 
 test("a session is tracked before the review is sent, with the verdict there was; 何も送らない tracks nothing", async () => {
