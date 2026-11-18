@@ -4,26 +4,14 @@
 // there.
 import { Ban, Check, ChevronDown, CircleAlert, Clock, ExternalLink, LoaderCircle, Sparkles } from "lucide-react";
 import { Dialog, DropdownMenu } from "radix-ui";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { cn, type MachineInfo } from "@gasho/plugin-sdk";
 import { batchTargets } from "../items.ts";
 import type { Template } from "../template.ts";
 import type { BatchStep, Item } from "./actions";
 import type { BatchChoice, BatchRun, BatchTarget } from "./batch-run";
-import { Button, DrawCheckbox } from "./ui/parts";
+import { Button, DrawCheckbox, PortalScope } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, MENU, MENU_ITEM } from "./ui/styles";
-
-/**
- * What goes in a portal (at the end of the page, outside the plugin's part) is wrapped in this, the only place the
- * plugin's CSS applies to (Gasho's docs/plugins.md); without it, only the classes Gasho's own screen has would.
- */
-function Scope({ children }: { children: ReactNode }) {
-  return (
-    <div data-gasho-plugin="github-review" style={{ display: "contents" }}>
-      {children}
-    </div>
-  );
-}
 
 /** The button with its menu: a template for each working server that has pull requests to do and can start sessions. */
 export function BatchMenu({
@@ -58,7 +46,7 @@ export function BatchMenu({
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <Scope>
+        <PortalScope>
           <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
             {where.map(({ machine, targets }, i) => (
               <DropdownMenu.Group key={machine.id}>
@@ -86,7 +74,7 @@ export function BatchMenu({
               </DropdownMenu.Group>
             ))}
           </DropdownMenu.Content>
-        </Scope>
+        </PortalScope>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
@@ -158,7 +146,7 @@ export function BatchDialog({
   return (
     <Dialog.Root open={Boolean(choice ?? run)} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
-        <Scope>
+        <PortalScope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
           <Dialog.Content className={cn(DIALOG_PANEL, "flex w-[min(34rem,calc(100vw-2rem))] flex-col gap-4")}>
             <div className="space-y-1.5">
@@ -242,7 +230,7 @@ export function BatchDialog({
               )}
             </div>
           </Dialog.Content>
-        </Scope>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );
