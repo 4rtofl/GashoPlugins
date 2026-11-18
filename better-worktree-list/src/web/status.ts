@@ -23,7 +23,7 @@ export type State = (typeof STATES)[number]["id"];
 export function stateOf(w: WorktreeListWorktree): State {
   if (w.sessions.length === 0) return "none";
   if (!w.machine.connected) return "offline";
-  // A session whose turn has ended while only shells run on in the background is idle, as Gasho tells it.
+  // A session whose turn has ended while work runs on in the background is busy here, as Gasho's dots show it.
   if (w.status === "waiting" || w.status === "busy") return w.status;
   return "idle";
 }

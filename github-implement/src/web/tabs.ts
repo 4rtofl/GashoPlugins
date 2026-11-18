@@ -2,7 +2,7 @@
 // its branch is named after, the pull requests of its branch, the ones added by hand), then "GitHub", which lists them
 // and adds more. They are read again every "refreshSeconds" while they show.
 import { CircleCheck, CircleDot, CircleSlash, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, ListPlus, type LucideIcon } from "lucide-react";
-import { createElement, type ComponentType } from "react";
+import { createContext, createElement, useContext, type ComponentType } from "react";
 import { cn, useRequest, useSetting, type RequestOptions, type RequestTarget, type WorktreeContext, type WorktreeInfo, type WorktreeTab } from "@gasho/plugin-sdk";
 import { newsCount } from "../news.ts";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
@@ -22,9 +22,18 @@ export function itemsTarget(machine: string, worktree: WorktreeInfo, ready: bool
   });
 }
 
-/** How often the screen reads again: the setting, or (0) only when shown and when asked. */
+/** Whether the working server of the screen around is offline (item/view.tsx says so to the parts of an item). */
+export const OfflineContext = createContext(false);
+
+/**
+ * How often the screen reads again: the setting, or (0) only when shown and when asked. Offline, never: the parts keep
+ * what they read rather than each showing that the working server is offline, which the screen says once. Back, the
+ * ones older than staleSeconds read again at once.
+ */
 export function useRefreshOptions(): RequestOptions {
   const [refresh] = useSetting<number>("refreshSeconds");
+  const offline = useContext(OfflineContext);
+  if (offline) return {};
   const seconds = typeof refresh === "number" && refresh >= 0 ? refresh : 60;
   return seconds > 0 ? { refreshSeconds: seconds, staleSeconds: seconds } : { staleSeconds: 30 };
 }
