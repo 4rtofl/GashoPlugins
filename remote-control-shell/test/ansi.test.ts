@@ -52,6 +52,12 @@ test("a carriage return goes back to the start of the line, and what follows ove
   // The cursor along the line: Node's readline clears the line and goes back to its start for each update.
   assert.deepEqual(texts(toLines("10%\x1b[2K\x1b[1G20%\x1b[2K\x1b[1G30%")), ["30%"]);
   assert.deepEqual(texts(toLines("ab\x1b[3Cc\x1b[G>\x1b[99D<")), ["<b   c"]);
+  // Past the end of the line, the cursor goes no further right than 500 columns; along a longer line, it does.
+  assert.equal(texts(toLines("a\x1b[99999Cz"))[0], `a${" ".repeat(499)}z`);
+  const long = "x".repeat(1000);
+  assert.equal(texts(toLines(`${long}\x1b[1DZ`))[0], `${"x".repeat(999)}Z`);
+  assert.equal(texts(toLines(`${long}\x1b[800GZ`))[0]?.indexOf("Z"), 799);
+  assert.equal(texts(toLines(`${long}\x1b[2D\x1b[1CZ`))[0], `${"x".repeat(999)}Z`);
   // Windows' line ends, and a backspace (man's bold and underline overstrike).
   assert.deepEqual(texts(toLines("one\r\ntwo\r\n")), ["one", "two"]);
   assert.deepEqual(texts(toLines("A\bA_\bB")), ["AB"]);

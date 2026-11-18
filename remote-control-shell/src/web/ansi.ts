@@ -32,7 +32,7 @@ interface Cell {
 const PLAIN: Style = Object.freeze({});
 /** An OSC (window title, link, …) longer than this without its end is taken as broken: its start is dropped. */
 const MAX_STRING_SEQUENCE = 4096;
-/** The cursor goes no further right than this: COLUMNS is 500 at most (daemon/index.ts). */
+/** The cursor goes no further right than this past the end of a line: COLUMNS is 500 at most (daemon/index.ts). */
 const MAX_COLUMN = 500;
 
 const hex = (r: number, g: number, b: number): string =>
@@ -220,9 +220,12 @@ export function toLines(text: string, more = false): Line[] {
           else if (mode === 1) for (let k = 0; k <= col && k < cells.length; k++) cells[k] = { ch: " ", style: PLAIN };
           else if (mode === 2) cells = [];
         } else if ((final === "G" || final === "C" || final === "D") && !privateParams) {
-          // To a column (Node's readline goes back to the start with ESC[1G), right, left.
+          // To a column (Node's readline goes back to the start with ESC[1G), right, left. Only past the end of the line
+          // is it held at MAX_COLUMN: a line longer than that is written to where the cursor is.
           const k = Math.max(1, Number.parseInt(params, 10) || 1);
-          col = Math.min(MAX_COLUMN, final === "G" ? k - 1 : final === "C" ? col + k : Math.max(0, col - k));
+          const limit = Math.max(MAX_COLUMN, cells.length);
+          if (final === "D") col = Math.max(0, col - k);
+          else col = final === "G" ? Math.min(k - 1, limit) : Math.max(col, Math.min(col + k, limit));
         }
         i = j + 1;
         continue;
