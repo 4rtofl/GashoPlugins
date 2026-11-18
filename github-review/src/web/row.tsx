@@ -312,7 +312,7 @@ export function AgentAsk({ item, reading }: { item: Item; reading?: OwnReading |
   const ask = askOf(pr, progressOf(item));
   const placed = spots.filter((s) => s.worktree);
   const mark = pr.mark;
-  const followed = placed.find((s) => s.worktree?.review && s.cleanup && !s.cleanup.problem)?.cleanup;
+  const followed = placed.find((s) => s.cleanup && !s.cleanup.problem)?.cleanup;
   const now = Date.now();
   const mine = asked.get(pr.url);
   const running = askRunning(ask, mark, { working: workingIn(item), asked: mine, followed, now });
