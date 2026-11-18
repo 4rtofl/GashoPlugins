@@ -141,7 +141,7 @@ test("checkManifest refuses what a Gasho server refuses", () => {
   assert.deepEqual(wrong({ description: "d".repeat(301) }), ["description must be up to 300 characters"]);
   assert.deepEqual(wrong({ api: "1" }), ['api "1" is not like 1.0']);
   assert.deepEqual(wrong({ api: "2.0" }), ["api 2.0 is not of the plugin API 1"]);
-  assert.deepEqual(wrong({ permissions: ["session.read"] }), ["permissions can name only session.input, session.launch, session.remove, worktree.remove"]);
+  assert.deepEqual(wrong({ permissions: ["session.read"] }), ["permissions can name only session.input, session.launch, session.remove, worktree.remove, session.notification"]);
   assert.deepEqual(wrong({ web: undefined }), ["give web, daemon or theme (or several)"]);
   assert.deepEqual(wrong({ web: { js: "../web.js" } }), ["web.js must name a file inside the plugin's folder"]);
   assert.deepEqual(wrong({ methods: { list: { kind: "read" } } }), ["methods needs daemon"]);

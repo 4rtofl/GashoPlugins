@@ -248,8 +248,9 @@ async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: str
 }
 
 /**
- * The session is removed once it has posted the review. Called before the review is sent, so that the result cannot
- * come first. Without it the review goes on, and the session stays.
+ * The session is removed once it has posted the review, and its end is notified with the result. Called before the
+ * review is sent, so that neither can come first. Without them the review goes on: the session stays, with Gasho's own
+ * notification.
  */
 async function trackSession(pr: Item["pr"], machine: MachineInfo, sessionId: string, t: Tools): Promise<void> {
   await t.call({
@@ -257,6 +258,12 @@ async function trackSession(pr: Item["pr"], machine: MachineInfo, sessionId: str
     method: "reviewSession",
     params: { action: "track", sessionId, repo: pr.repo, number: pr.number, ...(pr.mark ? { before: pr.mark.url } : {}) },
     summary: `${pr.repo}#${pr.number} のレビューの結果を投稿したら、セッションを削除する`,
+  });
+  await t.call({
+    machine: machine.id,
+    method: "trackReview",
+    params: { sessionId, repo: pr.repo, number: pr.number },
+    summary: `${pr.repo}#${pr.number} のレビューの終わりを通知する`,
   });
 }
 
