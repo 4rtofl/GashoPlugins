@@ -175,6 +175,16 @@ test("a step before the failed one that ran in the same second is left out of it
   ]);
 });
 
+test("a step after the failed one that fails in the same second is left out of its log (real log)", () => {
+  // grafana/grafana, job 134597618775: step 8 (the Playwright tests) fails at 05:30:31, when step 9 (`if: failure()`)
+  // runs and fails too. The log is cut down to the lines around those, without the steps' env.
+  const lines = logTail(fixture("job-log-same-second.txt"), { startedAt: "2026-11-18T05:24:52Z", completedAt: "2026-11-18T05:30:31Z" }, 1000);
+  assert.equal(lines[0], "Run pnpm run e2e:playwright --shard=3/8 --reporter=dot,blob --output=playwright-test-results");
+  assert.ok(lines.some((l) => l.includes("4 failed")));
+  assert.equal(lines.at(-1), "Error: Process completed with exit code 1.");
+  assert.ok(!lines.some((l) => l.includes("Tests in this shard failed") || l.includes("upload-artifact")));
+});
+
 test("failed jobs beyond those whose log is read say so", async () => {
   const one = JSON.parse(fixture("run-failed.json")) as { jobs: Record<string, unknown>[] };
   const failedJob = one.jobs[0] ?? {};

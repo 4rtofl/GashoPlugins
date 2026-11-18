@@ -166,22 +166,24 @@ function jobStepStarts(lines: LogLine[]): number[] {
 }
 
 /**
- * The end of a failed job's log: the part of the step that failed (its lines, by the step's start and end, from its
- * "##[group]Run …" to the next step or the cleanup after its last error), else of the whole log. Timestamps, colors
- * and GitHub's markers go.
+ * The end of a failed job's log: the part of the first step that failed (its lines, by the step's start and end, from
+ * its "##[group]Run …" to the next step or the cleanup after its last error), else of the whole log. Timestamps,
+ * colors and GitHub's markers go.
  */
 export function logTail(log: string, failed?: Pick<Step, "startedAt" | "completedAt">, max = LOG_LINES): string[] {
   let lines = logLines(log);
   const start = Date.parse(failed?.startedAt ?? "");
   const end = Date.parse(failed?.completedAt ?? "");
   if (Number.isFinite(start) && Number.isFinite(end)) {
-    // The step's times are to the second: its lines are those of [start, end + 1 s).
+    // The step's times are to the second: its lines are those of [start, end + 1 s). Steps that ran in its first second
+    // before it, and in its last second after it (one of `if: failure()` that fails too), are inside as well. Those
+    // before it succeeded, so its error is the first, and it is the last of the job's steps to start before that.
     const inside = lines.filter((l) => l.at >= start && l.at < end + 1000);
-    // A step before it that ran in the same second is inside too: the failed step is the last to start before its error.
     const starts = jobStepStarts(inside);
-    const errorAt = inside.findLastIndex(isError);
-    const first = starts.findLast((i) => i < errorAt) ?? starts[0] ?? -1;
-    let part = first >= 0 ? inside.slice(first) : inside;
+    const errorAt = inside.findIndex(isError);
+    const first = errorAt >= 0 ? (starts.findLast((i) => i < errorAt) ?? -1) : (starts[0] ?? -1);
+    const next = starts.find((i) => i > Math.max(errorAt, first));
+    let part = inside.slice(Math.max(first, 0), next);
     // The steps of a composite action start with "##[group]Run " too, and run until the one that fails: the step ends
     // at the first start after its last error (else after its own start).
     const lastError = part.findLastIndex(isError);
