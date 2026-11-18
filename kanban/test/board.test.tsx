@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { LaunchResult } from "@gasho/plugin-sdk";
@@ -92,6 +92,12 @@ describe("KanbanPage", () => {
     const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
     expect(within(dialog).getByText("/work/issue-1-x")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json に hooks があります")).toBeTruthy();
+    // Drawn where the plugin's CSS applies, though the portal puts it outside the page.
+    expect(dialog.closest('[data-gasho-plugin="kanban"]')).not.toBeNull();
+    // As it shows, neither its buttons nor Esc answer it (the second click of a double click, say).
+    expect(within(dialog).getByRole("button", { name: "信頼して起動する" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "このフォルダーを信頼しますか" })).toBe(dialog);
     await answerTrust(dialog, "信頼して起動する");
 
     await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
@@ -122,12 +128,6 @@ describe("KanbanPage", () => {
     expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-1");
   });
 
-  it("starts nothing when the person does not trust the folder", async () => {
-    set({ machines: [machine({ canLaunch: true })] });
-    respond({ board: { data: board() } });
-    sdk.launchSession.mockReturnValue({ ok: false, error: "trust", needsTrust: true });
-    render(<KanbanPage params={{}} />);
-    await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
   it("keeps a card's question while the board is left, shows it once the board is back, and then starts the session and opens it", async () => {
     set({ machines: [machine({ canLaunch: true })] });
     respond({ board: { data: board() } });
@@ -173,6 +173,12 @@ describe("KanbanPage", () => {
     expect(sdk.launchSession.mock.calls.flatMap(([input]) => (input.trust ? [input.cwd] : []))).toEqual(["/work/issue-1-x", "/work/issue-2-y"]);
   });
 
+  it("starts nothing when the person does not trust the folder", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    respond({ board: { data: board() } });
+    sdk.launchSession.mockReturnValue({ ok: false, error: "trust", needsTrust: true });
+    render(<KanbanPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
     await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

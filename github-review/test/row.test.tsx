@@ -113,6 +113,11 @@ describe("a pull request without a worktree", () => {
     const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
     expect(within(dialog).getByText("/work/review-7")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json があります")).toBeTruthy();
+    // Drawn where the plugin's CSS applies, though the portal puts it outside the page.
+    expect(dialog.closest('[data-gasho-plugin="github-review"]')).not.toBeNull();
+    // A press as it shows (the second click of a double click, say) is not its answer.
+    await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
+    expect(sdk.launchSession).toHaveBeenCalledTimes(1);
     read();
     await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
     await openFromNotice();
@@ -135,11 +140,6 @@ describe("a pull request without a worktree", () => {
     expect(sdk.nav.openSession).not.toHaveBeenCalled();
   });
 
-  it("says that the session started but the template could not be sent, and does not open it", async () => {
-    answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
-    sdk.sendInput.mockReturnValueOnce({ ok: false, error: "the session is not ready" });
-    render(<ReviewPage params={{}} />);
-    await choose("レビュー");
   it("keeps the question of a row's work while the page is left, shows it once the page is back, and the work goes on", async () => {
     let made!: () => void;
     answerCalls({ create: () => new Promise((resolve) => (made = () => resolve({ ok: true, data: { path: "/work/review-7", created: true } }))) });
@@ -175,6 +175,11 @@ describe("a pull request without a worktree", () => {
     expect(sdk.launchSession).toHaveBeenCalledTimes(2);
   });
 
+  it("says that the session started but the template could not be sent, and does not open it", async () => {
+    answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
+    sdk.sendInput.mockReturnValueOnce({ ok: false, error: "the session is not ready" });
+    render(<ReviewPage params={{}} />);
+    await choose("レビュー");
     expect((await screen.findByRole("alert")).textContent).toContain("セッションは起動しましたが、「レビュー」を送れませんでした：the session is not ready");
     expect(sdk.nav.openSession).not.toHaveBeenCalled();
   });
