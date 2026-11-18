@@ -99,7 +99,7 @@ test("list: a merge asked from a worktree of any name is followed after the pull
 });
 
 test("gh: the query reads the reviews that request changes; only mine count, the latest", () => {
-  const args = listArgs({ ...upperSearches(""), watched: [], lookups: [] });
+  const args = listArgs({ ...upperSearches("", []), watched: [], lookups: [] });
   assert.match(args[args.indexOf("-f") + 1] ?? "", /changes: reviews\(last: 5, states: \[CHANGES_REQUESTED\]\) \{ nodes \{ viewerDidAuthor submittedAt \} \}/);
   const pr = (changes: unknown) =>
     parsePr({ number: 3, title: "t", url: "https://github.com/o/r/pull/3", state: "OPEN", headRefName: "feat/3", repository: { nameWithOwner: "o/r" }, changes });
