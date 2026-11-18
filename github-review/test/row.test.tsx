@@ -3,7 +3,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { answerCalls, callsOf, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
 import { ForkDialog } from "../src/web/dialogs.tsx";
 import type { ForkQuestion } from "../src/web/actions.ts";
@@ -27,6 +27,21 @@ const pr = (over: Partial<PrRow> = {}): PrRow => ({
 const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], errors: [], ...over });
 const listed = (over: Partial<Listing> = {}) => ({ data: listing(over) });
 const review = { path: "/work/review-7", branch: "pr-7", review: true };
+
+/**
+ * The clock of the presses and of when a question shows (the dialogs take no press within 0.5 s of that): once stopped,
+ * it moves only as a test reads the question shown.
+ */
+let now = 0;
+function stopClock(): void {
+  now = 10_000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  vi.spyOn(Event.prototype, "timeStamp", "get").mockImplementation(() => now);
+}
+const read = () => {
+  now += 1_000;
+};
+afterEach(() => vi.restoreAllMocks());
 
 beforeEach(() => {
   set({ machines: [machine({ canLaunch: true })], settings: { templates: JSON.stringify([{ name: "レビュー", body: "#{number} をレビューして" }]) } });
@@ -85,11 +100,13 @@ describe("a pull request without a worktree", () => {
   it("asks before Claude Code trusts the new folder, and starts the session only once trusted", async () => {
     answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
     sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true, trustWarnings: [".claude/settings.json があります"] });
+    stopClock();
     render(<ReviewPage params={{}} />);
     await choose("何も送らない");
     const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
     expect(within(dialog).getByText("/work/review-7")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json があります")).toBeTruthy();
+    read();
     await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
     await openFromNotice();
     expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched");
@@ -99,9 +116,12 @@ describe("a pull request without a worktree", () => {
   it("starts nothing when the person does not trust the folder", async () => {
     answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
     sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true });
+    stopClock();
     render(<ReviewPage params={{}} />);
     await choose("レビュー");
-    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "やめる" }));
+    const dialog = await screen.findByRole("dialog");
+    read();
+    await userEvent.click(within(dialog).getByRole("button", { name: "やめる" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(sdk.launchSession).toHaveBeenCalledTimes(1);
     expect(sdk.sendInput).not.toHaveBeenCalled();
@@ -188,8 +208,11 @@ describe("a pull request with a worktree", () => {
 describe("fork pull requests asked about one after another", () => {
   const fork = (n: number) =>
     pr({ number: n, url: `https://github.com/4rtofl/app/pull/${n}`, fork: true, place: { primary: "/work/app", worktree: { path: `/work/review-${n}`, branch: `pr-${n}`, review: true } } });
+  const yes = (dialog: HTMLElement) => within(dialog).getByRole("button", { name: "起動する" });
+  const launched = () => sdk.launchSession.mock.calls.map(([input]) => input.cwd);
+  beforeEach(stopClock);
 
-  it("takes no press soon after an answer for the next question, which starts only once pressed later", async () => {
+  it("takes no press begun within 0.5 s of a question showing, which starts only once pressed later", async () => {
     let show = () => {};
     const shown = new Promise<void>((r) => (show = r));
     respond({ list: listed({ requested: [fork(7), fork(8)] }) });
@@ -197,17 +220,23 @@ describe("fork pull requests asked about one after another", () => {
     render(<ReviewPage params={{}} />);
     for (const open of screen.getAllByRole("button", { name: "開く" })) await userEvent.click(open);
     show();
-    // Each press is at the same moment as the answer before it, as two quick clicks the browser counted apart are.
-    const at = vi.spyOn(Event.prototype, "timeStamp", "get").mockReturnValue(1_000);
-    await userEvent.click(within(await screen.findByRole("dialog", { description: /^#7「/ })).getByRole("button", { name: "起動する" }));
+    const first = await screen.findByRole("dialog", { description: /^#7「/ });
+    await userEvent.click(yes(first));
+    expect(launched()).toEqual([]);
+    read();
+    await userEvent.click(yes(first));
+    // #8 shows in its place: a second click, Enter and Esc at once are not its answers, nor is a press begun then and let go later.
     const next = await screen.findByRole("dialog", { description: /^#8「/ });
-    await userEvent.click(within(next).getByRole("button", { name: "起動する" }));
-    await userEvent.keyboard("{Enter}");
+    await userEvent.click(yes(next));
+    await userEvent.keyboard("{Enter}{Escape}");
+    await userEvent.pointer({ keys: "[MouseLeft>]", target: yes(next) });
+    read();
+    await userEvent.pointer({ keys: "[/MouseLeft]", target: yes(next) });
+    expect(screen.getByRole("dialog", { description: /^#8「/ })).toBe(next);
     expect(document.activeElement?.textContent).toBe("起動しない");
-    expect(sdk.launchSession.mock.calls.map(([input]) => input.cwd)).toEqual(["/work/review-7"]);
-    at.mockReturnValue(2_000);
-    await userEvent.click(within(next).getByRole("button", { name: "起動する" }));
-    await waitFor(() => expect(sdk.launchSession.mock.calls.map(([input]) => input.cwd)).toEqual(["/work/review-7", "/work/review-8"]));
+    expect(launched()).toEqual(["/work/review-7"]);
+    await userEvent.click(yes(next));
+    await waitFor(() => expect(launched()).toEqual(["/work/review-7", "/work/review-8"]));
   });
 
   it("shows one question at a time across the dialogs of the page and the side panel, the one asked first", async () => {
@@ -220,7 +249,8 @@ describe("fork pull requests asked about one after another", () => {
     render(<Asking n={12} />);
     render(<Asking n={11} />);
     expect(screen.getAllByRole("dialog").map((d) => d.textContent)).toEqual([expect.stringContaining("#12「")]);
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "起動する" }));
+    read();
+    await userEvent.click(yes(screen.getByRole("dialog")));
     expect(answers).toEqual(["#12 true"]);
     expect(screen.getAllByRole("dialog").map((d) => d.textContent)).toEqual([expect.stringContaining("#11「")]);
   });

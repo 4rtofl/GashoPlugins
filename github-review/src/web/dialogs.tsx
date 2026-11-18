@@ -43,37 +43,42 @@ function useOnScreen<Q extends object>(question: Q | undefined): Q | undefined {
   return question && first === question ? question : undefined;
 }
 
-/** How soon after an answer a press is not taken for the next question (ms): two quick clicks counted apart. */
+/** How long after a question shows a press is not taken for its answer (ms). */
 const SETTLE_MS = 500;
 
 /**
- * The questions that may wait behind each other (shell.tsx): answering one shows the next in its place at once, so what
- * would answer it unseen is not taken. A press soon after the last answer or the second of a double click neither
- * answers nor moves the focus to a button of the next question; nor does a key held down (`heldKey`, and Esc here) or a
- * click outside the panel (`stayOpen`; the buttons and Esc answer). Each question gets a new panel (`key`), which puts
- * the focus back on its first button, the no.
+ * A question shows in the place of the one answered or over the page at once, so what would answer it unseen is not
+ * taken: a press begun before it showed or within SETTLE_MS of that (judged when the button went down, also when it
+ * comes up later: a click, Enter, Space or Esc), the second of a double click, a key held down, and a click outside
+ * the panel (`stayOpen`; the buttons and Esc answer). Such a press does not move the focus to its buttons either. Each
+ * question gets a new panel (`key`), which puts the focus on its first button, the no.
  */
-function useAnswer(onAnswer: (yes: boolean) => void) {
-  const answeredAt = useRef(-Infinity);
-  const unseen = (e: MouseEvent) => e.detail >= 2 || e.timeStamp - answeredAt.current < SETTLE_MS;
+function useAnswer(shown: object | undefined, onAnswer: (yes: boolean) => void) {
+  const shownAt = useRef(Infinity);
+  const pressedAt = useRef<number>(undefined);
+  useEffect(() => {
+    shownAt.current = performance.now();
+  }, [shown]);
+  const early = (t: number) => t - shownAt.current < SETTLE_MS;
   return {
     onMouseDown: (e: MouseEvent) => {
-      if (unseen(e)) e.preventDefault();
+      pressedAt.current = e.timeStamp;
+      if (e.detail >= 2 || early(e.timeStamp)) e.preventDefault();
+    },
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.repeat) e.preventDefault();
+      else pressedAt.current = e.timeStamp;
     },
     onEscapeKeyDown: (e: globalThis.KeyboardEvent) => {
-      if (e.repeat) e.preventDefault();
-      else answeredAt.current = e.timeStamp;
+      if (e.repeat || early(e.timeStamp)) e.preventDefault();
     },
     answer: (yes: boolean) => (e: MouseEvent) => {
-      if (unseen(e)) return;
-      answeredAt.current = e.timeStamp;
-      onAnswer(yes);
+      const at = pressedAt.current ?? e.timeStamp;
+      pressedAt.current = undefined;
+      if (e.detail < 2 && !early(at)) onAnswer(yes);
     },
   };
 }
-const heldKey = (e: KeyboardEvent) => {
-  if (e.repeat) e.preventDefault();
-};
 const stayOpen = (e: Event) => e.preventDefault();
 
 /**
@@ -90,14 +95,14 @@ export function TrustDialog({
   onAnswer: (yes: boolean) => void;
 }) {
   const shown = useOnScreen(question);
-  const { answer, onMouseDown, onEscapeKeyDown } = useAnswer(onAnswer);
+  const { answer, onMouseDown, onKeyDown, onEscapeKeyDown } = useAnswer(shown, onAnswer);
   return (
     <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
         <Dialog.Overlay className={DIALOG_OVERLAY} />
         <Dialog.Content
           key={shown?.path}
-          onKeyDown={heldKey}
+          onKeyDown={onKeyDown}
           onMouseDown={onMouseDown}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={stayOpen}
@@ -138,7 +143,7 @@ export function TrustDialog({
  */
 export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | undefined; onAnswer: (yes: boolean) => void }) {
   const shown = useOnScreen(question);
-  const { answer, onMouseDown, onEscapeKeyDown } = useAnswer(onAnswer);
+  const { answer, onMouseDown, onKeyDown, onEscapeKeyDown } = useAnswer(shown, onAnswer);
   const pr = shown?.pr;
   const files = shown?.files ?? [];
   return (
@@ -149,7 +154,7 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
           <Dialog.Overlay className={DIALOG_OVERLAY} />
           <Dialog.Content
             key={shown?.path}
-            onKeyDown={heldKey}
+            onKeyDown={onKeyDown}
             onMouseDown={onMouseDown}
             onEscapeKeyDown={onEscapeKeyDown}
             onPointerDownOutside={stayOpen}
