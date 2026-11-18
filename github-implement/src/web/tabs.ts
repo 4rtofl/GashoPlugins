@@ -14,7 +14,12 @@ import type { BadgeTone } from "./ui/badge.tsx";
 export function itemsTarget(machine: string, worktree: WorktreeInfo, ready: boolean): RequestTarget | undefined {
   const github = worktree.github;
   if (!ready || !github) return undefined;
-  return readOp(machine, "items", { repo: `${github.owner}/${github.name}`, worktree: worktree.path, ...(worktree.branch ? { branch: worktree.branch } : {}) });
+  return readOp(machine, "items", {
+    repo: `${github.owner}/${github.name}`,
+    worktree: worktree.path,
+    ...(worktree.branch ? { branch: worktree.branch } : {}),
+    ...(worktree.repo ? { repoDir: worktree.repo } : {}),
+  });
 }
 
 /** How often the screen reads again: the setting, or (0) only when shown and when asked. */

@@ -13,6 +13,9 @@ export interface KeptWorktree {
   seenAt: number;
 }
 
+/** GitHub takes the names of owners and repositories in any case. */
+const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+
 /** Shown worktrees are written down at most this often, so that every look at a tab does not write the file. */
 const SEEN_WRITE_MS = 10 * 60_000;
 /** Worktrees kept, at most: the ones shown longest ago go first. */
@@ -53,11 +56,16 @@ export class Store {
     return [...this.worktrees].filter(([, w]) => w.seenAt >= since).sort((a, b) => b[1].seenAt - a[1].seenAt);
   }
 
-  /** Gasho shows the worktree's tabs now: what it is, as the screen says. */
-  async seen(worktree: string, repo: string, branch: string | undefined, now: number): Promise<KeptWorktree> {
+  /**
+   * Gasho shows the worktree's tabs now: what it is, as the screen says. The numbers added to it stay when its repository
+   * has the same name, or another name that `renamed` says is of the same repository on GitHub (the origin was set to the
+   * repository's new name after a rename).
+   */
+  async seen(worktree: string, repo: string, branch: string | undefined, now: number, renamed: (was: string) => Promise<boolean>): Promise<KeptWorktree> {
     await this.load();
     const old = this.worktrees.get(worktree);
-    const w: KeptWorktree = { repo, ...(branch ? { branch } : {}), added: old && old.repo === repo ? old.added : [], seenAt: now };
+    const keep = old !== undefined && (sameName(old.repo, repo) || (old.added.length > 0 && (await renamed(old.repo))));
+    const w: KeptWorktree = { repo, ...(branch ? { branch } : {}), added: keep ? old.added : [], seenAt: now };
     this.worktrees.set(worktree, w);
     const changed = !old || old.repo !== repo || old.branch !== branch;
     if (changed || now - (this.written.get(worktree) ?? 0) >= SEEN_WRITE_MS) await this.save();
@@ -67,7 +75,7 @@ export class Store {
   async add(worktree: string, repo: string, number: number, now: number): Promise<void> {
     await this.load();
     const old = this.worktrees.get(worktree);
-    const added = old && old.repo === repo ? old.added : [];
+    const added = old && sameName(old.repo, repo) ? old.added : [];
     this.worktrees.set(worktree, { repo, ...(old?.branch ? { branch: old.branch } : {}), added: added.includes(number) ? added : [...added, number], seenAt: now });
     await this.save();
   }

@@ -116,11 +116,12 @@ export const SUMMARY = "__typename ... on Issue { number title state stateReason
 const PULL_VERSION =
   "updatedAt headRefOid baseRefOid mergeable commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 0) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }";
 const ITEM = `__typename ... on Issue { number title state stateReason url updatedAt } ... on PullRequest { number title state isDraft url ${PULL_VERSION} }`;
-const PULL = `__typename number title state isDraft url ${PULL_VERSION}`;
+const PULL = `__typename number title state isDraft url ${PULL_VERSION} isCrossRepository`;
 
 /**
- * The gh arguments that read a worktree's issues and pull requests at once: the pull requests whose head is `branch`
- * and every number asked for. The numbers go into the query itself (aliases n<number>), which only ever holds digits.
+ * The gh arguments that read a worktree's issues and pull requests at once: the pull requests whose head has the name
+ * `branch` (forks' too: parseItems leaves them out) and every number asked for. The numbers go into the query itself
+ * (aliases n<number>), which only ever holds digits.
  */
 export function itemsQueryArgs(repo: string, branch: string | undefined, numbers: number[]): string[] {
   const [owner, name] = repo.split("/") as [string, string];
@@ -152,11 +153,26 @@ export function summary(raw: unknown): ItemSummary | undefined {
   };
 }
 
-/** The output of itemsQueryArgs as a worktree's items. `named` and `added` are the numbers that were asked for. */
-export function parseItems(json: string, named: number | undefined, added: number[], at: number): WorktreeItems {
+/**
+ * Whether a pull request whose head has the worktree's branch name is the worktree's: never one from a fork, whose
+ * branch only has the same name, and a merged one only while `head` (the worktree's HEAD, when it could be read) is its
+ * head commit. One merged before from a branch of the same name has another head, even when that head is in the
+ * worktree's history (merged with a merge commit into the branch the worktree was made from).
+ */
+function isOwnPull(raw: unknown, head: string | undefined): boolean {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  if (r.isCrossRepository === true) return false;
+  return str(r.state)?.toUpperCase() !== "MERGED" || (head !== undefined && str(r.headRefOid)?.toLowerCase() === head.toLowerCase());
+}
+
+/**
+ * The output of itemsQueryArgs as a worktree's items. `named` and `added` are the numbers that were asked for, `head`
+ * the worktree's HEAD commit (none when it could not be read: then no merged pull request is the worktree's).
+ */
+export function parseItems(json: string, named: number | undefined, added: number[], at: number, head?: string): WorktreeItems {
   const data = (JSON.parse(json) as { data?: { repository?: Record<string, unknown> | null } }).data?.repository ?? {};
   const pullNodes = ((data.pulls as { nodes?: unknown[] } | undefined)?.nodes ?? []) as unknown[];
-  const pulls = pullNodes.flatMap((n) => summary(n) ?? []);
+  const pulls = pullNodes.flatMap((n) => (isOwnPull(n, head) ? (summary(n) ?? []) : []));
   const of = (n: number) => summary(data[`n${n}`]);
   const namedItem = named === undefined ? undefined : of(named);
   return {
@@ -166,6 +182,21 @@ export function parseItems(json: string, named: number | undefined, added: numbe
     missing: added.filter((n) => !of(n)),
     at,
   };
+}
+
+/** Whether two names are of one repository: GitHub still finds a repository by a name it had before a rename. */
+export function sameRepoArgs(a: string, b: string): string[] {
+  const [ao, an] = a.split("/") as [string, string];
+  const [bo, bn] = b.split("/") as [string, string];
+  const query = "query($ao: String!, $an: String!, $bo: String!, $bn: String!) { a: repository(owner: $ao, name: $an) { id } b: repository(owner: $bo, name: $bn) { id } }";
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `ao=${ao}`, "-f", `an=${an}`, "-f", `bo=${bo}`, "-f", `bn=${bn}`];
+}
+
+/** The output of sameRepoArgs: false when GitHub does not have either name. */
+export function isSameRepo(json: string): boolean {
+  const data = (JSON.parse(json) as { data?: Record<string, { id?: unknown } | null> | null }).data;
+  const a = str(data?.a?.id);
+  return a !== undefined && a === str(data?.b?.id);
 }
 
 /** The version of each item in the output of itemsQueryArgs, by number: it changes when what the item's screen reads does. */
@@ -307,6 +338,13 @@ export function ghError(e: unknown): string {
     return "この working server の GitHub CLI（gh）がログインしていません。working server で gh auth login を実行してください。";
   }
   if (/Could not resolve to an? (issue|pull ?request)/i.test(text)) return "この番号の Issue や Pull request は見つかりません。";
+  // A name gh did not find among the repository's labels, people, teams, milestones or projects: "could not add label:
+  // 'x' not found" when an issue or pull request is made, only "'x' not found" when one is edited.
+  const name = /(?:^|: )'(.+)' not found\s*$/m.exec(text);
+  if (name) {
+    const what = /could not add label/i.test(text) ? "ラベル" : /could not assign user/i.test(text) ? "担当者" : /could not request reviewer/i.test(text) ? "レビュアー" : "";
+    return `${what}「${name[1]?.slice(0, 100)}」が、このリポジトリで見つかりません。`;
+  }
   if (/Could not resolve to a Repository|HTTP 404|not found/i.test(text)) {
     return "GitHub でこのリポジトリを読めませんでした。gh でログインしているアカウントに権限がないか、リポジトリがありません。";
   }

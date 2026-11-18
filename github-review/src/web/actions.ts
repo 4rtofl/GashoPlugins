@@ -134,38 +134,49 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
   }
   const sessionId = await start(machine, r.data.path, t);
   if (!sessionId) return;
-  if (template) {
-    t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
-    // The verdict's mark is asked for after the template, whatever it says.
-    const sent = await t.send({
-      machine: machine.id,
-      sessionId,
-      text: `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}`,
-      ...effortFor(machine, REVIEW_EFFORT),
-    });
-    if (!sent.ok) {
-      t.actions.notify({
-        text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`,
-        tone: "danger",
-        action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
-      });
-      return;
-    }
-    if (sent.data.warning) {
-      t.actions.notify({
-        text: `「${template.name}」を送りました。${sent.data.warning}`,
-        tone: "danger",
-        action: { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) },
-      });
-      return;
-    }
-  }
+  if (template && !(await sendTemplate(pr, machine, sessionId, template, t))) return;
   sentNotice(
     machine,
     sessionId,
     template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`,
     t,
   );
+}
+
+/**
+ * Sends a session the template, with the verdict's mark asked for after it whatever it says, at the effort level of a
+ * review. False (with the reason shown) when it did not go, or went without the effort level.
+ */
+async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<boolean> {
+  t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
+  const sent = await t.send({
+    machine: machine.id,
+    sessionId,
+    text: `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}`,
+    ...effortFor(machine, REVIEW_EFFORT),
+  });
+  const open = { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) };
+  if (!sent.ok) {
+    t.actions.notify({ text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`, tone: "danger", action: open });
+    return false;
+  }
+  if (sent.data.warning) {
+    t.actions.notify({ text: `「${template.name}」を送りました。${sent.data.warning}`, tone: "danger", action: open });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * "レビューする" on my own pull request, whose worktree is there already (the one I made it in): starts a new session
+ * there, apart from the one that made the changes, and sends it the template as "worktree を作る" does. The page stays.
+ */
+export async function reviewIn({ pr }: Item, spot: Spot, template: Template, t: Tools): Promise<void> {
+  if (!spot.worktree) return;
+  const { machine } = spot;
+  const sessionId = await start(machine, spot.worktree.path, t);
+  if (!sessionId) return;
+  if (await sendTemplate(pr, machine, sessionId, template, t)) sentNotice(machine, sessionId, `#${pr.number} のレビューのセッションを起動し、「${template.name}」を送りました。`, t);
 }
 
 /** Opens the worktree a pull request has on a working server. */
@@ -214,7 +225,8 @@ export async function askAgent(spot: Spot, label: string, text: string, effort: 
 
 /**
  * After a merge or a send-back was sent: the daemon part keeps whether to remove the review worktree once it is done
- * (`cleanup`), or forgets what an earlier ask said. Only a review worktree (review-<number>) is ever removed.
+ * (`cleanup`), or forgets what an earlier ask said. Only a review worktree
+ * (review-<repository>-<number>, or review-<number> from before) is ever removed.
  */
 export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind, cleanup: boolean, t: Tools): Promise<void> {
   if (!spot.worktree?.review) return;
