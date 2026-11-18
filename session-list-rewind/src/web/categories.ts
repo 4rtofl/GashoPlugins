@@ -73,12 +73,12 @@ export function categories(ctx: SessionListContext): SessionCategory[] {
   }
   // A repository registered with its working server has its category even without a session, for its "＋".
   for (const w of ctx.worktrees) if (w.registered) categoryOf(w);
-  const categories = [...byId.values()];
+  const all = [...byId.values()];
 
   // Headings of the same name on a working server (a folder outside a repository and the repository in it, a fork and
   // its upstream in two clones) tell the folder they are in, shown even on a phone, where the hint is not.
   const sameName = new Map<string, Category[]>();
-  for (const c of categories) {
+  for (const c of all) {
     const k = `${c.machine.id}\u001f${c.title}`;
     sameName.set(k, [...(sameName.get(k) ?? []), c]);
   }
@@ -89,7 +89,7 @@ export function categories(ctx: SessionListContext): SessionCategory[] {
     cs.forEach((c, i) => where.set(c.id, labels[i]!));
   }
 
-  return categories.map((c) => {
+  return all.map((c) => {
     const description = [several ? c.machine.name : undefined, where.get(c.id)].filter(Boolean).join(" · ");
     // The worktree a session is in is told only when they are not all in one.
     const spread = new Set(c.sessions.map((s) => s.worktree.key)).size > 1;
