@@ -5,7 +5,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
 import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
@@ -14,19 +14,35 @@ import { sessionsIn, type ForkQuestion, type Item, type Notice, type Spot } from
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
 
+/** How soon after an answer a press is not taken for the next question (ms): two quick clicks counted apart. */
+const SETTLE_MS = 500;
+
 /**
  * The questions that may wait behind each other (shell.tsx): answering one shows the next in its place at once, so what
- * would answer it unseen is not taken: the second click of a double click (`single`), a key held down (`heldKey`,
- * `heldEscape`) and a click outside the panel (`stayOpen`; the buttons and Esc answer). Each question gets a new panel
- * (`key`), which puts the focus back on its first button, the no.
+ * would answer it unseen is not taken. A press soon after the last answer or the second of a double click neither
+ * answers nor moves the focus to a button of the next question; nor does a key held down (`heldKey`, and Esc here) or a
+ * click outside the panel (`stayOpen`; the buttons and Esc answer). Each question gets a new panel (`key`), which puts
+ * the focus back on its first button, the no.
  */
-const single = (answer: () => void) => (e: MouseEvent) => {
-  if (e.detail < 2) answer();
-};
+function useAnswer(onAnswer: (yes: boolean) => void) {
+  const answeredAt = useRef(-Infinity);
+  const unseen = (e: MouseEvent) => e.detail >= 2 || e.timeStamp - answeredAt.current < SETTLE_MS;
+  return {
+    onMouseDown: (e: MouseEvent) => {
+      if (unseen(e)) e.preventDefault();
+    },
+    onEscapeKeyDown: (e: globalThis.KeyboardEvent) => {
+      if (e.repeat) e.preventDefault();
+      else answeredAt.current = e.timeStamp;
+    },
+    answer: (yes: boolean) => (e: MouseEvent) => {
+      if (unseen(e)) return;
+      answeredAt.current = e.timeStamp;
+      onAnswer(yes);
+    },
+  };
+}
 const heldKey = (e: KeyboardEvent) => {
-  if (e.repeat) e.preventDefault();
-};
-const heldEscape = (e: globalThis.KeyboardEvent) => {
   if (e.repeat) e.preventDefault();
 };
 const stayOpen = (e: Event) => e.preventDefault();
@@ -44,6 +60,7 @@ export function TrustDialog({
   note?: string;
   onAnswer: (yes: boolean) => void;
 }) {
+  const { answer, onMouseDown, onEscapeKeyDown } = useAnswer(onAnswer);
   return (
     <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
@@ -51,7 +68,8 @@ export function TrustDialog({
         <Dialog.Content
           key={question?.path}
           onKeyDown={heldKey}
-          onEscapeKeyDown={heldEscape}
+          onMouseDown={onMouseDown}
+          onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={stayOpen}
           className={cn(DIALOG_PANEL, "flex flex-col gap-4")}
         >
@@ -71,10 +89,10 @@ export function TrustDialog({
             </ul>
           )}
           <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Button size="sm" onClick={single(() => onAnswer(false))}>
+            <Button size="sm" onClick={answer(false)}>
               やめる
             </Button>
-            <Button size="sm" variant="primary" onClick={single(() => onAnswer(true))}>
+            <Button size="sm" variant="primary" onClick={answer(true)}>
               信頼して起動する
             </Button>
           </div>
@@ -89,6 +107,7 @@ export function TrustDialog({
  * primary checkout), so the person is shown which of PROJECT_FILES the worktree has, and may leave it unstarted.
  */
 export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | undefined; onAnswer: (yes: boolean) => void }) {
+  const { answer, onMouseDown, onEscapeKeyDown } = useAnswer(onAnswer);
   const pr = question?.pr;
   const files = question?.files ?? [];
   return (
@@ -100,7 +119,8 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
           <Dialog.Content
             key={question?.path}
             onKeyDown={heldKey}
-            onEscapeKeyDown={heldEscape}
+            onMouseDown={onMouseDown}
+            onEscapeKeyDown={onEscapeKeyDown}
             onPointerDownOutside={stayOpen}
             className={cn(DIALOG_PANEL, "flex flex-col gap-4")}
           >
@@ -124,10 +144,10 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
               <p className="text-xs text-muted-foreground">worktree の一番上に {PROJECT_FILES.join("・")} はありません。</p>
             )}
             <div className="flex justify-end gap-2 border-t border-border pt-4">
-              <Button size="sm" onClick={single(() => onAnswer(false))}>
+              <Button size="sm" onClick={answer(false)}>
                 起動しない
               </Button>
-              <Button size="sm" variant="primary" onClick={single(() => onAnswer(true))}>
+              <Button size="sm" variant="primary" onClick={answer(true)}>
                 起動する
               </Button>
             </div>

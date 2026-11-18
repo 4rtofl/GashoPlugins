@@ -2,7 +2,7 @@
 // launcher, the dialogs that ask first, the notice at the bottom).
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { answerCalls, callsOf, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
 import { ReviewPage } from "../src/web/page.tsx";
 import type { Listing, PrRow } from "../src/types.ts";
@@ -179,5 +179,31 @@ describe("a pull request with a worktree", () => {
     render(<ReviewPage params={{}} />);
     expect(screen.getByRole("button", { name: "開く" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "片付ける" })).toBeNull();
+  });
+});
+
+describe("fork pull requests asked about one after another", () => {
+  const fork = (n: number) =>
+    pr({ number: n, url: `https://github.com/4rtofl/app/pull/${n}`, fork: true, place: { primary: "/work/app", worktree: { path: `/work/review-${n}`, branch: `pr-${n}`, review: true } } });
+
+  it("takes no press soon after an answer for the next question, which starts only once pressed later", async () => {
+    let show = () => {};
+    const shown = new Promise<void>((r) => (show = r));
+    respond({ list: listed({ requested: [fork(7), fork(8)] }) });
+    answerCalls({ projectFiles: (p) => shown.then(() => ({ ok: true, data: { path: `/work/review-${(p as { number: number }).number}`, files: [".claude/"] } })) });
+    render(<ReviewPage params={{}} />);
+    for (const open of screen.getAllByRole("button", { name: "開く" })) await userEvent.click(open);
+    show();
+    // Each press is at the same moment as the answer before it, as two quick clicks the browser counted apart are.
+    const at = vi.spyOn(Event.prototype, "timeStamp", "get").mockReturnValue(1_000);
+    await userEvent.click(within(await screen.findByRole("dialog", { description: /^#7「/ })).getByRole("button", { name: "起動する" }));
+    const next = await screen.findByRole("dialog", { description: /^#8「/ });
+    await userEvent.click(within(next).getByRole("button", { name: "起動する" }));
+    await userEvent.keyboard("{Enter}");
+    expect(document.activeElement?.textContent).toBe("起動しない");
+    expect(sdk.launchSession.mock.calls.map(([input]) => input.cwd)).toEqual(["/work/review-7"]);
+    at.mockReturnValue(2_000);
+    await userEvent.click(within(next).getByRole("button", { name: "起動する" }));
+    await waitFor(() => expect(sdk.launchSession.mock.calls.map(([input]) => input.cwd)).toEqual(["/work/review-7", "/work/review-8"]));
   });
 });
