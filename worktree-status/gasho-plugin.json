@@ -1,0 +1,9 @@
+{
+  "id": "worktree-status",
+  "name": "Worktree Status",
+  "version": "1.0.0",
+  "description": "サイドバーの worktree を、自分で作った見出し（進行中・レビュー待ちなど）に、行をドラッグして入れて分ける。見出しは設定で足す・名前を変える・並べ替える・消す",
+  "genre": "workflow",
+  "api": "1.9",
+  "web": { "js": "web.js", "css": "web.css" }
+}

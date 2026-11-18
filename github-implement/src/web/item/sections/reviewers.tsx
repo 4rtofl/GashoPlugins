@@ -13,7 +13,7 @@ import { Button } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
-import { Picker } from "../picker.tsx";
+import { assignableSearch, Picker, type Choice } from "../picker.tsx";
 
 const STATE: Record<GitHubReviewer["state"], { label: string; tone: BadgeTone; icon: LucideIcon }> = {
   requested: { label: "待ち", tone: "neutral", icon: Clock },
@@ -50,7 +50,9 @@ function Reviewers() {
         : { op: "reviewers", params: { add: [name] }, summary: `${id} のレビューを ${name} に頼み直す` },
     });
   // The author cannot be asked; one who reviewed can be asked again.
-  const choices = meta.data?.assignable.filter((a) => a !== item.author && !waiting.has(a)).map((a) => ({ key: a, name: a, text: <span>{a}</span>, pick: () => change(a, true) }));
+  const choice = (a: string): Choice | undefined => (a === item.author || waiting.has(a) ? undefined : { key: a, name: a, text: <span>{a}</span>, pick: () => change(a, true) });
+  const choices = meta.data?.assignable.flatMap((a) => choice(a) ?? []);
+  const search = meta.data?.assignableMore ? assignableSearch(machine, where.repo, choice) : undefined;
   const own = meta.data?.me !== undefined && meta.data.me === item.author;
   return (
     <section aria-label="レビュアー" className="space-y-2 rounded-xl border border-border px-3 py-2 text-xs">
@@ -78,7 +80,7 @@ function Reviewers() {
           );
         })}
         {reviewers.length === 0 && <span className="text-muted-foreground">なし</span>}
-        {open && <Picker label="レビューを頼む" error={meta.error} disabled={busy !== undefined} choices={choices} />}
+        {open && <Picker label="レビューを頼む" error={meta.error} disabled={busy !== undefined} choices={choices} {...(search && { search })} />}
         {open && !writing && (
           <Button size="xs" className="ml-auto" leftIcon={<MessageSquareText />} onClick={() => setWriting(true)}>
             レビューする

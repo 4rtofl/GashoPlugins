@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { useRequest } from "@gasho/plugin-sdk";
 import type { ItemLinks, LinkedIssue, LinkedPull } from "../../../daemon/ops/links.ts";
 import { readOp } from "../../daemon.ts";
-import { itemIcon, NOT_PLANNED_ICON, useRefreshOptions } from "../../tabs.ts";
+import { closedUndone, itemIcon, NOT_PLANNED_ICON, useRefreshOptions } from "../../tabs.ts";
 import { Badge, type BadgeTone } from "../../ui/badge.tsx";
 import { useAfterChange, useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
@@ -29,7 +29,7 @@ function LinkBadge({ link, tone, icon, note, onRemove, removeDisabled }: { link:
 
 function issueLook(i: LinkedIssue): { tone: BadgeTone; Icon: ReturnType<typeof itemIcon> } {
   if (i.state === "open") return { tone: "success", Icon: itemIcon({ kind: "issues", state: "open" }) };
-  return i.stateReason === "not_planned" ? { tone: "neutral", Icon: NOT_PLANNED_ICON } : { tone: "merged", Icon: itemIcon({ kind: "issues", state: "closed" }) };
+  return closedUndone(i) ? { tone: "neutral", Icon: NOT_PLANNED_ICON } : { tone: "merged", Icon: itemIcon({ kind: "issues", state: "closed" }) };
 }
 
 const PULL_TONE: Record<LinkedPull["state"], BadgeTone> = { open: "success", closed: "danger", merged: "merged" };

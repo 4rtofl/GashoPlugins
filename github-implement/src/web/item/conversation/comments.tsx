@@ -173,9 +173,8 @@ function useComments(): ConversationEntry[] {
     });
   });
   endHidden();
-  const first = comments[0];
-  if (item.commentsLeftOut && first) {
-    entries.push({ key: "left-out", at: first.createdAt, pin: "bottom", icon: History, title: `古いコメント ${item.commentsLeftOut} 件は省いています。GitHub で読めます。` });
+  if (item.commentsLeftOut) {
+    entries.push({ key: "left-out", at: comments[0]?.createdAt ?? item.createdAt, pin: "bottom", icon: History, title: `古いコメント ${item.commentsLeftOut} 件は省いています。GitHub で読めます。` });
   }
   return entries;
 }

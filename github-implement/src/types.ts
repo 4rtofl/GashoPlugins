@@ -9,6 +9,9 @@ export type { GitHubRepo };
 /** An issue or a pull request. */
 export type GitHubKind = "issues" | "pulls";
 
+/** How an issue was closed: as done, as not planned, or as a duplicate of another. */
+export type CloseReason = "completed" | "not_planned" | "duplicate";
+
 /** An issue or pull request, as a worktree's tab names it. */
 export interface ItemSummary {
   kind: GitHubKind;
@@ -17,8 +20,8 @@ export interface ItemSummary {
   state: "open" | "closed" | "merged";
   /** Pull requests: still a draft. */
   draft?: boolean;
-  /** Issues closed: whether as done or as not planned. */
-  stateReason?: "completed" | "not_planned";
+  /** Issues closed: how. */
+  stateReason?: CloseReason;
   url: string;
 }
 
@@ -39,7 +42,11 @@ export interface WorktreeItems {
 /** A repository's labels and the people its issues can be assigned to, for the pickers of an item's screen. */
 export interface RepoMeta {
   labels: { name: string; color?: string }[];
+  /** The repository may have more labels than these: the pickers find the rest by name (the operation "labels"). */
+  labelsMore?: boolean;
   assignable: string[];
+  /** The same of the people (the operation "assignable"). */
+  assignableMore?: boolean;
   /** The login of gh on the working server. */
   me?: string;
 }
@@ -96,8 +103,8 @@ export interface GitHubEvent {
   label?: { name: string; color?: string };
   /** assigned, unassigned */
   assignee?: string;
-  /** closed (issues): as done or as not planned. */
-  stateReason?: "completed" | "not_planned";
+  /** closed (issues): how. */
+  stateReason?: CloseReason;
 }
 
 /** One issue or pull request with its text and conversation, as gasho-daemon read it with `gh`. */
@@ -112,13 +119,13 @@ export interface GitHubItemDetail {
   updatedAt: string;
   labels: { name: string; color?: string }[];
   state: "open" | "closed" | "merged";
-  /** Issues closed: whether as done or as not planned. */
-  stateReason?: "completed" | "not_planned";
+  /** Issues closed: how. */
+  stateReason?: CloseReason;
   closedAt?: string;
   mergedAt?: string;
   assignees: string[];
   body: string;
-  /** Oldest first; when there are many, the latest ones (`commentsLeftOut` says how many older ones were left out). */
+  /** Oldest first; when there are many or the read is too large, the latest ones (`commentsLeftOut` says how many older ones were left out). */
   comments?: GitHubComment[];
   commentsLeftOut?: number;
   /** Pull requests only. */
@@ -126,7 +133,9 @@ export interface GitHubItemDetail {
   head?: string;
   base?: string;
   review?: "approved" | "changes_requested" | "review_required";
+  /** Oldest first; when the read is too large, the latest ones (`reviewsLeftOut` says how many older ones were left out). */
   reviews?: GitHubReview[];
+  reviewsLeftOut?: number;
   additions?: number;
   deletions?: number;
   changedFiles?: number;

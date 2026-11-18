@@ -25,7 +25,10 @@ export interface PullStack {
   parents: StackPull[];
   /** The open pull requests whose base is this one's head. */
   children: StackPull[];
-  /** This one's base. gone: the branch was deleted. behindBy: the commits of the base its head does not have. */
+  /**
+   * This one's base. gone: the branch was deleted. behindBy: the commits of the base its head does not have; absent for
+   * a head in a fork, which the query cannot compare with (compare(headRef:) finds a branch of this repository).
+   */
   base: { name: string; gone?: boolean; behindBy?: number };
   /** When the parent was merged: the branch its commits went into, where this one's base belongs now (when it is there). */
   mergedInto?: string;
@@ -121,7 +124,7 @@ export function parseStack(json: string, number: number, base: string): PullStac
     parents,
     // A head in a fork is not a branch of this repository, whatever its name.
     children: self.isCrossRepository === true ? [] : (nodesOf(repo.children) ?? []).flatMap((n) => pull(n) ?? []),
-    base: { name: base, ...(!baseRef ? { gone: true } : {}), ...(behindBy !== undefined ? { behindBy } : {}) },
+    base: { name: base, ...(!baseRef ? { gone: true } : {}), ...(behindBy !== undefined && self.isCrossRepository !== true ? { behindBy } : {}) },
     ...(mergedInto ? { mergedInto } : {}),
   };
 }

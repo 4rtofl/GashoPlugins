@@ -5,7 +5,7 @@ import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
-import { useWriteOp } from "./daemon.ts";
+import { useFreshReload, useWriteOp } from "./daemon.ts";
 import { AddBox } from "./home/add.tsx";
 import { NewIssueBox } from "./home/new-issue.tsx";
 import { NewPullBox } from "./home/new-pull.tsx";
@@ -48,6 +48,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
   const wasReady = useRef(false);
   if (daemon.ready) wasReady.current = true;
   const added = new Set(items?.added.map((i) => i.number));
+  const reload = useFreshReload(machine.id, repo, r.reload);
 
   const run = async (id: string, op: string, params: Record<string, unknown>, summary: string): Promise<string | undefined> => {
     setBusy(id);
@@ -91,7 +92,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
               GitHub <ExternalLink />
             </a>
           )}
-          <Button variant="ghost" size="icon" onClick={r.reload} disabled={!target || r.loading} aria-label="再読み込み" title="再読み込み">
+          <Button variant="ghost" size="icon" onClick={reload} disabled={!target || r.loading} aria-label="再読み込み" title="再読み込み">
             <RefreshCw className={cn(r.loading && "animate-spin")} />
           </Button>
         </div>
@@ -103,7 +104,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
         <Alert
           tone="danger"
           action={
-            <Button size="xs" onClick={r.reload} isLoading={r.loading}>
+            <Button size="xs" onClick={reload} isLoading={r.loading}>
               読み直す
             </Button>
           }

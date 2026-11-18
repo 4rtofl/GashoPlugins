@@ -88,7 +88,7 @@ function RepoRow({ r }: { r: RepoRef }) {
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {(["issues", "pulls"] as const).map((kind) => {
           const g = lists[kind];
-          const n = !ready ? "-" : g.data ? `${g.data.items.length}${g.data.truncated ? "+" : ""}` : g.loading ? "…" : "-";
+          const n = !ready ? "-" : g.data?.disabled ? "無効" : g.data ? `${g.data.items.length}${g.data.truncated ? "+" : ""}` : g.loading ? "…" : "-";
           return (
             <button
               key={kind}

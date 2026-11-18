@@ -3,87 +3,23 @@
 // for each open pull request of mine without a worktree. The web part makes them from what the daemon part read
 // (Board) and the sessions of the working server (MachineInfo.sessions, Gasho's and the others alike). The board plugin
 // chosen for the repository decides each card's column, the marks on it and the instructions on its menu, and the
-// headings above the board (kanban/plugins/); without one, every card goes in the first column. No React here, so that
-// the tests run it as it is.
-import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
-import type { FetchRepo, StateCard } from "../plugins/types.ts";
-import type { Board, ClosedPr, OpenPr, RepoMaterial } from "./types.ts";
+// headings above the board (the working server's folder of board plugins, kanban/plugins/ of this repository at
+// first); without one, every card goes in the first column. No React here, so that the tests run it as it is.
+import type { MachineInfo } from "@gasho/plugin-sdk";
+import { headingsWith, KANBAN_COLUMNS, placeWith } from "../plugins/place.ts";
+import type { BoardHeading, CardAction, CardMark, CardSession, KanbanColumn, StateCard, Worktree } from "../plugins/types.ts";
+import type { Board, ClosedPr, OpenPr, RepoMaterial, ReviewPr } from "./types.ts";
 
-/** The columns, in their order: my move, the agent works, GitHub works (CI), the reviewers' move, done. */
-export type KanbanColumn = "mine" | "agent" | "github" | "review" | "done";
-
-export const KANBAN_COLUMNS: { id: KanbanColumn; label: string }[] = [
-  { id: "mine", label: "自分の番" },
-  { id: "agent", label: "エージェント作業中" },
-  { id: "github", label: "GitHub 待ち" },
-  { id: "review", label: "レビュー待ち" },
-  { id: "done", label: "完了" },
-];
-
-type SessionStatus = SessionInfo["status"];
-
-/** An instruction on a card's menu, as the board plugin gave it: pressing it sends `text` to the worktree's Gasho session. */
-export interface CardAction {
-  label: string;
-  text: string;
-}
-
-/** A Claude Code session working in a card's worktree: any session on the working server, not only Gasho's. */
-export interface CardSession {
-  sessionId: string;
-  status: SessionStatus;
-  /** Started by Gasho, so the card can open it. */
-  managed?: boolean;
-}
+export { KANBAN_COLUMNS };
+export type { BoardHeading, CardAction, CardMark, CardSession, KanbanColumn };
 
 /** A session as the cards read it. */
 export interface SessionLike extends CardSession {
   cwd: string;
 }
 
-/** A mark the board plugin put on a card: a Stack the worktree deployed to last, or deploys to now. */
-export interface CardMark {
-  text: string;
-  /** Shown when the pointer rests on the mark, and in the card's menu. */
-  detail?: string;
-  /** Going on now (a deploy): in amber, and on the one-line card too. */
-  active?: boolean;
-}
-
-/** A heading above the board, from a repository's board plugin: a Stack and the worktree that deployed to it last. */
-export interface BoardHeading {
-  /** What it is about, in bold: the Stack's name. */
-  label: string;
-  /** How it stands: the worktree, or that there is no record. */
-  text?: string;
-  /** When it happened (ms since the epoch): shown as how long ago. */
-  at?: number;
-  /** Going on now (a deploy): in amber. */
-  active?: boolean;
-  /** Shown when the pointer rests on it. */
-  detail?: string;
-}
-
-/** One worktree with its branch's pull request, or an open pull request of mine without a worktree. */
-export interface KanbanCard {
-  /** Unique on its working server. */
-  id: string;
-  /** OWNER/REPO */
-  repo: string;
-  /** The worktree's folder name; "PR #12" for a pull request without a worktree. */
-  label: string;
-  path?: string;
-  branch?: string;
-  /** The repository's primary checkout, shown only while it has an open pull request or a session needs it. */
-  primary?: boolean;
-  /** The pull request's title, or else the branch. */
-  title: string;
-  /** The issue number in the branch name (feat/12-x → 12). */
-  issue?: number;
-  /** The open pull request of the branch, or else its latest closed one. */
-  pr?: { number: number; url: string; state: "open" | "merged" | "closed"; draft?: boolean };
-  /** When the open pull request last changed (ISO 8601). */
-  updatedAt?: string;
+/** A card on the board: what `state` gets, and where it put it. */
+export interface KanbanCard extends StateCard {
   column: KanbanColumn;
   /** Why the card is in its column, as the board plugin said; `error` when it could not tell (the card is in "mine"). */
   reason?: { text: string; error?: string };
@@ -91,7 +27,6 @@ export interface KanbanCard {
   actions?: CardAction[];
   /** The marks the board plugin put on the card. */
   marks?: CardMark[];
-  sessions: CardSession[];
 }
 
 export interface PlacedCard {
@@ -120,39 +55,11 @@ export function assignSessions(sessions: readonly SessionLike[], paths: readonly
   return out;
 }
 
-/** The board plugins built in, by their folder's name: what each kanban/plugins/<name>/index.ts exports. */
-export type BoardPlugins = ReadonlyMap<string, { state?: unknown; headings?: unknown }>;
-
-const COLUMN_IDS = new Set<string>(KANBAN_COLUMNS.map((c) => c.id));
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
-const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
-
-/** The instructions `state` gave, or why they cannot be used; none given is an empty list. */
-function actionsOf(given: unknown): CardAction[] | string {
-  if (given === undefined) return [];
-  if (!Array.isArray(given)) return "actions が配列ではありません。";
-  const out: CardAction[] = [];
-  for (const a of given) {
-    const { label, text } = (a ?? {}) as { label?: unknown; text?: unknown };
-    if (typeof label !== "string" || !label.trim() || typeof text !== "string" || !text.trim()) return "actions のそれぞれに、空でない label と text が要ります。";
-    out.push({ label: label.trim(), text: text.trim() });
-  }
-  return out;
-}
-
-/** The marks `state` gave, or why they cannot be used; none given is an empty list. */
-function marksOf(given: unknown): CardMark[] | string {
-  if (given === undefined) return [];
-  if (!Array.isArray(given)) return "marks が配列ではありません。";
-  const out: CardMark[] = [];
-  for (const m of given) {
-    if (!isRecord(m) || !text(m.text)) return "marks のそれぞれに、空でない text が要ります。";
-    const detail = text(m.detail);
-    out.push({ text: text(m.text), ...(detail ? { detail } : {}), ...(m.active === true ? { active: true } : {}) });
-  }
-  return out;
-}
+/**
+ * A working server's board plugins, by their folder's name, as the web part loaded them: what each index.ts exports, or
+ * why it cannot be used.
+ */
+export type BoardPlugins = ReadonlyMap<string, { state?: unknown; headings?: unknown; error?: string }>;
 
 /**
  * Where the board plugin `name` puts a card, the marks it puts on it and what its menu sends, with what its `fetch`
@@ -160,46 +67,11 @@ function marksOf(given: unknown): CardMark[] | string {
  */
 export function placeCard(card: StateCard, name: string | undefined, plugins: BoardPlugins, fetched?: unknown): Pick<KanbanCard, "column" | "reason" | "marks" | "actions"> {
   if (name === undefined) return { column: "mine" };
-  const failed = (error: string) => ({ column: "mine" as const, reason: { text: `列を決められませんでした（${name}）`, error } });
-  const state = plugins.get(name)?.state;
-  if (typeof state !== "function") return failed(plugins.has(name) ? "index.ts が state を export していません。" : `kanban/plugins/${name}/ が、このビルドにありません。`);
-  let placed: unknown;
-  try {
-    placed = state(card, fetched);
-  } catch (e) {
-    return failed(`state が失敗しました：${e instanceof Error ? e.message : String(e)}`);
-  }
-  const { column, reason, marks, actions } = (placed ?? {}) as { column?: unknown; reason?: unknown; marks?: unknown; actions?: unknown };
-  if (typeof column !== "string" || !COLUMN_IDS.has(column)) return failed(`state が知らない列を返しました：${String(column)}`);
-  const shown = marksOf(marks);
-  if (typeof shown === "string") return failed(`state が返した印を使えません：${shown}`);
-  const menu = actionsOf(actions);
-  if (typeof menu === "string") return failed(`state が返した指示を使えません：${menu}`);
-  const why = text(reason);
-  return {
-    column: column as KanbanColumn,
-    ...(why ? { reason: { text: why } } : {}),
-    ...(shown.length > 0 ? { marks: shown } : {}),
-    ...(menu.length > 0 ? { actions: menu } : {}),
-  };
-}
-
-/** The headings `headings` gave, or why they cannot be used. */
-function headingsOf(given: unknown): BoardHeading[] | string {
-  if (!Array.isArray(given)) return "配列ではありません。";
-  const out: BoardHeading[] = [];
-  for (const h of given) {
-    if (!isRecord(h) || !text(h.label)) return "それぞれに、空でない label が要ります。";
-    const [said, detail] = [text(h.text), text(h.detail)];
-    out.push({
-      label: text(h.label),
-      ...(said ? { text: said } : {}),
-      ...(typeof h.at === "number" && Number.isFinite(h.at) ? { at: h.at } : {}),
-      ...(h.active === true ? { active: true } : {}),
-      ...(detail ? { detail } : {}),
-    });
-  }
-  return out;
+  const plugin = plugins.get(name);
+  const placed = plugin === undefined ? { error: `置き場に ${name}/index.ts がありません。` } : plugin.error !== undefined ? { error: plugin.error } : placeWith(plugin.state, card, fetched);
+  if ("error" in placed) return { column: "mine", reason: { text: `列を決められませんでした（${name}）`, error: placed.error } };
+  const { reason, ...rest } = placed;
+  return { ...rest, ...(reason ? { reason: { text: reason } } : {}) };
 }
 
 /** The headings above the board from one repository's board plugin; `error` (and no headings) when it failed. */
@@ -212,85 +84,119 @@ export interface RepoHeadings {
 }
 
 /** The headings the board plugins of the connected working servers' repositories give, with what their `fetch` gave. */
-export function boardHeadings(boards: { machine: MachineInfo; board: Board }[], plugins: BoardPlugins): RepoHeadings[] {
+export function boardHeadings(boards: { machine: MachineInfo; board: Board; plugins: BoardPlugins }[]): RepoHeadings[] {
   return boards
     .filter((b) => b.machine.connected)
-    .flatMap(({ machine, board }) =>
+    .flatMap(({ machine, board, plugins }) =>
       board.repos.flatMap((m): RepoHeadings[] => {
         const plugin = m.plugin;
-        const headings = plugin === undefined ? undefined : plugins.get(plugin)?.headings;
-        if (plugin === undefined || typeof headings !== "function") return [];
-        const failed = (error: string): RepoHeadings[] => [{ machine, repo: m.repo, plugin, headings: [], error }];
+        const loaded = plugin === undefined ? undefined : plugins.get(plugin);
+        if (plugin === undefined || typeof loaded?.headings !== "function") return [];
         const { plugin: _, fetched, ...repo } = m;
-        let given: unknown;
-        try {
-          given = headings(structuredClone(repo) satisfies FetchRepo, fetched);
-        } catch (e) {
-          return failed(`headings が失敗しました：${e instanceof Error ? e.message : String(e)}`);
-        }
-        const shown = headingsOf(given);
-        return typeof shown === "string" ? failed(`headings が返した見出しを使えません：${shown}`) : [{ machine, repo: m.repo, plugin, headings: shown }];
+        const shown = headingsWith(loaded.headings, repo, fetched);
+        return "error" in shown ? [{ machine, repo: m.repo, plugin, headings: [], error: shown.error }] : [{ machine, repo: m.repo, plugin, headings: shown }];
       }),
     );
 }
 
 const cardSession = (s: SessionLike): CardSession => ({ sessionId: s.sessionId, status: s.status, ...(s.managed ? { managed: true } : {}) });
 
+/** A pull request as a card shows it. */
+interface ShownPr {
+  pr: NonNullable<StateCard["pr"]>;
+  title: string;
+  updatedAt?: string;
+}
+
+const openShown = (p: OpenPr): ShownPr => ({
+  pr: { number: p.number, url: p.url, state: "open", ...(p.isDraft ? { draft: true } : {}) },
+  title: p.title,
+  ...(p.updatedAt ? { updatedAt: p.updatedAt } : {}),
+});
+
+const closedShown = (p: ClosedPr): ShownPr => ({ pr: { number: p.number, url: p.url, state: p.state === "MERGED" ? "merged" : "closed" }, title: p.title });
+
+const reviewShown = (p: ReviewPr): ShownPr => ({
+  pr: { number: p.number, url: p.url, state: p.state, ...(p.isDraft ? { draft: true } : {}) },
+  title: p.title,
+  ...(p.updatedAt ? { updatedAt: p.updatedAt } : {}),
+});
+
 /**
- * The cards of one repository: its worktrees, its primary checkout while it has an open pull request or a session
- * there works or awaits an answer (work on main is not missed), and my open pull requests without a worktree.
+ * The cards of one repository as its board plugin's `state` gets them: its worktrees, its primary checkout while it has
+ * an open pull request or a session there works or awaits an answer (work on main is not missed), and my open pull
+ * requests without a worktree. A worktree gets the pull request of its branch only from this repository (a fork's
+ * branch of the same name is another one), and a closed one only while it is on that pull request's last commit (a
+ * new worktree on the branch of a pull request merged before is new work); a review worktree, the one it is for.
  */
-export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>, plugins: BoardPlugins): KanbanCard[] {
-  const open = new Map(m.prs.map((p) => [p.headRefName, p]));
+export function stateCardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>): StateCard[] {
+  const open = new Map(m.prs.filter((p) => !p.isCrossRepository).map((p) => [p.headRefName, p]));
   const closedOf = new Map(m.closed.map((p) => [p.headRefName, p]));
-  const trees: { branch?: string; path: string; primary: boolean }[] = m.worktrees.map((w) => ({ branch: w.branch, path: w.path, primary: false }));
-  trees.push({ branch: m.primary.branch, path: m.primary.path, primary: true });
-  const cards: KanbanCard[] = [];
-  const card = (t: { branch?: string; path?: string; primary: boolean }, pr: OpenPr | undefined, closed: ClosedPr | undefined, sessions: SessionLike[]) => {
-    const shown = pr ?? closed;
+  const reviews = new Map((m.reviews ?? []).map((r) => [r.path, r]));
+  const trees: (Worktree & { primary: boolean })[] = [...m.worktrees.map((w) => ({ ...w, primary: false })), { ...m.primary, primary: true }];
+  const cards: StateCard[] = [];
+  const card = (t: Partial<Worktree> & { primary: boolean }, shown: ShownPr | undefined, sessions: SessionLike[], review = false) => {
     const issue = issueOf(t.branch);
-    const base: StateCard = {
+    cards.push({
       // A pull request without a worktree shows once per clone of its repository, so the clone is part of its id.
-      id: `${m.repo}:${t.path ?? `${m.primary.path}#pr-${pr?.number}`}`,
+      id: `${m.repo}:${t.path ?? `${m.primary.path}#pr-${shown?.pr.number}`}`,
       repo: m.repo,
-      label: t.path ? basename(t.path) : `PR #${pr?.number}`,
+      label: t.path ? basename(t.path) : `PR #${shown?.pr.number}`,
       ...(t.path ? { path: t.path } : {}),
       ...(t.branch ? { branch: t.branch } : {}),
+      ...(t.detached ? { detached: true } : {}),
+      ...(t.rebasing ? { rebasing: true } : {}),
       ...(t.primary ? { primary: true } : {}),
       title: shown?.title || t.branch || basename(t.path ?? ""),
       ...(issue !== undefined ? { issue } : {}),
-      ...(pr
-        ? { pr: { number: pr.number, url: pr.url, state: "open" as const, ...(pr.isDraft ? { draft: true } : {}) } }
-        : closed
-          ? { pr: { number: closed.number, url: closed.url, state: closed.state === "MERGED" ? ("merged" as const) : ("closed" as const) } }
-          : {}),
-      ...(pr?.updatedAt ? { updatedAt: pr.updatedAt } : {}),
+      ...(shown ? { pr: shown.pr } : {}),
+      ...(review ? { review: true as const } : {}),
+      ...(shown?.updatedAt ? { updatedAt: shown.updatedAt } : {}),
       sessions: sessions.map(cardSession),
-    };
-    cards.push({ ...base, ...placeCard(base, m.plugin, plugins, m.fetched) });
+    });
   };
+  const taken = new Set<number>();
   for (const t of trees) {
-    const pr = t.branch === undefined ? undefined : open.get(t.branch);
     const sessions = byPath.get(t.path) ?? [];
+    const review = reviews.get(t.path);
+    const pr = review || t.branch === undefined ? undefined : open.get(t.branch);
     if (t.primary && !pr && !sessions.some((s) => s.status === "busy" || s.status === "waiting")) continue;
-    card(t, pr, pr || t.branch === undefined ? undefined : closedOf.get(t.branch), sessions);
+    const closed = review || pr || t.branch === undefined ? undefined : closedOf.get(t.branch);
+    const shown = review ? reviewShown(review) : pr ? openShown(pr) : closed?.headRefOid !== undefined && closed.headRefOid === t.head ? closedShown(closed) : undefined;
+    if (shown) taken.add(shown.pr.number);
+    card(t, shown, sessions, review !== undefined);
   }
-  const taken = new Set(trees.map((t) => t.branch));
-  for (const pr of m.prs) if (!taken.has(pr.headRefName)) card({ branch: pr.headRefName, primary: false }, pr, undefined, []);
+  for (const pr of m.prs) if (!taken.has(pr.number)) card({ branch: pr.headRefName, primary: false }, openShown(pr), []);
   return cards;
 }
 
-/** The cards of one working server's board, with its sessions as they are now. */
-export function boardCards(machine: MachineInfo, board: Board, plugins: BoardPlugins): KanbanCard[] {
+/** The cards of one repository, where its board plugin puts them. */
+export function cardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>, plugins: BoardPlugins): KanbanCard[] {
+  return stateCardsOf(m, byPath).map((c) => ({ ...c, ...placeCard(c, m.plugin, plugins, m.fetched) }));
+}
+
+/** The sessions of a working server as they are now, by the folder of the board they work in. */
+function sessionsByPath(machine: MachineInfo, board: Board): Map<string, SessionLike[]> {
   const live: SessionLike[] = machine.sessions
     .filter((s) => s.status !== "unknown")
     .map((s) => ({ sessionId: s.sessionId, cwd: s.cwd, status: s.status, ...(s.managed ? { managed: true } : {}) }));
   // Across the repositories at once: a session in a repository inside another one goes to the inner one only.
-  const byPath = assignSessions(
+  return assignSessions(
     live,
     board.repos.flatMap((m) => [m.primary.path, ...m.worktrees.map((w) => w.path)]),
   );
+}
+
+/** The cards of one working server's board, with its sessions as they are now. */
+export function boardCards(machine: MachineInfo, board: Board, plugins: BoardPlugins): KanbanCard[] {
+  const byPath = sessionsByPath(machine, board);
   return board.repos.flatMap((m) => cardsOf(m, byPath, plugins));
+}
+
+/** Each repository of one working server's board with its cards as `state` gets them: what "カードを書き出す" writes. */
+export function boardStateCards(machine: MachineInfo, board: Board): { path: string; repo: string; cards: StateCard[] }[] {
+  const byPath = sessionsByPath(machine, board);
+  return board.repos.map((m) => ({ path: m.primary.path, repo: m.repo, cards: stateCardsOf(m, byPath) }));
 }
 
 const ORDER = new Map(KANBAN_COLUMNS.map((c, i) => [c.id, i]));
@@ -305,10 +211,10 @@ export function sortCards(cards: PlacedCard[]): PlacedCard[] {
   );
 }
 
-/** The cards of the connected working servers. */
-export function kanbanCards(boards: { machine: MachineInfo; board: Board }[], plugins: BoardPlugins): PlacedCard[] {
+/** The cards of the connected working servers, each with its own board plugins. */
+export function kanbanCards(boards: { machine: MachineInfo; board: Board; plugins: BoardPlugins }[]): PlacedCard[] {
   return sortCards(
-    boards.filter((b) => b.machine.connected).flatMap(({ machine, board }) => boardCards(machine, board, plugins).map((card) => ({ machine, card }))),
+    boards.filter((b) => b.machine.connected).flatMap(({ machine, board, plugins }) => boardCards(machine, board, plugins).map((card) => ({ machine, card }))),
   );
 }
 

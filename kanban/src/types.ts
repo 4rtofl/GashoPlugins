@@ -1,6 +1,9 @@
 // What the kanban's daemon part reads on a working server and sends to the web part: the repositories that can be
 // watched, and the worktrees and my pull requests of the watched ones, with what their board plugins fetched. The web
 // part turns them into cards with the sessions of the moment (src/cards.ts), so the daemon part never needs the sessions.
+import type { FetchRepo } from "../plugins/types.ts";
+
+export type { ClosedPr, OpenPr } from "../plugins/types.ts";
 
 /** A repository that can be watched: one in the folders Gasho can start sessions in, by its primary checkout. */
 export interface RepoOption {
@@ -10,38 +13,24 @@ export interface RepoOption {
   github?: string;
 }
 
-/** An open pull request of mine, as `gh pr list --json number,title,url,headRefName,isDraft,updatedAt` gives it. */
-export interface OpenPr {
+/** The pull request a review worktree (review-<REPO>-<number> or review-<number>, made by github-review) is for, whoever opened it. */
+export interface ReviewPr {
+  /** The review worktree. */
+  path: string;
   number: number;
   title: string;
   url: string;
-  headRefName: string;
+  state: "open" | "merged" | "closed";
   isDraft?: boolean;
   /** ISO 8601 */
   updatedAt?: string;
 }
 
-/** A closed or merged pull request of mine: the latest of its branch. */
-export interface ClosedPr {
-  number: number;
-  headRefName: string;
-  state: string;
-  title: string;
-  url: string;
-}
-
 /** A watched repository as last read. Paths are real paths, to match the sessions' folders. */
-export interface RepoMaterial {
-  /** OWNER/REPO */
-  repo: string;
-  primary: { path: string; branch?: string };
-  /** Worktrees other than the primary checkout, on a branch. */
-  worktrees: { branch: string; path: string }[];
-  /** My open pull requests. */
-  prs: OpenPr[];
-  /** My latest closed pull request of each branch. */
-  closed: ClosedPr[];
-  /** The board plugin chosen for it in "見る repo" (a folder of kanban/plugins/). */
+export interface RepoMaterial extends FetchRepo {
+  /** The review worktrees, with the pull request each is for. */
+  reviews?: ReviewPr[];
+  /** The board plugin chosen for it in "見る repo" (a folder of the board plugins' folder). */
   plugin?: string;
   /** What that board plugin's `fetch` gave for it last (JSON); its `state` gets it. */
   fetched?: unknown;
@@ -62,6 +51,8 @@ export interface Board {
   checking?: boolean;
   /** The board plugins' `fetch` waits until then (ms since the epoch): few of GitHub's GraphQL points are left. */
   fetchPausedUntil?: number;
+  /** The version of the board plugins in the working server's folder (PluginSet.version): the web part loads them again when it changes. */
+  pluginsVersion?: string;
 }
 
 /** Repositories one working server can watch. */

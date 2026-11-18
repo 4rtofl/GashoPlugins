@@ -1,6 +1,9 @@
 // What github-review's daemon part reads on a working server and sends to the web part: the repositories that can be
 // watched, and the pull requests of the review page, each with where it is on that working server (the clone of its
-// repository, and its worktree there). The web part puts the answers of every working server together.
+// repository, and its worktree there) and the verdict of its review. The web part puts the answers of every working
+// server together.
+import type { CleanupKind } from "./cleanup.ts";
+import type { ReviewMark } from "./verdict.ts";
 
 /** A repository in the folders Gasho can start sessions in, by its primary checkout. */
 export interface RepoOption {
@@ -22,8 +25,25 @@ export interface PrWorktree {
   path: string;
   /** The branch checked out; absent when HEAD is detached (a pull request from a fork). */
   branch?: string;
-  /** review-<number> beside the primary checkout: one made for the review, which "片付ける" removes. */
+  /**
+   * review-<repository>-<number> (or review-<number>, the name before) beside the primary checkout: one made for the
+   * review, which "片付ける" removes. A worktree of another name is removed only when "マージしてもらう" asked for it.
+   */
   review: boolean;
+}
+
+/**
+ * "マージしてもらう" or "差し戻す" was asked with "終わったら片付ける": the page removes the review worktree once it is
+ * done (cleanup.ts), and the session there is at rest.
+ */
+export interface Cleanup {
+  kind: CleanupKind;
+  /** The head whose verdict it was asked of (the mark's sha); absent for one asked before github-review 1.17.0. */
+  sha?: string;
+  /** The pull request was merged, or I requested changes on it, after it was asked. */
+  done: boolean;
+  /** Why it could not be removed (it is not tried again; "片付ける" still removes it). */
+  problem?: string;
 }
 
 /** Where a pull request is on a working server: the clone of its repository, and its worktree there. */
@@ -31,6 +51,12 @@ export interface Place {
   /** The primary checkout of the clone. */
   primary: string;
   worktree?: PrWorktree;
+  /** Its review worktree is to be removed once what was asked is done. */
+  cleanup?: Cleanup;
+  /** The sessions sent its review that have posted the result: the page removes them once they are at rest. */
+  finishedSessions?: string[];
+  /** The sessions sent its review, posted or not: while one is at work, the page says the review is under way. */
+  reviewSessions?: string[];
 }
 
 export interface PrRow {
@@ -53,6 +79,18 @@ export interface PrRow {
   branch: string;
   /** Its head is in another repository (a fork). */
   fork?: boolean;
+  /** The commit of its head. */
+  head?: string;
+  /** I opened it: GitHub lets me neither approve it nor request changes. */
+  own?: boolean;
+  /** GitHub found a conflict with its base. */
+  conflict?: boolean;
+  /** The maintainers may push to its head in the fork. */
+  canModify?: boolean;
+  /** The latest verdict I posted on it (the mark of the comment). */
+  mark?: ReviewMark;
+  /** When I last requested changes on it (ISO 8601). */
+  changesRequestedAt?: string;
   /** Absent when this working server has no clone of its repository. */
   place?: Place;
 }
@@ -84,7 +122,7 @@ export interface Listing {
 /** What "worktree を作る" did: the worktree of the pull request, made now or found. */
 export interface Created {
   path: string;
-  /** False: it was there already, and only opens. */
+  /** False: it was there already (the page takes the session used last there, and sends nothing). */
   created: boolean;
   branch?: string;
 }
@@ -95,6 +133,40 @@ export interface Removed {
   /** The local branch removed with it. */
   branch?: string;
 }
+
+export interface PrComment {
+  author?: string;
+  body: string;
+  /** ISO 8601 */
+  at?: string;
+  url: string;
+  /** I wrote it. */
+  mine: boolean;
+}
+
+export type CheckRunState = "success" | "failure" | "pending" | "neutral" | "skipped";
+
+/** A check of its head commit: a check run (GitHub Actions…) or a commit status. */
+export interface PrCheck {
+  name: string;
+  state: CheckRunState;
+  url?: string;
+  description?: string;
+}
+
+/** What the side panel shows of a pull request (the daemon's `detail`). */
+export interface PrDetail {
+  pr: PrRow;
+  body: string;
+  /** The latest comments, oldest first. */
+  comments: PrComment[];
+  /** How many older comments are left out. */
+  commentsMore: number;
+  checks: PrCheck[];
+}
+
+/** Its head can be pushed to: in the same repository, in my own fork, or one the maintainers may change. */
+export const canPush = (pr: Pick<PrRow, "fork" | "own" | "canModify">): boolean => !pr.fork || pr.own === true || pr.canModify === true;
 
 /** Repositories one working server can watch. */
 export const MAX_REPOS = 30;

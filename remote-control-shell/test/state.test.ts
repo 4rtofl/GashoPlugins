@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ShellJob, ShellView } from "../src/types.ts";
 import { commandHistory, commandSummary, duration, folderLabel, insideFolder } from "../src/web/format.ts";
-import { addJob, EMPTY_STATE, FIRST_ENDED, FIRST_RUNNING, joinPiece, mergeView, offsetsFor, RUNNING_WINDOW, trimWindow } from "../src/web/state.ts";
+import { addJob, EMPTY_STATE, FIRST_ENDED, FIRST_RUNNING, FOLLOWED, joinPiece, mergeView, offsetsFor, RUNNING_WINDOW, trimWindow } from "../src/web/state.ts";
 
 const job = (id: string, over: Partial<ShellJob> = {}): ShellJob => ({
   id,
@@ -34,6 +34,10 @@ test("the panel reads the end of each command first, follows running ones, and l
     windows: { f: { from: 0, text: "x".repeat(30) }, g: { from: 0, text: "y".repeat(40) } },
   };
   assert.deepEqual(offsetsFor(s), { a: 100_000 - FIRST_RUNNING, b: 10_000 - FIRST_ENDED, c: 3000, e: 0, g: 40 });
+  // More records than it follows (keepJobs is over 50): an older command is still followed while it runs.
+  const newer = Array.from({ length: FOLLOWED }, (_, i) => job(`n${i}`, { size: 10 }));
+  const many = { ...EMPTY_STATE, jobs: [job("old", { state: "running", size: 10 }), job("done", { size: 10 }), ...newer] };
+  assert.deepEqual(Object.keys(offsetsFor(many)), ["old", ...newer.map((j) => j.id)]);
 });
 
 test("an answer continues the windows, replaces one past a gap, and forgets records that went", () => {

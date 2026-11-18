@@ -13,10 +13,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { JOB_ID, type JobState, type ShellJob } from "../types.ts";
 
-/** A record as kept: the job, the plugin process that runs it, its process group, and where its output file starts. */
+/**
+ * A record as kept: the job, the plugin process that runs it, its process group, and where its output file starts. The
+ * plugin process and the shell that leads the group are kept with when they started (proc.ts), since their PIDs alone
+ * may name other processes later.
+ */
 export interface StoredJob extends ShellJob {
   owner: number;
+  ownerStart?: string;
   pgid?: number;
+  pgidStart?: string;
   /** The output file holds the output from this position (characters) to `size`. */
   logFrom: number;
 }
@@ -51,7 +57,9 @@ export function storedJob(raw: unknown): StoredJob | undefined {
     dropped: j.dropped,
     lines: num(j.lines) ? j.lines : 0,
     owner: j.owner,
+    ...(typeof j.ownerStart === "string" ? { ownerStart: j.ownerStart } : {}),
     ...(num(j.pgid) ? { pgid: j.pgid } : {}),
+    ...(typeof j.pgidStart === "string" ? { pgidStart: j.pgidStart } : {}),
     logFrom: num(j.logFrom) ? j.logFrom : j.dropped,
   };
 }
