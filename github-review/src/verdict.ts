@@ -87,8 +87,18 @@ export interface Ask {
   blocked?: string;
 }
 
+/** I requested changes after the review's comment (both by GitHub's clock): what "差し戻す" asks is done. */
+export function sentBack(pr: { changesRequestedAt?: string; mark?: { at?: string } }): boolean {
+  const requested = pr.changesRequestedAt ? Date.parse(pr.changesRequestedAt) : Number.NaN;
+  const reviewed = pr.mark?.at ? Date.parse(pr.mark.at) : Number.NaN;
+  return !Number.isNaN(requested) && !Number.isNaN(reviewed) && requested >= reviewed;
+}
+
 /** The button a pull request's row shows for where its review is; undefined for none. */
-export function askOf(pr: { own?: boolean; fork?: boolean; canModify?: boolean; conflict?: boolean }, progress: ReviewProgress | undefined): Ask | undefined {
+export function askOf(
+  pr: { own?: boolean; fork?: boolean; canModify?: boolean; conflict?: boolean; changesRequestedAt?: string; mark?: { at?: string } },
+  progress: ReviewProgress | undefined,
+): Ask | undefined {
   if (progress === "mergeable") {
     return {
       kind: "merge",
@@ -100,7 +110,8 @@ export function askOf(pr: { own?: boolean; fork?: boolean; canModify?: boolean; 
   }
   if (progress === "changes") {
     // GitHub lets no one request changes on their own pull request: the Agent mends it instead.
-    return pr.own ? { kind: "fix", label: "修正してもらう" } : { kind: "sendBack", label: "差し戻す" };
+    if (pr.own) return { kind: "fix", label: "修正してもらう" };
+    return sentBack(pr) ? undefined : { kind: "sendBack", label: "差し戻す" };
   }
   return undefined;
 }
@@ -117,16 +128,47 @@ export const ASK_SETTLE_MS = 20_000;
 
 /**
  * Whether what the row's button asks is being done, so that the row shows that in place of the button: it was asked
- * of the verdict there is now (on the page, `asked`, or kept to remove the worktree after, `followed`), and a session
- * in the worktree works, or it was asked a moment ago. A session at work on the review itself is not it.
+ * of the verdict there is now (on the page, `asked`, or kept to remove the worktree after, `followed`; each names the
+ * head of its verdict), and a session in the worktree works, or it was asked a moment ago. A session at work on the
+ * review itself is not it, nor one at work after an ask of an earlier verdict.
  */
 export function askRunning(
   ask: Ask | undefined,
   mark: { sha: string } | undefined,
-  { working, asked, followed, now }: { working: boolean; asked?: Asked | undefined; followed?: AskKind | undefined; now: number },
+  { working, asked, followed, now }: { working: boolean; asked?: Asked | undefined; followed?: { kind: AskKind; sha?: string } | undefined; now: number },
 ): boolean {
   if (!ask || !mark) return false;
   const mine = asked && asked.kind === ask.kind && asked.sha === mark.sha ? asked : undefined;
   if (mine && now - mine.at < ASK_SETTLE_MS) return true;
-  return working && (mine !== undefined || followed === ask.kind);
+  const kept = followed?.kind === ask.kind && followed.sha === mark.sha;
+  return working && (mine !== undefined || kept);
+}
+
+/** Once what was asked is no longer being done, the row waits this long at most for its list to be read again. */
+export const ASK_RECHECK_MS = 30_000;
+
+/**
+ * What was asked of the verdict on `sha` was seen to end at `ended`, and GitHub had been read again by `refreshed`
+ * (ms since the epoch, by the page's clock).
+ */
+export interface Recheck {
+  kind: AskKind;
+  sha: string;
+  ended: number;
+  refreshed?: number;
+}
+
+/**
+ * Once what was asked is no longer being done, the row's list is still from before the end of it (a pull request just
+ * merged is open there, with the button that asks for the merge): the row goes on saying it is being done until the
+ * list read from GitHub after that comes (`listedAt`: when the oldest of its lists came), or ASK_RECHECK_MS have passed.
+ */
+export function askRechecking(
+  ask: Ask | undefined,
+  mark: { sha: string } | undefined,
+  { recheck, listedAt, now }: { recheck?: Recheck | undefined; listedAt?: number | undefined; now: number },
+): boolean {
+  if (!ask || !mark || !recheck || recheck.kind !== ask.kind || recheck.sha !== mark.sha) return false;
+  if (now - recheck.ended >= ASK_RECHECK_MS) return false;
+  return recheck.refreshed === undefined || (listedAt ?? 0) <= recheck.refreshed;
 }

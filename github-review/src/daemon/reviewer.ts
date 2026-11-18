@@ -253,7 +253,7 @@ export class Reviewer {
       if (!c) return undefined;
       const worktree = prWorktree(c, pr);
       const e = worktree?.review ? toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number) : undefined;
-      const cleanup = e && { kind: e.kind, done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
+      const cleanup = e && { kind: e.kind, ...(e.sha ? { sha: e.sha } : {}), done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
       return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}) };
     };
     const requested = answer.requested.prs;

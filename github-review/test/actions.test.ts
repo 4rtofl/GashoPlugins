@@ -35,6 +35,7 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
       askRemove: async () => true,
       askAgentFor: async () => ({ cleanup: true }),
       reload: () => {},
+      refresh: async () => {},
     },
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };

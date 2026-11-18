@@ -49,6 +49,7 @@ export function useRowShell({
       askRemove: (q) => new Promise<boolean>((resolve) => setRemoving({ ...q, answer: resolve })),
       askAgentFor: (q) => new Promise<{ cleanup: boolean } | undefined>((resolve) => setAsking({ ...q, answer: resolve })),
       reload: (id) => sources[id]?.reload(),
+      refresh: async (id) => sources[id]?.refresh(),
     };
     return { call, launch, send, remove, nav, actions };
   }, [call, launch, send, remove, nav, sources]);
@@ -60,6 +61,10 @@ export function useRowShell({
     busy,
     machines: ready.length > 1,
     merge,
+    listedAt: (machines) => {
+      const times = machines.map((id) => sources[id]?.at);
+      return times.every((t) => t !== undefined) && times.length > 0 ? Math.min(...(times as number[])) : undefined;
+    },
     ...(select ? { select } : {}),
     ...(selected ? { selected } : {}),
     run: (url, work) => {

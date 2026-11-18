@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
 import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING } from "../src/instructions.ts";
-import { ASK_SETTLE_MS, askOf, askRunning, latestMark, readMark, reviewProgress, sameHead, withoutMark, working, type ReviewMark } from "../src/verdict.ts";
+import { ASK_RECHECK_MS, ASK_SETTLE_MS, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, withoutMark, working, type Recheck, type ReviewMark } from "../src/verdict.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER = "fedcba9876543210fedcba9876543210fedcba98";
@@ -264,7 +264,54 @@ test("ask running: once asked, the row shows it is being done while a session in
   assert.equal(askRunning(merge, { sha: OTHER }, { working: true, asked, now: later }), false);
   assert.equal(askRunning(askOf({}, "changes"), mark, { working: true, asked, now: asked.at }), false);
   // Kept to remove the worktree after (asked on another page, or before the page was opened again).
-  assert.equal(askRunning(merge, mark, { working: true, followed: "merge", now: later }), true);
-  assert.equal(askRunning(merge, mark, { working: false, followed: "merge", now: later }), false);
+  const followed = { kind: "merge" as const, sha: SHA };
+  assert.equal(askRunning(merge, mark, { working: true, followed, now: later }), true);
+  assert.equal(askRunning(merge, mark, { working: false, followed, now: later }), false);
   assert.equal(askRunning(undefined, mark, { working: true, asked, now: asked.at }), false);
+  // Kept from a merge of an earlier verdict that did not happen, or from before it named the head: nothing is asked of this one.
+  assert.equal(askRunning(merge, mark, { working: true, followed: { kind: "merge", sha: OTHER }, now: later }), false);
+  assert.equal(askRunning(merge, mark, { working: true, followed: { kind: "merge" }, now: later }), false);
+  assert.equal(askRunning(askOf({}, "changes"), mark, { working: true, followed, now: later }), false);
+});
+
+test("ask rechecking: once the work ended, the row waits for the list read from GitHub after it", () => {
+  const merge = askOf({}, "mergeable");
+  const mark = { sha: SHA };
+  const ended = 1_000_000;
+  const reading: Recheck = { kind: "merge", sha: SHA, ended };
+  const read: Recheck = { ...reading, refreshed: ended + 2000 };
+  // GitHub is being read.
+  assert.equal(askRechecking(merge, mark, { recheck: reading, listedAt: ended + 1000, now: ended + 1000 }), true);
+  // It was read, and the list that gives has not come yet.
+  assert.equal(askRechecking(merge, mark, { recheck: read, listedAt: ended - 5000, now: ended + 2100 }), true);
+  assert.equal(askRechecking(merge, mark, { recheck: read, now: ended + 2100 }), true);
+  // It has come: the row shows what the list says.
+  assert.equal(askRechecking(merge, mark, { recheck: read, listedAt: ended + 2200, now: ended + 2300 }), false);
+  // It does not wait for ever, when no list comes.
+  assert.equal(askRechecking(merge, mark, { recheck: reading, now: ended + ASK_RECHECK_MS - 1 }), true);
+  assert.equal(askRechecking(merge, mark, { recheck: reading, now: ended + ASK_RECHECK_MS }), false);
+  // Nothing ended, or the end of something else.
+  assert.equal(askRechecking(merge, mark, { now: ended }), false);
+  assert.equal(askRechecking(undefined, mark, { recheck: reading, now: ended }), false);
+  assert.equal(askRechecking(merge, { sha: OTHER }, { recheck: reading, now: ended }), false);
+  assert.equal(askRechecking(askOf({}, "changes"), mark, { recheck: reading, now: ended }), false);
+});
+
+test("sent back: once I requested changes after the review's comment, the row has no 差し戻す", () => {
+  const at = "2026-11-18T10:00:00Z";
+  const after = "2026-11-18T10:05:00Z";
+  const before = "2026-11-18T09:00:00Z";
+  assert.equal(sentBack({ changesRequestedAt: after, mark: { at } }), true);
+  assert.equal(sentBack({ changesRequestedAt: at, mark: { at } }), true);
+  // Of an earlier round, or nothing to tell by.
+  assert.equal(sentBack({ changesRequestedAt: before, mark: { at } }), false);
+  assert.equal(sentBack({ mark: { at } }), false);
+  assert.equal(sentBack({ changesRequestedAt: after }), false);
+  assert.equal(sentBack({ changesRequestedAt: "not a time", mark: { at } }), false);
+
+  assert.equal(askOf({ changesRequestedAt: after, mark: { at } }, "changes"), undefined);
+  assert.equal(askOf({ changesRequestedAt: before, mark: { at } }, "changes")?.kind, "sendBack");
+  // My own pull request cannot be sent back: it is mended.
+  assert.equal(askOf({ own: true, changesRequestedAt: after, mark: { at } }, "changes")?.kind, "fix");
+  assert.equal(askOf({ changesRequestedAt: after, mark: { at } }, "mergeable")?.kind, "merge");
 });

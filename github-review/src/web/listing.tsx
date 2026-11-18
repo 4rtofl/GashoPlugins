@@ -14,9 +14,13 @@ export interface Source {
   ready: boolean;
   reason?: string;
   listing?: Listing;
+  /** When `listing` came (ms since the epoch, by this browser's clock). */
+  at?: number;
   error?: string;
   refreshing: boolean;
   reload: () => void;
+  /** Reads GitHub again, without what gasho-daemon kept of it, and asks for the list that gives. */
+  refresh: () => Promise<void>;
 }
 
 /**
@@ -49,11 +53,16 @@ function ListingSource({ machine, query, freshAsk, onChange }: { machine: Machin
     };
   }, [freshAsk]);
   useEffect(() => setRefreshError(undefined), [query]);
+  const refresh = useCallback(async () => {
+    if (!on) return;
+    await call<Listing>({ machine: machine.id, method: "list", params: { query, fresh: true } });
+    reload();
+  }, [on, call, machine.id, query, reload]);
 
   const error = refreshError ?? r.error;
   useEffect(() => {
-    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, ...(error ? { error } : {}), refreshing, reload });
-  }, [machine.id, on, daemon.reason, r.data, error, refreshing, reload, onChange]);
+    onChange(machine.id, { ready: on, ...(daemon.reason ? { reason: daemon.reason } : {}), listing: r.data, at: r.at, ...(error ? { error } : {}), refreshing, reload, refresh });
+  }, [machine.id, on, daemon.reason, r.data, r.at, error, refreshing, reload, refresh, onChange]);
   useEffect(() => () => onChange(machine.id, undefined), [machine.id, onChange]);
   return null;
 }

@@ -73,12 +73,13 @@ test("cleanups: kept in the file; one page claims at a time; a failure stays wit
   let now = 1000;
   const a = new Cleanups({ file, log: () => {}, now: () => now });
   await a.follow("O/r", 5, "merge");
-  await a.follow("o/r", 6, "sendBack");
+  await a.follow("o/r", 6, "sendBack", "abc1234");
   assert.deepEqual(await a.get("o/R", 5), { repo: "O/r", number: 5, kind: "merge", at: 1000 });
+  assert.deepEqual(await a.get("o/r", 6), { repo: "o/r", number: 6, kind: "sendBack", sha: "abc1234", at: 1000 });
 
   // Another process (gasho-daemon started again) reads them back.
   const b = new Cleanups({ file, log: () => {}, now: () => now });
-  assert.deepEqual((await b.all()).map((e) => [e.number, e.kind]), [[5, "merge"], [6, "sendBack"]]);
+  assert.deepEqual((await b.all()).map((e) => [e.number, e.kind, e.sha]), [[5, "merge", undefined], [6, "sendBack", "abc1234"]]);
 
   assert.equal(await b.claim("o/r", 5), true);
   assert.equal(await b.claim("o/r", 5), false);
@@ -117,7 +118,7 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
   const asked = Date.parse("2026-11-17T10:00:00Z");
   const cleanups = new Cleanups({ file: path.join(root, "cleanups.json"), log: () => {}, now: () => asked });
   await cleanups.follow("o/r", 5, "merge");
-  await cleanups.follow("o/r", 6, "sendBack");
+  await cleanups.follow("o/r", 6, "sendBack", "abc1234");
   await cleanups.follow("o/r", 8, "merge");
 
   const pr = (number: number, over: Record<string, unknown> = {}) => ({
@@ -151,7 +152,7 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
   const listing = await reviewer.list(github, "", false);
   assert.deepEqual(listing.errors, []);
   const byNumber = Object.fromEntries(listing.repos.flatMap((r) => r.prs).map((p) => [p.number, p.place?.cleanup]));
-  assert.deepEqual(byNumber, { 5: { kind: "merge", done: true }, 6: { kind: "sendBack", done: false }, 7: undefined });
+  assert.deepEqual(byNumber, { 5: { kind: "merge", done: true }, 6: { kind: "sendBack", sha: "abc1234", done: false }, 7: undefined });
   // The page's spots carry it.
   assert.deepEqual(pageItems([{ machine: "m", listing }]).groups[0]?.items.find((i) => i.pr.number === 5)?.spots[0]?.cleanup, { kind: "merge", done: true });
   // #8 has no review worktree here (removed by hand): forgotten.

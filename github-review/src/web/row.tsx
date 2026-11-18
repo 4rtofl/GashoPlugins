@@ -25,14 +25,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
-import { createContext, useContext, type MouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { cn, relativeTime } from "@gasho/plugin-sdk";
 import { askEffort, askInstruction, type MergeMethod } from "../instructions.ts";
 import type { Template } from "../template.ts";
 import type { CheckState, PrRow, ReviewState } from "../types.ts";
-import { askOf, askRunning, type AskKind, type ReviewProgress } from "../verdict.ts";
+import { askOf, askRechecking, askRunning, type AskKind, type ReviewProgress } from "../verdict.ts";
 import { askAgent, createWorktree, followCleanup, newSessionIn, reviewIn, openWorktree, progressOf, removeWorktree, sessionsIn, workingIn, type Item, type Spot, type Tools } from "./actions";
-import { markAsked, useAsked } from "./asked";
+import { markAsked, recheck, useAsked } from "./asked";
 import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
@@ -47,6 +47,8 @@ export interface RowShared {
   machines: boolean;
   /** The settings of "マージしてもらう". */
   merge: { method: MergeMethod; deleteBranch: boolean };
+  /** When the oldest of these working servers' lists came (ms, by this browser's clock); undefined when one has none. */
+  listedAt: (machines: string[]) => number | undefined;
   /** Opens a pull request's side panel (or its page, on a phone). */
   select?: (item: Item) => void;
   /** The URL of the pull request whose side panel is open. */
@@ -286,25 +288,41 @@ const RUNNING: Record<AskKind, { text: string; hint: string }> = {
   sendBack: { text: "差し戻してもらっています", hint: "「差し戻す」を頼み、worktree のセッションが作業しています" },
   fix: { text: "修正してもらっています", hint: "「修正してもらう」を頼み、worktree のセッションが作業しています" },
 };
+const RECHECK_HINT = "セッションの作業が終わったので、Pull request の状態を GitHub から読み直しています";
 
 /**
  * "マージしてもらう", "差し戻す" or "修正してもらう": sends the Agent in the worktree what the verdict calls for. Once
- * it is asked, a badge says it is being done in place of the button, until the session there is at rest.
+ * it is asked, a badge says it is being done in place of the button, until the session there is at rest and the list
+ * has been read from GitHub again: only that tells whether it was done, or the button is to come back.
  */
 export function AgentAsk({ item }: { item: Item }) {
   const shared = useContext(RowContext);
-  const asked = useAsked();
+  const { asked, rechecks } = useAsked();
   const { pr, spots } = item;
   const ask = askOf(pr, progressOf(item));
   const placed = spots.filter((s) => s.worktree);
-  if (!shared || !ask || !pr.mark || placed.length === 0) return null;
-  const { tools, run } = shared;
   const mark = pr.mark;
-  const followed = placed.find((s) => s.worktree?.review && s.cleanup && !s.cleanup.problem)?.cleanup?.kind;
-  if (askRunning(ask, mark, { working: workingIn(item), asked: asked.get(pr.url), followed, now: Date.now() })) {
+  const followed = placed.find((s) => s.worktree?.review && s.cleanup && !s.cleanup.problem)?.cleanup;
+  const now = Date.now();
+  const running = askRunning(ask, mark, { working: workingIn(item), asked: asked.get(pr.url), followed, now });
+  const machines = [...new Set(spots.map((s) => s.machine.id))];
+  const rechecking = askRechecking(ask, mark, { recheck: rechecks.get(pr.url), listedAt: shared?.listedAt(machines), now });
+  // When the work ends, GitHub is read again. Before the screen is painted, so that the button does not show for a
+  // moment between the end of the work and the badge that waits for that reading.
+  const wasRunning = useRef(running);
+  useLayoutEffect(() => {
+    const ended = wasRunning.current && !running;
+    wasRunning.current = running;
+    if (ended && shared && ask && mark && placed.length > 0) {
+      recheck(pr.url, { kind: ask.kind, sha: mark.sha }, () => Promise.all(machines.map((id) => shared.tools.actions.refresh(id))));
+    }
+  });
+  if (!shared || !ask || !mark || placed.length === 0) return null;
+  const { tools, run } = shared;
+  if (running || rechecking) {
     const r = RUNNING[ask.kind];
     return (
-      <Badge tone="neutral" role="status" className="h-8 px-3" title={r.hint}>
+      <Badge tone="neutral" role="status" className="h-8 px-3" title={running ? r.hint : RECHECK_HINT}>
         <LoaderCircle className="size-3.5 shrink-0 text-muted-foreground motion-safe:animate-spin" />
         {r.text}
       </Badge>

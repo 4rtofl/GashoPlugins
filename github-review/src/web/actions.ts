@@ -50,6 +50,8 @@ export interface Actions {
   askAgentFor: (q: { kind: CleanupKind; item: Item; spot: Spot }) => Promise<{ cleanup: boolean } | undefined>;
   /** Reads a working server's list again. */
   reload: (machine: string) => void;
+  /** Reads a working server's list from GitHub again, as "更新" does; done once the list that gives is asked for. */
+  refresh: (machine: string) => Promise<void>;
 }
 
 export interface Tools {
@@ -227,7 +229,7 @@ export async function askAgent(spot: Spot, label: string, text: string, effort: 
 
 /**
  * After a merge or a send-back was sent: the daemon part keeps whether to remove the review worktree once it is done
- * (`cleanup`), or forgets what an earlier ask said. Only a review worktree
+ * (`cleanup`), with the head of the verdict it was asked of, or forgets what an earlier ask said. Only a review worktree
  * (review-<repository>-<number>, or review-<number> from before) is ever removed.
  */
 export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind, cleanup: boolean, t: Tools): Promise<void> {
@@ -235,7 +237,7 @@ export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind,
   const r = await t.call({
     machine: spot.machine.id,
     method: "cleanup",
-    params: { repo: pr.repo, number: pr.number, ...(cleanup ? { action: "follow", kind } : { action: "forget" }) },
+    params: { repo: pr.repo, number: pr.number, ...(cleanup ? { action: "follow", kind, ...(pr.mark ? { sha: pr.mark.sha } : {}) } : { action: "forget" }) },
     summary: cleanup ? `${pr.repo}#${pr.number} の${KIND_TEXT[kind]}が終わったら、レビュー用の worktree を片付ける` : `${pr.repo}#${pr.number} のレビュー用の worktree を自動では片付けない`,
   });
   t.actions.reload(spot.machine.id);
