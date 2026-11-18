@@ -21,9 +21,9 @@ export function readTemplates(v: unknown): { templates: Template[]; problem?: st
   try {
     list = typeof v === "string" ? JSON.parse(v) : v;
   } catch {
-    return { templates: [], problem: "設定のテンプレートの JSON を読めないので、テンプレートを使えません。JSON を直すか、下の欄で作り直して保存してください。" };
+    return { templates: [], problem: "設定のテンプレートの JSON を読めないので、テンプレートを使えません。設定画面で、JSON を直すか、テンプレートの欄で作り直して保存してください。" };
   }
-  if (!Array.isArray(list)) return { templates: [], problem: "設定のテンプレートの JSON が一覧（[ … ]）ではないので、テンプレートを使えません。JSON を直すか、下の欄で作り直して保存してください。" };
+  if (!Array.isArray(list)) return { templates: [], problem: "設定のテンプレートの JSON が一覧（[ … ]）ではないので、テンプレートを使えません。設定画面で、JSON を直すか、テンプレートの欄で作り直して保存してください。" };
   const templates = list.flatMap((t): Template[] => {
     const { name, body } = (t ?? {}) as { name?: unknown; body?: unknown };
     if (typeof name !== "string" || typeof body !== "string") return [];

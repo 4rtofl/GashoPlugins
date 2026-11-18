@@ -312,7 +312,7 @@ export async function removeWorktree(item: Item, spot: Spot, t: Tools): Promise<
       return;
     }
     const also = [r.data.branch ? `ローカルのブランチ ${r.data.branch}` : undefined, r.data.fileCount > 0 ? `git が追跡していないファイル ${r.data.fileCount} 件` : undefined].filter(Boolean);
-    t.actions.notify({ text: `${folderName(r.data.path)} を片付けました${also.length > 0 ? `（${also.join("と")}も消しました）` : ""}。` });
+    t.actions.notify({ text: `${folderName(r.data.path)} を片付けました${also.length > 0 ? `（${also.join(" と、")}も消しました）` : ""}。` });
     return;
   }
 }
