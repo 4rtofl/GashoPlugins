@@ -1,12 +1,12 @@
-// Runs the tests, as `npm test` does, and shows the share of the lines, branches and functions they run, per top folder
-// (a plugin, or scripts). Run it with `npm run test:coverage`; .github/workflows/release.yml runs it in place of
-// `npm test` and puts the table in the job's summary. The numbers are not a goal and never fail it: it fails only when
-// a test fails (as in Gasho, 4rtofl/Gasho#126).
+// Runs the tests of the .ts files, as `npm run test:node` does, and shows the share of the lines, branches and functions
+// they run, per top folder (a plugin, or scripts). Run it with `npm run test:coverage`; .github/workflows/release.yml
+// runs it in place of `npm run test:node` and puts the table in the job's summary. The numbers are not a goal and never
+// fail it: it fails only when a test fails (as in Gasho, 4rtofl/Gasho#126).
 //
 // Node counts only the files the tests load, and every line of them, blank lines and comments too. Here, a .ts file no
 // test loads counts too, all its lines as not run, unless it holds only types; its branches and functions are left out,
 // as Node counts them only by running the file. Not counted: the .tsx of the screens (Node cannot load JSX), .d.ts, and
-// the tests themselves: what is under test/ and *.test.ts (README.md, "ビルドする").
+// the tests themselves: what is under test/, *.test.ts and vitest.config.ts (README.md, "ビルドする").
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -136,10 +136,10 @@ function main(): void {
   const root = path.resolve(import.meta.dirname, "..");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gasho-plugins-coverage-"));
   const lcovFile = path.join(tmp, "lcov.info");
-  // The files `npm test` runs, taken from it so that the two never run different tests.
-  const rootPackage = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: { test: string }; workspaces: string[] };
-  const testPatterns = [...rootPackage.scripts.test.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
-  if (testPatterns.length === 0) throw new Error("no test file pattern found in the test script of package.json");
+  // The files `npm run test:node` runs, taken from it so that the two never run different tests.
+  const rootPackage = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: { "test:node": string }; workspaces: string[] };
+  const testPatterns = [...rootPackage.scripts["test:node"].matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  if (testPatterns.length === 0) throw new Error("no test file pattern found in the test:node script of package.json");
   try {
     const tests = spawnSync(
       process.execPath,
@@ -163,7 +163,7 @@ function main(): void {
       // The files git has or would add: not each person's kanban board plugins, which .gitignore leaves out.
       const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" })
         .split("\n")
-        .filter((f) => !f.split("/").includes("test") && !f.endsWith(".test.ts") && !f.endsWith(".test.tsx") && fs.existsSync(path.join(root, f)));
+        .filter((f) => !f.split("/").includes("test") && !f.endsWith(".test.ts") && !f.endsWith(".test.tsx") && f !== "vitest.config.ts" && fs.existsSync(path.join(root, f)));
       const sources = files.filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"));
       const folders = byFolder(fs.readFileSync(lcovFile, "utf8"), sources, (f) => fs.readFileSync(path.join(root, f), "utf8"));
       const names = [...new Set([...rootPackage.workspaces, ...folders.keys()])].sort();
