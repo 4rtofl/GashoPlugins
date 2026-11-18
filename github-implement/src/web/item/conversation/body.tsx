@@ -3,6 +3,7 @@
 import { FileText, Pencil } from "lucide-react";
 import { useState } from "react";
 import { cn, Markdown, RelativeTime } from "@gasho/plugin-sdk";
+import { bodyEditParams } from "../../../edit-was.ts";
 import { Alert } from "../../ui/alert.tsx";
 import { Button } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
@@ -23,7 +24,7 @@ function useBody(): ConversationEntry[] {
     const ok = await run({
       id: "body",
       op: "edit",
-      params: { body: edit.draft, was: { body: base } },
+      params: bodyEditParams(edit.draft, base),
       summary: `#${where.number} の本文を変える`,
       done: "本文を変えました",
       undo: { op: "edit", params: { body: base }, summary: `#${where.number} の本文を戻す` },

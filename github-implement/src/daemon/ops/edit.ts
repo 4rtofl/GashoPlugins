@@ -1,8 +1,9 @@
 // Title, body, assignees and labels: { repo, kind, number, title?, body?, addAssignees?, removeAssignees?, addLabels?, removeLabels?, was? }.
-// `was` ({ title?, body? }) is the title or the body the screen's edit started from: GitHub's is read again first, and
-// the edit is refused when it is no longer that, as saving would undo what changed since (a session's gh pr edit, a
-// task list's checkbox).
+// `was` ({ title?, bodyHash? }) is the title, or the hash of the body (edit-was.ts), the screen's edit started from:
+// GitHub's is read again first, and the edit is refused when it is no longer that, as saving would undo what changed
+// since (a session's gh pr edit, a task list's checkbox).
 import { PluginError } from "@gasho/plugin-sdk/daemon";
+import { TEXT_HASH, textHash } from "../../edit-was.ts";
 import type { GitHubKind } from "../../types.ts";
 import { gh, readDetail, withTextFile, type Ctx } from "../core.ts";
 import { cmd, kindArg, labelsArg, loginsArg, numberArg, repoArg, textArg } from "../gh.ts";
@@ -21,21 +22,22 @@ export function editArgs(repo: string, kind: GitHubKind, number: number, change:
   return args;
 }
 
-/** The title and the body the edit started from; only those it edits. */
-function wasArg(v: unknown): { title?: string; body?: string } | undefined {
+/** The title and the hash of the body the edit started from; only those it edits. */
+function wasArg(v: unknown): { title?: string; bodyHash?: string } | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== "object" || v === null) throw new PluginError("編集を始めたときの値の指定が正しくありません。");
   const w = v as Record<string, unknown>;
-  return { ...(w.title !== undefined ? { title: textArg(w.title, "編集を始めたときの題", 256) } : {}), ...(w.body !== undefined ? { body: textArg(w.body, "編集を始めたときの本文", 65_536) } : {}) };
+  if (w.bodyHash !== undefined && (typeof w.bodyHash !== "string" || !TEXT_HASH.test(w.bodyHash))) throw new PluginError("編集を始めたときの本文の指定が正しくありません。");
+  return { ...(w.title !== undefined ? { title: textArg(w.title, "編集を始めたときの題", 256) } : {}), ...(w.bodyHash !== undefined ? { bodyHash: w.bodyHash } : {}) };
 }
 
-async function checkUnchanged(ctx: Ctx, repo: string, kind: GitHubKind, number: number, was: { title?: string; body?: string }): Promise<void> {
-  if (was.title === undefined && was.body === undefined) return;
+async function checkUnchanged(ctx: Ctx, repo: string, kind: GitHubKind, number: number, was: { title?: string; bodyHash?: string }): Promise<void> {
+  if (was.title === undefined && was.bodyHash === undefined) return;
   // The screen's own read, made fresh: when the edit is refused, gasho-daemon already holds the changed item for the
   // screen's read right after, which then shows the change. A read with other args would leave the old one kept.
   const now = await gh(`read ${kind} #${number}`, () => readDetail(ctx, repo, kind, number, { fresh: true }), ctx);
   if (was.title !== undefined && now.title !== was.title) throw new PluginError("編集を始めたあとに、GitHub で題が変わりました。保存していません。読み直した題を確かめてください。");
-  if (was.body !== undefined && now.body !== was.body) throw new PluginError("編集を始めたあとに、GitHub で本文が変わりました。保存していません。読み直した本文を確かめてください。");
+  if (was.bodyHash !== undefined && textHash(now.body) !== was.bodyHash) throw new PluginError("編集を始めたあとに、GitHub で本文が変わりました。保存していません。読み直した本文を確かめてください。");
 }
 
 export default {
