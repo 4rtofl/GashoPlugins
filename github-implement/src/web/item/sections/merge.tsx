@@ -202,7 +202,10 @@ function MergeBody({ m, reload }: { m: PullMerge; reload: () => void }) {
           ) : (
             <label className="inline-flex cursor-pointer items-center gap-1.5">
               <input type="checkbox" checked={deleteBranch} onChange={(e) => setDeleteBranch(e.target.checked)} disabled={busy !== undefined} className="size-3.5 accent-current" />
-              マージしたら、GitHub の <span className="font-mono break-all">{m.head}</span> を消す
+              {/* One span: three nodes of a flex row would each wrap apart in a narrow width. */}
+              <span>
+                マージしたら、GitHub の <span className="font-mono break-all">{m.head}</span> を消す
+              </span>
             </label>
           )}
         </p>

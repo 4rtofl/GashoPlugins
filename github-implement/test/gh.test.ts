@@ -3,12 +3,12 @@ import { test } from "node:test";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
 import type { GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
-import { itemRead, readItems, type Ctx } from "../src/daemon/core.ts";
-import { branchArg, branchNumber, detailArgs, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
+import { itemRead, readDetail, readItems, type Ctx } from "../src/daemon/core.ts";
+import { branchArg, detailArgs, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
 import { editArgs } from "../src/daemon/ops/edit.ts";
 import { stateArgs } from "../src/daemon/ops/state.ts";
-import { numberFrom } from "../src/web/number.ts";
+import { branchNumber, numberFrom, typedItem } from "../src/number.ts";
 
 test("a branch is named after the issue in its number", () => {
   assert.equal(branchNumber("feat/17-resume-outside"), 17);
@@ -85,6 +85,10 @@ test("a number is taken from 17, #17, or a URL of the same repository only", () 
   assert.equal(numberFrom("https://github.com/4rtofl/Gasho/pull/36/files", "4rtofl/Gasho"), 36);
   assert.equal(numberFrom("https://github.com/4rtofl/GashoPlugins/issues/4", "4rtofl/Gasho"), undefined);
   assert.equal(numberFrom("abc", "4rtofl/Gasho"), undefined);
+  // Neither is searched: GitHub reads "-1" as "without 1", and another repository's number is not this one's.
+  assert.ok(typedItem("-1", "4rtofl/Gasho") && "wrong" in typedItem("-1", "4rtofl/Gasho")!);
+  assert.match((typedItem("https://github.com/4rtofl/GashoPlugins/issues/4", "4rtofl/Gasho") as { wrong: string }).wrong, /4rtofl\/GashoPlugins の URL/);
+  assert.equal(typedItem("ログイン 画面", "4rtofl/Gasho"), undefined);
 });
 
 test("a body comes whole, as the edit box starts from it and saves it back", () => {
@@ -175,4 +179,25 @@ test("the reads of an item use what gasho-daemon kept since its version was read
   await maxAgeOfRead();
   tick(10);
   assert.equal(await maxAgeOfRead(), 10);
+});
+
+test("an item asked for as the wrong kind is read as the kind it is", async () => {
+  const asked: string[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        const [cmd, , n] = args;
+        asked.push(`${cmd} ${n}`);
+        // gh issue view gives a pull request for its number; gh pr view fails on an issue's.
+        if (cmd === "pr" && n === "5") throw Object.assign(new Error("Command failed"), { stderr: "GraphQL: Could not resolve to a PullRequest with the number of 5. (repository.pullRequest)" });
+        const url = n === "5" ? "https://github.com/o/k/issues/5" : "https://github.com/o/k/pull/6";
+        return { stdout: JSON.stringify({ number: Number(n), title: "t", url, state: n === "5" ? "OPEN" : "MERGED", headRefName: "feat/6-x" }), stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as Ctx;
+  const pull = await readDetail(ctx, "o/k", "issues", 6);
+  assert.deepEqual([pull.kind, pull.state, pull.head], ["pulls", "merged", "feat/6-x"]);
+  assert.equal((await readDetail(ctx, "o/k", "pulls", 5)).kind, "issues");
+  assert.deepEqual(asked, ["issue 6", "pr 6", "pr 5", "issue 5"]);
 });

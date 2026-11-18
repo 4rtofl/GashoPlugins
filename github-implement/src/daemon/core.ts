@@ -5,7 +5,8 @@
 import path from "node:path";
 import { PluginError, type DaemonContext, type ExecResult, type GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../types.ts";
-import { branchNumber, detailArgs, ghError, itemsQueryArgs, itemVersions, parseDetail, parseItems, type DetailPart } from "./gh.ts";
+import { branchNumber } from "../number.ts";
+import { detailArgs, ghError, itemsQueryArgs, itemVersions, notAPull, parseDetail, parseItems, urlKind, type DetailPart } from "./gh.ts";
 import { Store } from "./store.ts";
 
 /** The worktrees read in the background: those Gasho showed in the last day. */
@@ -165,9 +166,22 @@ export function itemRead(ctx: Ctx, repo: string, number: number, params: Record<
   };
 }
 
+/**
+ * One issue or pull request, as the kind it is: a link or a number typed by hand may name an issue as a pull request
+ * or the other way round, and the screen shows it as the kind the answer says.
+ */
 export async function readDetail(ctx: Ctx, repo: string, kind: GitHubKind, number: number, params: Record<string, unknown> = {}): Promise<GitHubItemDetail> {
-  const { stdout } = await itemRead(ctx, repo, number, params)(detailArgs(repo, kind, number, detailParts), { maxBuffer: 32 * 1024 * 1024 });
-  const item = parseDetail(stdout, kind, detailParts);
+  const read = itemRead(ctx, repo, number, params);
+  const readAs = async (k: GitHubKind) => parseDetail((await read(detailArgs(repo, k, number, detailParts), { maxBuffer: 32 * 1024 * 1024 })).stdout, k, detailParts);
+  let item: GitHubItemDetail | undefined;
+  try {
+    item = await readAs(kind);
+  } catch (e) {
+    if (kind !== "pulls" || !notAPull(e)) throw e;
+    item = await readAs("issues");
+  }
+  // gh issue view answers a pull request's number with the pull request, without the fields of one.
+  if (item?.kind === "issues" && urlKind(item.url) === "pulls") item = await readAs("pulls");
   if (!item) throw new PluginError("この番号の Issue や Pull request は見つかりません。");
   return item;
 }

@@ -14,11 +14,14 @@ import { SkeletonText } from "../../ui/skeleton.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemTab } from "../parts.ts";
 
+/** GitHub's words for the checks that neither passed nor failed. */
+const OTHER: Record<Exclude<GitHubCheck["state"], "success" | "failure" | "pending">, string> = { skipped: "スキップ", cancelled: "取り消し", neutral: "neutral" };
+
 function CheckIcon({ state }: { state: GitHubCheck["state"] }) {
   if (state === "success") return <CircleCheck aria-label="成功" className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />;
   if (state === "failure") return <CircleX aria-label="失敗" className="size-4 shrink-0 text-red-600 dark:text-red-400" />;
   if (state === "pending") return <LoaderCircle aria-label="実行中" className="size-4 shrink-0 animate-spin text-amber-600 dark:text-amber-400" />;
-  return <CircleMinus aria-label="スキップ" className="size-4 shrink-0 text-muted-foreground" />;
+  return <CircleMinus aria-label={OTHER[state]} className="size-4 shrink-0 text-muted-foreground" />;
 }
 
 function Checks() {

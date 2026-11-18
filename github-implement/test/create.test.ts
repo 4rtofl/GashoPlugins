@@ -9,7 +9,7 @@ import type { DaemonContext } from "@gasho/plugin-sdk/daemon";
 import { createIssueArgs } from "../src/daemon/ops/create-issue.ts";
 import { createPullArgs } from "../src/daemon/ops/create-pull.ts";
 import { localState, parseCompare, parseNewPull } from "../src/daemon/ops/new-pull.ts";
-import { parseSearch } from "../src/daemon/ops/search.ts";
+import { parseSearch, searchTerms } from "../src/daemon/ops/search.ts";
 
 const run = promisify(execFile);
 
@@ -75,4 +75,9 @@ test("a search keeps only the repository's own issues and pull requests", () => 
     parseSearch(json, "4rtofl/GashoPlugins").map((i) => i.number),
     [27],
   );
+});
+
+test("the words of a search are words of the title, never GitHub's NOT or qualifiers", () => {
+  assert.equal(searchTerms(' -1  is:open "a" '), '"-1" "is:open" "a"');
+  assert.equal(searchTerms('""'), undefined);
 });

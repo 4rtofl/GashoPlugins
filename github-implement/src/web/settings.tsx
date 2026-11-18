@@ -53,18 +53,22 @@ export function RefreshSettings() {
         </tbody>
       </table>
       {machines.map((m) => (
-        <MachineLoad key={m.id} machine={m.id} name={m.name} />
+        <MachineLoad key={m.id} machine={m.id} name={m.name} refresh={refresh} />
       ))}
     </div>
   );
 }
 
-/** What the background reads take on one working server now, while nothing changes: a gauge of the points an hour against the share kept to. */
-function MachineLoad({ machine, name }: { machine: string; name: string }) {
+/**
+ * What the background reads take on one working server, while nothing changes: a gauge of the points an hour against
+ * the share kept to. The interval is the one in the input above, which the daemon part gets with its next call.
+ */
+function MachineLoad({ machine, name, refresh }: { machine: string; name: string; refresh: number | undefined }) {
   const daemon = useDaemonReady(machine);
   const r = useRequest<{ worktrees: number; refreshSeconds: number }>(daemon.ready ? readOp(machine, "status") : undefined, { staleSeconds: 0 });
   if (!r.data) return null;
-  const { worktrees, refreshSeconds } = r.data;
+  const { worktrees } = r.data;
+  const refreshSeconds = typeof refresh === "number" && Number.isFinite(refresh) && refresh >= 0 ? refresh : r.data.refreshSeconds;
   const points = pointsPerHour(worktrees, refreshSeconds);
   const over = refreshSeconds > 0 && worktrees > worktreesFor(refreshSeconds);
   return (

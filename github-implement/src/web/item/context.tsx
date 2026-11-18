@@ -2,7 +2,7 @@
 // change. A change is one operation of the daemon part; when it is done, a toast says so (an Undo Toast when it can be
 // put back), and the item, the worktree's tabs and what the parts read themselves (useAfterChange) are read again.
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import type { MachineInfo, WorktreeInfo } from "@gasho/plugin-sdk";
+import { useNavigation, usePluginState, type MachineInfo, type Params, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind } from "../../types.ts";
 import { useWriteOp } from "../daemon.ts";
 import { useToast } from "../ui/toast.tsx";
@@ -33,6 +33,8 @@ export interface ItemScope {
   machineInfo: MachineInfo;
   /** The worktree the screen is open in. */
   worktree: WorktreeInfo;
+  /** The screen's URL's, as Gasho gave them. */
+  params: Params;
   where: Where;
   item: GitHubItemDetail;
   now: number;
@@ -51,6 +53,23 @@ export function useItem(): ItemScope {
   const scope = useContext(ItemContext);
   if (!scope) throw new Error("useItem is for the parts of an item's screen");
   return scope;
+}
+
+/**
+ * The tab of the screen that shows, of `ids`: the URL's first, so that reloading the page and the browser's back show
+ * the tab it was; else the one last chosen, as the item's worktree tab has no tab in its URL. Choosing one puts it in the
+ * URL, beside the params of the worktree tab, as Gasho shows that tab as chosen while the URL has them all.
+ */
+export function useChosenTab(ids: string[]): [string | undefined, (id: string) => void] {
+  const { where, params } = useItem();
+  const nav = useNavigation();
+  const [remembered, remember] = usePluginState<string>(`tab:${where.repo}#${where.number}`, ids[0] ?? "");
+  const chosen = [params.tab, remembered].find((id): id is string => id !== undefined && ids.includes(id)) ?? ids[0];
+  const choose = (id: string) => {
+    remember(id);
+    nav.openWorktreeView("item", { ...params, tab: id });
+  };
+  return [chosen, choose];
 }
 
 /** Calls `reload` after every change made on the screen, for what a part reads itself. */

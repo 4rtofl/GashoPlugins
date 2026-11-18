@@ -2,7 +2,7 @@
 // with velocity and settles, with a bar that runs down and pauses while the pointer is on it; the Undo Toast also
 // offers to put the change back. Changed for Gasho: one toast at a time from a provider (a new one takes the place of
 // the last), the colors on Gasho's tokens, an undo that waits for the daemon part and says whether it worked, longer
-// for an error and with its whole text, and Japanese labels.
+// for an error and with its whole text, a key that moves the focus to it (KEY) and back, and Japanese labels.
 import { AnimatePresence, motion, useMotionValue, useTransform } from "framer-motion";
 import { AlertCircle, Check, Info, Loader2, Undo2, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
@@ -25,19 +25,45 @@ interface Shown extends ToastInput {
 
 const ToastContext = createContext<(t: ToastInput) => void>(() => undefined);
 
+/**
+ * Moves the focus to the toast's buttons, as the toast is drawn after the page. It types nothing in a text box (⌥T
+ * types "†" on a Mac) and is none of Gasho's keys or the plugins' (⌘K, ⌘B, ⌘S, ⌘Enter, ⌥↑↓); Radix's toasts use it too.
+ */
+const KEY = "F8";
+
 /** Shows a toast at the bottom of the page, in place of the one there. */
 export const useToast = () => useContext(ToastContext);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<Shown>();
   const count = useRef(0);
+  const box = useRef<HTMLDivElement>(null);
+  // Where the focus was before KEY: it goes back there when the toast closes.
+  const back = useRef<HTMLElement | null>(null);
   const show = useCallback((t: ToastInput) => setToast({ ...t, key: ++count.current }), []);
-  const done = useCallback((key: number) => setToast((t) => (t?.key === key ? undefined : t)), []);
+  const done = useCallback((key: number) => {
+    if (box.current?.contains(document.activeElement)) back.current?.focus();
+    back.current = null;
+    setToast((t) => (t?.key === key ? undefined : t));
+  }, []);
+  useEffect(() => {
+    if (!toast) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== KEY || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const first = box.current?.querySelector<HTMLButtonElement>("button");
+      if (!first) return;
+      e.preventDefault();
+      if (!box.current?.contains(document.activeElement)) back.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      first.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toast]);
   return (
     <ToastContext.Provider value={show}>
       {children}
-      <div className="pointer-events-none fixed bottom-5 left-1/2 z-[95] flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center">
-        <AnimatePresence>{toast && <ToastCard key={toast.key} toast={toast} onDone={() => done(toast.key)} onFailed={show} />}</AnimatePresence>
+      <div ref={box} className="pointer-events-none fixed bottom-5 left-1/2 z-[95] flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center">
+        <AnimatePresence>{toast && <ToastCard key={toast.key} toast={toast} onDone={done} onFailed={show} />}</AnimatePresence>
       </div>
     </ToastContext.Provider>
   );
@@ -73,17 +99,20 @@ const ICON: Record<ToastTone, ReactNode> = {
   info: <Info className="size-4 text-muted-foreground" />,
 };
 
-function ToastCard({ toast, onDone, onFailed }: { toast: Shown; onDone: () => void; onFailed: (t: ToastInput) => void }) {
+function ToastCard({ toast, onDone, onFailed }: { toast: Shown; onDone: (key: number) => void; onFailed: (t: ToastInput) => void }) {
   const tone = toast.tone ?? "success";
   const [paused, setPaused] = useState(false);
   const [phase, setPhase] = useState<"shown" | "undoing" | "restored">("shown");
-  const width = useCountdown(tone === "error" ? 9000 : toast.undo ? 6500 : 4000, !paused && phase === "shown", onDone);
+  const { key } = toast;
+  const close = () => onDone(key);
+  const width = useCountdown(tone === "error" ? 9000 : toast.undo ? 6500 : 4000, !paused && phase === "shown", close);
 
+  // onDone and key stay the same while the toast shows: the page drawn again does not start the wait over.
   useEffect(() => {
     if (phase !== "restored") return;
-    const t = setTimeout(onDone, 1400);
+    const t = setTimeout(() => onDone(key), 1400);
     return () => clearTimeout(t);
-  }, [phase, onDone]);
+  }, [phase, onDone, key]);
 
   const undo = async () => {
     if (!toast.undo || phase !== "shown") return;
@@ -105,6 +134,12 @@ function ToastCard({ toast, onDone, onFailed }: { toast: Shown; onDone: () => vo
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        close();
+      }}
+      aria-keyshortcuts={KEY}
       className="pointer-events-auto relative w-[min(26rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-surface p-3.5 text-foreground shadow-xl select-none"
     >
       <div className="relative flex items-center gap-3">
@@ -126,6 +161,10 @@ function ToastCard({ toast, onDone, onFailed }: { toast: Shown; onDone: () => vo
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* Not on a phone's width, which has no keys. */}
+          <kbd title={`${KEY} でこの通知のボタンへ移る（Esc で閉じる）`} className="hidden rounded border border-border px-1 font-mono text-[10px] text-muted-foreground sm:inline">
+            {KEY}
+          </kbd>
           {toast.undo && phase === "shown" && (
             <button
               type="button"
@@ -138,7 +177,7 @@ function ToastCard({ toast, onDone, onFailed }: { toast: Shown; onDone: () => vo
           )}
           <button
             type="button"
-            onClick={onDone}
+            onClick={close}
             aria-label="閉じる"
             className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors outline-none hover:bg-surface-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
           >
