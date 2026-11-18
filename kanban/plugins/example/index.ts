@@ -36,12 +36,15 @@ export const fetch: Fetch<Info, Stacks> = async (repo, { github, exec, store }) 
 };
 
 function column(card: StateCard, info: Info | undefined): Placement {
-  if (card.pr?.state === "merged") return { column: "done", reason: "マージ済み" };
-  if (card.pr?.state === "closed") return { column: "done", reason: "クローズ済み" };
+  // A worktree deploying is in GitHub 待ち, merged or not.
   const deploying = deployingTo(card, info?.stacks);
   if (deploying.length > 0) return { column: "github", reason: `${deploying.join("・")} にデプロイしている` };
+  if (card.pr?.state === "merged") return { column: "done", reason: "マージ済み" };
+  if (card.pr?.state === "closed") return { column: "done", reason: "クローズ済み" };
   if (card.sessions.some((s) => s.status === "waiting")) return { column: "mine", reason: "Claude が答えを待っている" };
   if (card.sessions.some((s) => s.status === "busy")) return { column: "agent", reason: "Claude が作業している" };
+  // The pull request a review worktree is for is someone else's: its CI and its reviews are not mine to act on.
+  if (card.review) return { column: "mine", reason: "レビューする PR" };
   const open = card.pr?.state === "open" ? info?.prs[card.pr.number] : undefined;
   if (open?.conflict) return { column: "mine", reason: "コンフリクトしている" };
   if (open?.ci === "failure") return { column: "mine", reason: "CI が落ちた" };

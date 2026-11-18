@@ -3,6 +3,7 @@
 // loses the verdict), and what "マージしてもらう", "差し戻す" and, on my own pull request, "修正してもらう" ask; and the
 // effort level the session is switched to before each.
 import type { EffortLevel, MachineInfo } from "@gasho/plugin-sdk";
+import { fillTemplate, type Template } from "./template.ts";
 import { canPush } from "./types.ts";
 import type { ReviewMark } from "./verdict.ts";
 
@@ -25,6 +26,14 @@ interface PrRef {
 }
 
 const gh = (pr: PrRef, args: string): string => `gh ${args.replace("{n}", String(pr.number))} --repo ${pr.repo}`;
+
+/**
+ * What a review worktree's new session is sent ("worktree を作る" and "まとめてレビューさせる" alike): the template, then
+ * how to post the review with its mark, whatever the template says.
+ */
+export function reviewInstruction(template: Pick<Template, "body">, pr: PrRef): string {
+  return `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}`;
+}
 
 /** What goes after the template sent when a review worktree is made: how to post the review, with its mark. */
 export function markInstruction(pr: PrRef): string {
