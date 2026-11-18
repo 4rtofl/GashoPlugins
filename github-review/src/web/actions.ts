@@ -226,18 +226,20 @@ export async function askAgent(spot: Spot, label: string, text: string, effort: 
 /**
  * After a merge or a send-back was sent: the daemon part keeps whether to remove the review worktree once it is done
  * (`cleanup`), or forgets what an earlier ask said. A merge may remove a worktree of any name, a send-back only a review
- * worktree (review-<repository>-<number>, or review-<number> from before); the primary checkout is never removed.
+ * worktree (review-<repository>-<number>, or review-<number> from before); the primary checkout is never removed. An ask
+ * that may not remove the worktree forgets the one before it too: a send-back takes the place of the merge asked earlier.
  */
 export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind, cleanup: boolean, t: Tools): Promise<void> {
-  if (!spot.worktree || !cleanable(kind, spot.worktree, spot.primary)) return;
+  if (!spot.worktree) return;
+  const follow = cleanup && cleanable(kind, spot.worktree, spot.primary);
   const r = await t.call({
     machine: spot.machine.id,
     method: "cleanup",
-    params: { repo: pr.repo, number: pr.number, ...(cleanup ? { action: "follow", kind } : { action: "forget" }) },
-    summary: cleanup ? `${pr.repo}#${pr.number} の${KIND_TEXT[kind]}が終わったら、worktree を片付ける` : `${pr.repo}#${pr.number} の worktree を自動では片付けない`,
+    params: { repo: pr.repo, number: pr.number, ...(follow ? { action: "follow", kind } : { action: "forget" }) },
+    summary: follow ? `${pr.repo}#${pr.number} の${KIND_TEXT[kind]}が終わったら、worktree を片付ける` : `${pr.repo}#${pr.number} の worktree を自動では片付けない`,
   });
   t.actions.reload(spot.machine.id);
-  if (!r.ok && cleanup) t.actions.notify({ text: `指示は送りましたが、終わったら片付けるように覚えられませんでした：${r.error}`, tone: "danger" });
+  if (!r.ok && follow) t.actions.notify({ text: `指示は送りましたが、終わったら片付けるように覚えられませんでした：${r.error}`, tone: "danger" });
 }
 
 const KIND_TEXT: Record<CleanupKind, string> = { merge: "マージ", sendBack: "差し戻し" };
