@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { byFolder } from "../coverage.ts";
 
-test("a .ts file no test loads counts its lines of code as not run, and a file of only types does not count", () => {
+test("a .ts file no test loads counts all its lines as not run, blank lines and comments too, and a file of only types does not count", () => {
   const lcov = ["TN:", "SF:git/src/gh.ts", "FNF:2", "FNH:1", "BRF:4", "BRH:3", "LH:8", "LF:10", "end_of_record", ""].join("\n");
   const files: Record<string, string> = {
     "git/src/gh.ts": "",
@@ -26,10 +26,10 @@ test("a .ts file no test loads counts its lines of code as not run, and a file o
   assert.deepEqual(
     byFolder(lcov, Object.keys(files), (f) => files[f]!).get("git"),
     {
-      lines: { hit: 8, found: 10 + 4 },
+      lines: { hit: 8, found: 10 + 12 },
       branches: { hit: 3, found: 4 },
       functions: { hit: 1, found: 2 },
-      unloaded: [{ file: "git/src/daemon/index.ts", lines: 4 }],
+      unloaded: [{ file: "git/src/daemon/index.ts", lines: 12 }],
     },
   );
 });

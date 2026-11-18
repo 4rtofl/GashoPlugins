@@ -3,9 +3,10 @@
 // `npm test` and puts the table in the job's summary. The numbers are not a goal and never fail it: it fails only when
 // a test fails (as in Gasho, 4rtofl/Gasho#126).
 //
-// Node counts only the files the tests load. Here, a .ts file no test loads counts too, its lines of code as not run;
-// its branches and functions are left out, as Node counts them only by running the file. Not counted: the .tsx of the
-// screens (Node cannot load JSX), .d.ts, and the tests themselves: what is under test/ and *.test.ts (README.md, "ビルドする").
+// Node counts only the files the tests load, and every line of them, blank lines and comments too. Here, a .ts file no
+// test loads counts too, all its lines as not run, unless it holds only types; its branches and functions are left out,
+// as Node counts them only by running the file. Not counted: the .tsx of the screens (Node cannot load JSX), .d.ts, and
+// the tests themselves: what is under test/ and *.test.ts (README.md, "ビルドする").
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -22,7 +23,7 @@ export interface Coverage {
   lines: Count;
   branches: Count;
   functions: Count;
-  /** The .ts files no test loads, and their lines of code (codeLines). */
+  /** The .ts files no test loads, and their lines (fileLines). */
   unloaded: { file: string; lines: number }[];
 }
 
@@ -53,6 +54,9 @@ function readLcov(text: string): Map<string, Coverage> {
   return files;
 }
 
+/** The lines of a file as Node's lcov counts them for a file the tests load: all of them, blank lines and comments too. */
+const fileLines = (source: string) => source.split(/(?<=\n)/).length;
+
 /** The lines of a .ts file that hold code once its types are stripped, leaving out blank lines and comments: none when it holds only types. */
 function codeLines(source: string): number {
   let code: string;
@@ -70,7 +74,7 @@ function codeLines(source: string): number {
 
 /**
  * The coverage of each top folder: Node's counts (lcov) for the files the tests loaded, and for each of `sources` they
- * did not, its lines of code, as not run.
+ * did not that holds code, all its lines (fileLines), as not run.
  */
 export function byFolder(lcov: string, sources: string[], read: (file: string) => string): Map<string, Coverage> {
   const folders = new Map<string, Coverage>();
@@ -84,8 +88,9 @@ export function byFolder(lcov: string, sources: string[], read: (file: string) =
   for (const [file, c] of loaded) add(folderOf(file), c);
   for (const file of sources) {
     if (loaded.has(file)) continue;
-    const lines = codeLines(read(file));
-    if (lines === 0) continue;
+    const source = read(file);
+    if (codeLines(source) === 0) continue;
+    const lines = fileLines(source);
     const folder = folderOf(file);
     folder.lines.found += lines;
     folder.unloaded.push({ file, lines });
@@ -116,7 +121,7 @@ function summary(folders: Map<string, Coverage>, names: string[], tsx: number): 
     ...names.map((name) => row(`\`${name}\``, folders.get(name) ?? empty())),
     row("全体", all),
     "",
-    `テストが読み込まない \`.ts\` は、コードの行をすべて通っていない行として数え、分岐と関数には入れない。画面の \`.tsx\`（${tsx} ファイル）は、Node が読み込めないので数えない。数字で CI を落とさない。`,
+    `テストが読み込まない \`.ts\` は、Node が読み込んだファイルを数えるのと同じく、空行とコメントもふくめたすべての行を通っていない行として数え、分岐と関数には入れない。画面の \`.tsx\`（${tsx} ファイル）は、Node が読み込めないので数えない。数字で CI を落とさない。`,
     "",
     `<details><summary>テストが読み込まない .ts（${all.unloaded.length} ファイル）</summary>`,
     "",
