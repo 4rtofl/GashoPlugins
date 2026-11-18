@@ -157,7 +157,7 @@ describe("a pull request with a worktree", () => {
     render(<ReviewPage params={{}} />);
     expect(screen.getByText("マージされたので片付けてよい")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "片付ける" }));
-    const dialog = await screen.findByRole("dialog", { name: "レビュー用の worktree を片付けますか" });
+    const dialog = await screen.findByRole("dialog", { name: "worktree を片付けますか" });
     expect(within(dialog).getByText("pr-7")).toBeTruthy();
     await userEvent.click(within(dialog).getByRole("button", { name: "片付ける" }));
     // The "removing…" notice may still be leaving while this one comes in, so both can be a status for a moment.

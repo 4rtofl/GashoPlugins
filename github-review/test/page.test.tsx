@@ -100,7 +100,7 @@ describe("ReviewPage", () => {
     });
     render(<ReviewPage params={{}} />);
     expect(screen.getByText("ほかに 5 件あります。検索の語で絞り込んでください。")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: /^4rtofl\/lib\s*対象リポジトリではありませんが、レビュー用の worktree があります$/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /^4rtofl\/lib\s*対象リポジトリではありませんが、Pull request の worktree があります$/ })).toBeTruthy();
   });
 
   it("puts a pull request listed by two working servers in one row, which offers both", async () => {
