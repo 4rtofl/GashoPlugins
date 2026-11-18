@@ -1,7 +1,8 @@
 # Checks the plugins (their gasho-plugin.json and its genre, typecheck, tests, build) on every pull request and push to
 # main. On main, it then releases each plugin whose version in gasho-plugin.json has no release yet, and remakes
 # catalog.json in the release "catalog", which Gasho's plugins screen reads (scripts/release.ts; Gasho's
-# docs/plugins.md, P10).
+# docs/plugins.md, P10). Elsewhere it only says what it would release (--dry-run), with a warning on each plugin
+# changed since its release whose version did not go up.
 name: Plugins
 
 on:
@@ -15,8 +16,9 @@ permissions:
   packages: read # the SDK, @4rtofl/gasho-plugin-sdk on GitHub Packages
 
 concurrency:
-  # One release at a time; checks of pull requests do not wait for it.
-  group: plugins-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  # One run at a time on main, so one release at a time; a run waiting there gives way to the next, which releases what
+  # it would. Pull requests and other branches do not wait for it.
+  group: plugins-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,22 +26,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The tags of the releases: release.ts compares each released plugin with the commit it was released at.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           registry-url: https://npm.pkg.github.com
           scope: "@4rtofl"
-      # Every plugin names a genre of genres.json (scripts/check.ts); it needs nothing installed.
+      # Every plugin's gasho-plugin.json is as a Gasho server takes it (scripts/check.ts); it needs nothing installed.
       - run: node scripts/check.ts
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run typecheck
-      # The tests, and a table of what of the code they run per plugin in the job's summary (scripts/coverage.ts). Only
-      # a failing test fails it, not the numbers.
+      # The tests of the .ts files, with a table of what of the code they run per plugin in the job's summary
+      # (scripts/coverage.ts; only a failing test fails it, not the numbers). Then those of the plugins' screens, drawn in
+      # happy-dom (vitest.config.ts).
       - run: npm run test:coverage
+      - run: npm run test:web
       - run: npm run build
       - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: node scripts/release.ts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+        run: node scripts/release.ts --dry-run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

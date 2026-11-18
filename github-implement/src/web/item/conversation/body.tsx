@@ -3,6 +3,8 @@
 import { FileText, Pencil } from "lucide-react";
 import { useState } from "react";
 import { cn, Markdown, RelativeTime } from "@gasho/plugin-sdk";
+import { bodyEditParams } from "../../../edit-was.ts";
+import { Alert } from "../../ui/alert.tsx";
 import { Button } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
 import { useItem } from "../context.tsx";
@@ -13,18 +15,21 @@ import { Reactions } from "../reactions.tsx";
 function useBody(): ConversationEntry[] {
   const { item, where, now, busy, run } = useItem();
   const meta = useConversationMeta().data;
-  const [draft, setDraft] = useState<string>();
-  const save = async () => {
-    if (draft === undefined) return;
+  // What is typed, and GitHub's body when the edit started: the daemon part refuses to save over another one.
+  const [edit, setEdit] = useState<{ draft: string; from: string }>();
+  const changed = edit !== undefined && edit.from !== item.body;
+  // `base`: GitHub's body the draft is saved over.
+  const save = async (base: string) => {
+    if (!edit) return;
     const ok = await run({
       id: "body",
       op: "edit",
-      params: { body: draft },
+      params: bodyEditParams(edit.draft, base),
       summary: `#${where.number} の本文を変える`,
       done: "本文を変えました",
-      undo: { op: "edit", params: { body: item.body }, summary: `#${where.number} の本文を戻す` },
+      undo: { op: "edit", params: { body: base }, summary: `#${where.number} の本文を戻す` },
     });
-    if (ok) setDraft(undefined);
+    if (ok) setEdit(undefined);
   };
   return [
     {
@@ -38,22 +43,39 @@ function useBody(): ConversationEntry[] {
         </>
       ),
       time: <RelativeTime at={item.createdAt} now={now} />,
-      ...(draft === undefined && {
+      ...(edit === undefined && {
         actions: (
-          <Button variant="ghost" size="xs" leftIcon={<Pencil />} onClick={() => setDraft(item.body)}>
+          <Button variant="ghost" size="xs" leftIcon={<Pencil />} onClick={() => setEdit({ draft: item.body, from: item.body })}>
             編集
           </Button>
         ),
       }),
       body:
-        draft !== undefined ? (
+        edit !== undefined ? (
           <div className="space-y-2">
-            <textarea value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="本文" rows={Math.min(30, Math.max(8, draft.split("\n").length + 2))} className={cn(INPUT, "font-mono text-xs")} />
+            <textarea value={edit.draft} onChange={(e) => setEdit({ draft: e.target.value, from: edit.from })} aria-label="本文" rows={Math.min(30, Math.max(8, edit.draft.split("\n").length + 2))} className={cn(INPUT, "font-mono text-xs")} />
+            {changed && (
+              <Alert tone="warning">
+                <p>編集を始めたあとに、GitHub で本文が変わりました。このまま保存すると、その変更は消えます。</p>
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer text-xs">GitHub の今の本文</summary>
+                  <pre className="mt-1.5 max-h-60 overflow-auto rounded-md border border-border bg-surface-raised p-2 font-mono text-xs whitespace-pre-wrap break-words">{item.body}</pre>
+                </details>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="xs" onClick={() => setEdit({ draft: item.body, from: item.body })} disabled={busy !== undefined}>
+                    今の本文から書き直す
+                  </Button>
+                  <Button size="xs" onClick={() => void save(item.body)} disabled={busy !== undefined || edit.draft === item.body}>
+                    自分の本文で上書きする
+                  </Button>
+                </div>
+              </Alert>
+            )}
             <div className="flex gap-2">
-              <Button variant="primary" onClick={() => void save()} isLoading={busy === "body"} loadingText="保存しています…" disabled={busy !== undefined || draft === item.body}>
+              <Button variant="primary" onClick={() => void save(edit.from)} isLoading={busy === "body"} loadingText="保存しています…" disabled={busy !== undefined || changed || edit.draft === item.body}>
                 保存する
               </Button>
-              <Button onClick={() => setDraft(undefined)} disabled={busy === "body"}>
+              <Button onClick={() => setEdit(undefined)} disabled={busy === "body"}>
                 やめる
               </Button>
             </div>
