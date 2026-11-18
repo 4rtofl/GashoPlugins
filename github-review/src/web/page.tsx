@@ -8,7 +8,10 @@ import { useState, type ReactNode } from "react";
 import { Page, useNavigation, useNow, usePluginState, type PageProps } from "@gasho/plugin-sdk";
 import { MAX_QUERY } from "../types.ts";
 import type { Item } from "./actions";
+import { BatchDialog, BatchMenu } from "./batch";
+import { hideBatch, startBatch, useBatchPage, useBatchRun, type BatchChoice } from "./batch-run";
 import { prKey } from "./detail";
+import { TrustDialog } from "./dialogs";
 import { DEFAULT_QUERY, useListings } from "./listing";
 import { ReposDialog } from "./repos-dialog";
 import { PrItemRow, RowContext } from "./row";
@@ -22,6 +25,9 @@ export function ReviewPage(_: PageProps) {
   const [draft, setDraft] = useState(query);
   const [freshAsk, setFreshAsk] = useState(0);
   const [choosing, setChoosing] = useState(false);
+  // "まとめてレビューさせる": what the person chose from its menu, until it starts; then the run, kept outside the page.
+  const [batchChoice, setBatchChoice] = useState<BatchChoice>();
+  const batch = useBatchRun();
   // The pull request whose panel is open (the panel says so while it is open).
   const [open] = usePluginState<string | null>("openPr", null);
   const { sourcesEl, machines, sources, ready, page, pending, refreshing } = useListings(query, freshAsk);
@@ -40,6 +46,7 @@ export function ReviewPage(_: PageProps) {
   };
   const selected = open ? [...page.requested, ...page.groups.flatMap((g) => g.items)].find((i) => prKey(i.pr.repo, i.pr.number) === open)?.pr.url : undefined;
   const { shared, overlays } = useRowShell({ sources, ready, select, ...(selected ? { selected } : {}) });
+  useBatchPage(shared.tools.actions.notify);
   const search = () => {
     const q = draft.trim().slice(0, MAX_QUERY);
     setDraft(q);
@@ -111,7 +118,21 @@ export function ReviewPage(_: PageProps) {
           </Alert>
         )}
 
-        <Section title="レビューを頼まれた Pull request" count={page.requested.length} more={page.requestedMore} loading={pending && page.requested.length === 0}>
+        <Section
+          title="レビューを頼まれた Pull request"
+          count={page.requested.length}
+          more={page.requestedMore}
+          loading={pending && page.requested.length === 0}
+          action={
+            <BatchMenu
+              items={page.requested}
+              machines={ready}
+              templates={shared.templates}
+              disabled={batch?.running === true || page.requested.some((i) => shared.busy.has(i.pr.url))}
+              onPick={setBatchChoice}
+            />
+          }
+        >
           {page.requested.length === 0 ? (
             <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request はありません。" : "レビューを頼まれた Pull request はありません。"}</Empty>
           ) : (
@@ -156,18 +177,37 @@ export function ReviewPage(_: PageProps) {
         watched={(id) => sources[id]?.listing?.watched}
         reload={(id) => sources[id]?.reload()}
       />
+      <BatchDialog
+        choice={batchChoice}
+        run={batch?.shown ? batch : undefined}
+        onStart={(targets) => {
+          if (batchChoice) startBatch(batchChoice, targets, shared.tools);
+          setBatchChoice(undefined);
+        }}
+        onOpen={(sessionId) => batch && nav.openSession(batch.machine.id, sessionId)}
+        onClose={() => (batchChoice ? setBatchChoice(undefined) : hideBatch())}
+      />
+      {/* What Claude Code asks about a folder in the run, waiting while the page was away. */}
+      <TrustDialog
+        question={batch?.trust}
+        note="まとめてレビューさせている途中です。一度信頼すると、このあとのフォルダーは、Claude Code が警告を出さないものだけ確かめずに信頼します。"
+        onAnswer={(yes) => batch?.trust?.answer(yes)}
+      />
       {overlays}
     </MotionConfig>
   );
 }
 
-function Section({ title, count, more, loading, children }: { title: string; count: number; more: number; loading: boolean; children: ReactNode }) {
+function Section({ title, count, more, loading, action, children }: { title: string; count: number; more: number; loading: boolean; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="space-y-2">
-      <h2 className="flex items-baseline gap-2 text-sm font-semibold">
-        {title}
-        {!loading && <span className="text-xs font-normal text-muted-foreground tabular-nums">{count} 件</span>}
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-baseline gap-2 text-sm font-semibold">
+          {title}
+          {!loading && <span className="text-xs font-normal text-muted-foreground tabular-nums">{count} 件</span>}
+        </h2>
+        {!loading && action}
+      </div>
       {loading ? (
         <div className="space-y-2 rounded-xl border border-border p-4">
           <Skeleton className="h-4 w-2/3" />
