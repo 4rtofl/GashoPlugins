@@ -405,19 +405,29 @@ test("a plugin changed since its version was released is named, and not released
   assert.match(untagged[0] ?? "", /git has no tag hello-v1\.2\.0/);
 });
 
-test("a version older than one released already stops it, before anything is released", () => {
+test("a version older than one released already stops it, before anything is released; a dry run, only when the commit lowers it", () => {
   const root = repo({ other: { ...manifest, id: "other", name: "Other" }, hello: manifest });
   build(root, "other");
   commit(root);
-  const gh = github([
+  const released = [
     { tag: "hello-v1.10.0", files: { "hello-1.10.0.tgz": "" } },
     { tag: "hello-v1.2.0-beta.1", files: { "hello-1.2.0-beta.1.tgz": "" } },
-  ]);
+  ];
+  const gh = github(released);
   assert.throws(() => release(options(root, gh)), /hello\/gasho-plugin\.json: version 1\.2\.0 is older than 1\.10\.0, released already: give a version above it/);
   assert.deepEqual(
     gh.commands().map((c) => c[1]),
     ["repos/o/p/releases?per_page=100", "repos/o/p/commits/main"],
   );
+
+  // A commit whose first parent has the same version: a pull request whose base is behind the releases (a run started again).
+  commit(root);
+  assert.deepEqual(release(options(root, github(released), [], true)).warnings, [
+    { file: "hello/gasho-plugin.json", message: "hello 1.2.0 is older than 1.10.0, released after the commit this one is based on: merge main to check it again" },
+  ]);
+  write(root, { "hello/gasho-plugin.json": JSON.stringify({ ...manifest, version: "1.1.0" }) });
+  commit(root);
+  assert.throws(() => release(options(root, github(released), [], true)), /hello\/gasho-plugin\.json: version 1\.1\.0 is older than 1\.10\.0/);
 });
 
 test("a draft, or a release without its file, is not a released version: the draft goes, and the file, with LICENSE, is put in place", () => {

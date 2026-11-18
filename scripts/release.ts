@@ -274,6 +274,21 @@ function changesSince(root: string, folder: string, tag: string, released: Manif
   return isDeepStrictEqual(was, now) ? files : [`${folder}/gasho-plugin.json`, ...files];
 }
 
+/**
+ * Whether HEAD gives `folder` a lower version than its first parent does: for a pull request's merge commit, its base.
+ * True without a first parent, or when it has no such plugin: the version is then HEAD's own.
+ */
+function lowersVersion(root: string, folder: string, version: string): boolean {
+  let parent: unknown;
+  try {
+    parent = JSON.parse(execFileSync("git", ["-C", root, "show", `HEAD^1:${folder}/gasho-plugin.json`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  } catch {
+    return true;
+  }
+  const was = (parent as Manifest).version;
+  return typeof was !== "string" || !VERSION_RE.test(was) || compareVersions(version, was) < 0;
+}
+
 /** A release as GitHub's REST API gives it (GET /repos/{owner}/{repo}/releases). */
 interface ApiRelease {
   id: number;
@@ -300,9 +315,10 @@ export interface ReleaseOptions {
 
 /**
  * Releases the plugins whose version has no release yet, and uploads catalog.json again when it changes. Gives the
- * plugins changed since their release. Throws, before releasing anything, when a plugin cannot be released.
+ * plugins changed since their release, and the warnings of a dry run. Throws, before releasing anything, when a plugin
+ * cannot be released.
  */
-export function release(o: ReleaseOptions): { unreleased: Unreleased[] } {
+export function release(o: ReleaseOptions): { unreleased: Unreleased[]; warnings: Problem[] } {
   const { root, repo, target, branch, dry, log } = o;
   // gh api takes the repository in its path.
   const gh = (args: string[]) => o.gh(args[0] === "api" ? args : [...args, "--repo", repo]);
@@ -312,7 +328,7 @@ export function release(o: ReleaseOptions): { unreleased: Unreleased[] } {
     const head = gh(["api", `repos/${repo}/commits/${branch}`, "--jq", ".sha"]).trim();
     if (head !== target) {
       log(`${branch} is at ${head} now, not ${target}: nothing is released from this older commit`);
-      return { unreleased: [] };
+      return { unreleased: [], warnings: [] };
     }
   }
   // A draft is what a run that stopped halfway leaves: it has no tag, and no one can download its file.
@@ -341,13 +357,22 @@ export function release(o: ReleaseOptions): { unreleased: Unreleased[] } {
     const genres = readGenres(root).map(({ id, name }) => ({ id, name }));
     const problems: string[] = [];
     const unreleased: Unreleased[] = [];
+    const warnings: Problem[] = [];
     const entries: CatalogEntry[] = [];
     const made: { m: CheckedManifest; out: string; size: number }[] = [];
     for (const { folder, manifest: m } of readPlugins(root)) {
       const versions = versionsOf(m.id);
       const newest = versions.sort(compareVersions).at(-1);
       if (newest !== undefined && compareVersions(m.version, newest) < 0) {
-        problems.push(`${folder}/gasho-plugin.json: version ${m.version} is older than ${newest}, released already: give a version above it`);
+        const file = `${folder}/gasho-plugin.json`;
+        // A dry run of a commit behind the releases (a run started again, a branch behind main) fails only when the commit
+        // itself lowers the version: otherwise the pull request has no version to give.
+        if (dry && !lowersVersion(root, folder, m.version)) {
+          warnings.push({ file, message: `${m.id} ${m.version} is older than ${newest}, released after the commit this one is based on: merge main to check it again` });
+          log(`${m.id} ${m.version}: older than ${newest}, released already, but not lowered by this commit`);
+          continue;
+        }
+        problems.push(`${file}: version ${m.version} is older than ${newest}, released already: give a version above it`);
         continue;
       }
       if (versions.includes(m.version)) {
@@ -425,12 +450,12 @@ export function release(o: ReleaseOptions): { unreleased: Unreleased[] } {
     const catalog: Catalog = { repo, updatedAt: new Date().toISOString(), genres, plugins: entries.sort((a, b) => (a.id < b.id ? -1 : 1)) };
     if (beforeFile === CATALOG_FILE && sameCatalog(before, catalog)) {
       log("catalog.json: no change");
-      return { unreleased };
+      return { unreleased, warnings };
     }
     const text = `${JSON.stringify(catalog, null, 2)}\n`;
     if (dry) {
       log(`catalog.json: would be\n${text}`);
-      return { unreleased };
+      return { unreleased, warnings };
     }
     if (!catalogRelease) {
       gh([
@@ -454,7 +479,7 @@ export function release(o: ReleaseOptions): { unreleased: Unreleased[] } {
     if (old) gh(["api", "-X", "DELETE", `repos/${repo}/releases/assets/${old.id}`]);
     gh(["api", "-X", "PATCH", `repos/${repo}/releases/assets/${next.id}`, "-f", `name=${CATALOG_FILE}`]);
     log(`catalog.json: ${catalog.plugins.map((p) => `${p.id} ${p.version}`).join(", ")}`);
-    return { unreleased };
+    return { unreleased, warnings };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -464,7 +489,7 @@ if (import.meta.main) {
   const actions = process.env.GITHUB_ACTIONS === "true";
   const dry = process.argv.includes("--dry-run");
   try {
-    const { unreleased } = release({
+    const { unreleased, warnings } = release({
       root: path.resolve(import.meta.dirname, ".."),
       repo: process.env.GITHUB_REPOSITORY ?? "4rtofl/GashoPlugins",
       target: process.env.GITHUB_SHA,
@@ -474,7 +499,7 @@ if (import.meta.main) {
       gh: (args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 256 * 1024 * 1024 }),
       log: (line) => console.log(line),
     });
-    for (const w of unreleased.map(unreleasedWarning)) console.log(actions ? annotation("warning", w) : `warning: ${w.file}: ${w.message}`);
+    for (const w of [...warnings, ...unreleased.map(unreleasedWarning)]) console.log(actions ? annotation("warning", w) : `warning: ${w.file}: ${w.message}`);
     if (unreleased.length > 0 && process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, unreleasedSummary(unreleased));
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
