@@ -53,6 +53,8 @@ test("progress: a session works when busy, waiting for an answer, or with inputs
   assert.equal(working([{ cwd: dir, status: "busy" }], dir), true);
   assert.equal(working([{ cwd: `${dir}/sub`, status: "waiting" }], dir), true);
   assert.equal(working([{ cwd: dir, status: "idle", pendingInputs: 1 }], dir), true);
+  assert.equal(working([{ cwd: dir, status: "idle", background: [{ id: "t" }] }], dir), true);
+  assert.equal(working([{ cwd: dir, status: "idle", background: [] }], dir), false);
   assert.equal(working([{ cwd: `${dir}0`, status: "busy" }], dir), false);
 });
 

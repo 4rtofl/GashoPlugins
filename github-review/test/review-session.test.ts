@@ -36,6 +36,8 @@ test("at rest: idle with nothing waiting to be typed in", () => {
   assert.equal(atRest({ status: "idle" }), true);
   assert.equal(atRest({ status: "idle", pendingInputs: 0 }), true);
   assert.equal(atRest({ status: "idle", pendingInputs: 1 }), false);
+  assert.equal(atRest({ status: "idle", background: [{ id: "t" }] }), false);
+  assert.equal(atRest({ status: "idle", background: [] }), true);
   assert.equal(atRest({ status: "busy" }), false);
   assert.equal(atRest({ status: "waiting" }), false);
 });

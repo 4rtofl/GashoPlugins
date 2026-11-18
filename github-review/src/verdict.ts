@@ -72,9 +72,13 @@ export function reviewProgress(pr: { state: string; head?: string; mark?: Review
   return mark ? "stale" : undefined;
 }
 
-/** A session works on something: busy, waiting for an answer, or with inputs waiting until it is idle. */
-export function working(sessions: readonly { cwd: string; status: string; pendingInputs?: number }[], dir: string): boolean {
-  return sessions.some((s) => (s.cwd === dir || s.cwd.startsWith(`${dir}/`)) && (s.status === "busy" || s.status === "waiting" || (s.pendingInputs ?? 0) > 0));
+/** A session works on something: busy, waiting for an answer, with inputs waiting until it is idle, or with work running in the background. */
+export function working(sessions: readonly { cwd: string; status: string; pendingInputs?: number; background?: readonly unknown[] }[], dir: string): boolean {
+  return sessions.some(
+    (s) =>
+      (s.cwd === dir || s.cwd.startsWith(`${dir}/`)) &&
+      (s.status === "busy" || s.status === "waiting" || (s.pendingInputs ?? 0) > 0 || (s.background?.length ?? 0) > 0),
+  );
 }
 
 /** What the row's button asks the Agent: merge it, send it back (request changes), or mend my own. */
