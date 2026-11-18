@@ -11,6 +11,7 @@ import type {
   LaunchResult,
   MachineInfo,
   Navigation,
+  RemoveSessionResult,
   RemoveWorktreeInput,
   RemoveWorktreeResult,
   RequestOptions,
@@ -92,6 +93,7 @@ export const sdk = {
   setShared: vi.fn((_key: string, _value: unknown) => {}),
   sendInput: vi.fn((_input: SendInput): CallResult<SendInputResult> => ({ ok: true, data: { queued: false } })),
   launchSession: vi.fn((_input: { machine: string; cwd: string; name?: string; trust?: boolean }): LaunchResult => ({ ok: true, sessionId: "launched" })),
+  removeSession: vi.fn((_input: { machine: string; sessionId: string }): RemoveSessionResult => ({ ok: true })),
   removeWorktree: vi.fn((_input: RemoveWorktreeInput): RemoveWorktreeResult => ({ ok: true, sessions: [] })),
   removeWorktreeProblem: vi.fn((_machine: MachineInfo, _worktree: { path: string; repo?: string }): string | undefined => undefined),
   nav: {
@@ -128,7 +130,7 @@ export const lastRequest = (method: string): (RequestTarget & { options?: Reques
 /** After each test (test/setup.ts). */
 export function reset(): void {
   Object.assign(scene, blank());
-  const mocks = [sdk.request, sdk.reload, sdk.call, sdk.setSetting, sdk.setShared, sdk.sendInput, sdk.launchSession, sdk.removeWorktree, sdk.removeWorktreeProblem, ...Object.values(sdk.nav)];
+  const mocks = [sdk.request, sdk.reload, sdk.call, sdk.setSetting, sdk.setShared, sdk.sendInput, sdk.launchSession, sdk.removeSession, sdk.removeWorktree, sdk.removeWorktreeProblem, ...Object.values(sdk.nav)];
   for (const m of mocks) m.mockReset();
   version = 0;
 }
@@ -252,6 +254,7 @@ export const useSharedState: GashoSdk["useSharedState"] = <T,>(key: string, init
 
 export const useSendInput: GashoSdk["useSendInput"] = () => async (input) => sdk.sendInput(input);
 export const useLaunchSession: GashoSdk["useLaunchSession"] = () => async (input) => sdk.launchSession(input);
+export const useRemoveSession: GashoSdk["useRemoveSession"] = () => async (input) => sdk.removeSession(input);
 export const useRemoveWorktree: GashoSdk["useRemoveWorktree"] = () => async (input) => sdk.removeWorktree(input);
 
 export const PANEL_BUTTON: GashoSdk["PANEL_BUTTON"] = "";
