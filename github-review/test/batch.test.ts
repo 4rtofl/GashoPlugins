@@ -67,6 +67,7 @@ function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[
       askRemove: async () => false,
       askAgentFor: async () => undefined,
       reload: (id) => log.push(`reload ${id}`),
+      refresh: async () => {},
     },
   } satisfies Tools;
   const onStep = (url: string, step: BatchStep) => (steps[`#${url.split("/").pop()}`] ??= []).push(step);
@@ -78,7 +79,7 @@ test("batch: each one is sent the template at the effort level of a review; a wa
   const count = await reviewAll(f.items, TEMPLATE, f.tools, f.onStep);
   assert.deepEqual(
     f.log.filter((l) => l.startsWith("send")),
-    ["send s-1 effort=xhigh: #1 をレビュー", "send s-2 effort=xhigh: #2 をレビュー"],
+    ["send s-1 effort=high: #1 をレビュー", "send s-2 effort=high: #2 をレビュー"],
   );
   assert.deepEqual(f.steps["#1"]?.at(-1), { state: "done", sessionId: "s-1" });
   assert.deepEqual(f.steps["#2"]?.at(-1), { state: "done", sessionId: "s-2", text: "Effort を Max にできませんでした。いまの Effort のまま送ります。" });
@@ -91,7 +92,7 @@ test("batch: a session is tracked before its review is sent, and forgotten when 
   const count = await reviewAll(f.items, TEMPLATE, f.tools, f.onStep);
   assert.deepEqual(
     f.log.filter((l) => /^(send|reviewSession)/.test(l)),
-    ["reviewSession track s-1", "send s-1 effort=xhigh: #1 をレビュー", "reviewSession track s-2", "send s-2 effort=xhigh: #2 をレビュー", "reviewSession forget s-2"],
+    ["reviewSession track s-1", "send s-1 effort=high: #1 をレビュー", "reviewSession track s-2", "send s-2 effort=high: #2 をレビュー", "reviewSession forget s-2"],
   );
   assert.deepEqual(count, { done: 1, failed: 1, skipped: 0, warned: 0 });
 });

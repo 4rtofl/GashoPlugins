@@ -10,6 +10,8 @@ export interface CleanupEntry {
   repo: string;
   number: number;
   kind: CleanupKind;
+  /** The head whose verdict it was asked of (the mark's sha). */
+  sha?: string;
   /** When it was asked (ms since the epoch). */
   at: number;
   /** Why it could not be removed: not tried again. */
@@ -31,6 +33,7 @@ const isEntry = (v: unknown): v is CleanupEntry => {
     typeof e.repo === "string" &&
     typeof e.number === "number" &&
     (e.kind === "merge" || e.kind === "sendBack") &&
+    (e.sha === undefined || typeof e.sha === "string") &&
     typeof e.at === "number" &&
     (e.problem === undefined || typeof e.problem === "string")
   );
@@ -87,11 +90,14 @@ export class Cleanups {
     return [...this.entries.values()];
   }
 
-  /** Remove the review worktree of `repo`#`number` once `kind` is done; asked again, it starts over. */
-  async follow(repo: string, number: number, kind: CleanupKind): Promise<CleanupEntry> {
+  /**
+   * Remove the review worktree of `repo`#`number` once `kind` is done, asked of the verdict on `sha`; asked again, it
+   * starts over.
+   */
+  async follow(repo: string, number: number, kind: CleanupKind, sha?: string): Promise<CleanupEntry> {
     await this.load();
     const key = keyOf(repo, number);
-    const e: CleanupEntry = { repo, number, kind, at: this.now() };
+    const e: CleanupEntry = { repo, number, kind, ...(sha ? { sha } : {}), at: this.now() };
     this.entries.delete(key);
     this.entries.set(key, e);
     this.claims.delete(key);
