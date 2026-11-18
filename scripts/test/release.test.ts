@@ -141,7 +141,7 @@ test("checkManifest refuses what a Gasho server refuses", () => {
   assert.deepEqual(wrong({ description: "d".repeat(301) }), ["description must be up to 300 characters"]);
   assert.deepEqual(wrong({ api: "1" }), ['api "1" is not like 1.0']);
   assert.deepEqual(wrong({ api: "2.0" }), ["api 2.0 is not of the plugin API 1"]);
-  assert.deepEqual(wrong({ permissions: ["session.read"] }), ["permissions can name only session.input, session.launch, worktree.remove"]);
+  assert.deepEqual(wrong({ permissions: ["session.read"] }), ["permissions can name only session.input, session.launch, session.remove, worktree.remove"]);
   assert.deepEqual(wrong({ web: undefined }), ["give web, daemon or theme (or several)"]);
   assert.deepEqual(wrong({ web: { js: "../web.js" } }), ["web.js must name a file inside the plugin's folder"]);
   assert.deepEqual(wrong({ methods: { list: { kind: "read" } } }), ["methods needs daemon"]);
@@ -315,6 +315,36 @@ const options = (root: string, github: { gh: (args: string[]) => string }, log: 
   dry,
   gh: github.gh,
   log: (line: string) => log.push(line),
+});
+
+test("a new version is released with the files of its dist/, and the catalog has that file's SHA-256; without GITHUB_SHA, at GitHub's default branch", () => {
+  const hello: CheckedManifest = { ...manifest, description: "あいさつする" };
+  const old: CheckedManifest = { ...manifest, id: "old", name: "Old", version: "1.0.0" };
+  const root = repo({ hello, old });
+  build(root, "hello");
+  commit(root, "old-v1.0.0");
+  const oldFile = tgz({ "gasho-plugin.json": JSON.stringify(old), "daemon.js": "" });
+  const oldEntry = entryOf(old, { sha256: sha(oldFile), size: oldFile.length });
+  const released = (): Parameters<typeof github>[0] => [
+    { tag: "old-v1.0.0", files: { "old-1.0.0.tgz": oldFile } },
+    { tag: "catalog", files: { "catalog.json": JSON.stringify(catalogOf([oldEntry])) } },
+  ];
+  const gh = github(released());
+  release(options(root, gh));
+
+  assert.deepEqual(
+    gh.commands().find((c) => c[1] === "create"),
+    ["release", "create", "hello-v1.2.0", "<tmp>/hello-1.2.0.tgz", "--title", "Hello 1.2.0", "--notes", "あいさつする", "--latest=false", "--target", "abc123"],
+  );
+  const archive = gh.file("hello-v1.2.0", "hello-1.2.0.tgz") ?? Buffer.alloc(0);
+  assert.deepEqual(tgzFiles(archive), ["daemon.js", "gasho-plugin.json"]);
+  const catalog = JSON.parse(gh.file("catalog", "catalog.json")?.toString() ?? "") as Catalog;
+  assert.deepEqual(catalog.plugins, [entryOf(hello, { sha256: sha(archive), size: archive.length }), oldEntry]);
+  assert.deepEqual(catalog.genres, catalogOf([]).genres);
+
+  const untargeted = github(released());
+  release({ ...options(root, untargeted), target: undefined });
+  assert.ok(!untargeted.commands().some((c) => c.includes("--target")));
 });
 
 test("a released version is in the catalog as its file has it, with the genre named now; the old catalog.json goes once the new one is there", () => {

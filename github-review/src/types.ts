@@ -25,7 +25,10 @@ export interface PrWorktree {
   path: string;
   /** The branch checked out; absent when HEAD is detached (a pull request from a fork). */
   branch?: string;
-  /** review-<number> beside the primary checkout: one made for the review, which "片付ける" removes. */
+  /**
+   * review-<repository>-<number> (or review-<number>, the name before) beside the primary checkout: one made for the
+   * review, which "片付ける" removes. A worktree of another name is removed only when "マージしてもらう" asked for it.
+   */
   review: boolean;
 }
 
@@ -35,6 +38,8 @@ export interface PrWorktree {
  */
 export interface Cleanup {
   kind: CleanupKind;
+  /** The head whose verdict it was asked of (the mark's sha); absent for one asked before github-review 1.17.0. */
+  sha?: string;
   /** The pull request was merged, or I requested changes on it, after it was asked. */
   done: boolean;
   /** Why it could not be removed (it is not tried again; "片付ける" still removes it). */
@@ -48,6 +53,10 @@ export interface Place {
   worktree?: PrWorktree;
   /** Its review worktree is to be removed once what was asked is done. */
   cleanup?: Cleanup;
+  /** The sessions sent its review that have posted the result: the page removes them once they are at rest. */
+  finishedSessions?: string[];
+  /** The sessions sent its review, posted or not: while one is at work, the page says the review is under way. */
+  reviewSessions?: string[];
 }
 
 export interface PrRow {
