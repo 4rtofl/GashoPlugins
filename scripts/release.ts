@@ -470,7 +470,8 @@ if (import.meta.main) {
       target: process.env.GITHUB_SHA,
       branch: process.env.GITHUB_REF_NAME,
       dry,
-      gh: (args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }),
+      // The list of releases grows by about 4 KB a release, past execFileSync's 1 MiB at about 270 releases.
+      gh: (args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 256 * 1024 * 1024 }),
       log: (line) => console.log(line),
     });
     for (const w of unreleased.map(unreleasedWarning)) console.log(actions ? annotation("warning", w) : `warning: ${w.file}: ${w.message}`);
