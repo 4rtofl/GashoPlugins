@@ -347,8 +347,16 @@ export function lastLines(lines: Line[], maxLines: number, maxChars: number): { 
   return { lines: out, cut: out.length < lines.length };
 }
 
-/** A stretch of output that may start inside a line: without that line's cut-off part (up to its first newline). */
-export function fromLineStart(text: string): string {
-  const i = text.indexOf("\n");
-  return i >= 0 ? text.slice(i + 1) : text;
+/**
+ * The lines of a stretch of output that may start inside a line (`partial`): without that line's cut-off part (up to
+ * its first newline), unless no line would be left after it (the newline ends the stretch, or escape sequences alone
+ * follow it), so that something shows and can be read further.
+ */
+export function linesFrom(text: string, partial: boolean, more = false): Line[] {
+  const i = partial ? text.indexOf("\n") : -1;
+  if (i >= 0) {
+    const rest = toLines(text.slice(i + 1), more);
+    if (rest.length > 0) return rest;
+  }
+  return toLines(text, more);
 }

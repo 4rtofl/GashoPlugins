@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { applySgr, color256, fromLineStart, lastLines, plainText, toLines, type Line } from "../src/web/ansi.ts";
+import { applySgr, color256, lastLines, linesFrom, plainText, toLines, type Line } from "../src/web/ansi.ts";
 import { contrast, MIN_CONTRAST, onBackground, paletteFrom, readable, type Palette } from "../src/web/colors.ts";
 
 const texts = (lines: Line[]) => lines.map((l) => l.map((s) => s.text).join(""));
@@ -91,8 +91,12 @@ test("the last lines of output, a few characters at most; and a stretch from its
   assert.deepEqual(lastLines(toLines("\x1b[31mabcdefgh\x1b[0m"), 20, 3), { lines: [[{ text: "fgh", style: { fg: 1 } }]], cut: true });
   assert.deepEqual(texts(lastLines(toLines("aaaa\nbb\n"), 20, 5).lines), ["aa", "bb"]);
   assert.deepEqual(texts(lastLines(toLines("😀😀"), 20, 3).lines), ["😀"]);
-  assert.equal(fromLineStart("2mINFO a\nINFO b\n"), "INFO b\n");
-  assert.equal(fromLineStart("no newline"), "no newline");
+  assert.deepEqual(texts(linesFrom("2mINFO a\nINFO b\n", true)), ["INFO b"]);
+  assert.deepEqual(texts(linesFrom("2mINFO a\nINFO b\n", false)), ["2mINFO a", "INFO b"]);
+  assert.deepEqual(texts(linesFrom("no newline", true)), ["no newline"]);
+  // Nothing would be left after the cut-off line (the end of a long line, read from inside it): its end shows.
+  assert.deepEqual(texts(linesFrom("xxxx\n", true)), ["xxxx"]);
+  assert.deepEqual(texts(linesFrom("xxxx\n\x1b[0m", true)), ["xxxx"]);
 });
 
 /** The palettes of style.css: the light theme's, and the dark theme's over it. */

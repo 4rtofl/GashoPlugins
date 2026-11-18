@@ -5,7 +5,7 @@ import { ArrowUp, CircleCheck, CircleStop, CircleX, CornerDownLeft, Ellipsis, Lo
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
 import { cn, Panel, PANEL_BUTTON, useCall, useDaemonReady, useNow, useRequest, useSetting, type PanelProps } from "@gasho/plugin-sdk";
 import type { OutputAnswer, ShellJob, StatusAnswer } from "../types.ts";
-import { fromLineStart, lastLines, plainText, toLines, type Line, type Style } from "./ansi";
+import { lastLines, linesFrom, plainText, type Line, type Style } from "./ansi";
 import { onBackground, paletteFrom, type Palette } from "./colors";
 import { useShell } from "./follow";
 import { commandHistory, commandSummary, duration, folderLabel, insideFolder } from "./format";
@@ -335,7 +335,7 @@ function JobBlock(p: JobBlockProps) {
   /** The text here starts after the first character kept, maybe inside a line: that line is not shown. */
   const partial = win !== undefined && win.from > job.dropped;
   const text = win?.text;
-  const lines = useMemo(() => (text !== undefined ? toLines(partial ? fromLineStart(text) : text, growing) : []), [text, partial, growing]);
+  const lines = useMemo(() => (text !== undefined ? linesFrom(text, partial, growing) : []), [text, partial, growing]);
   const short = useMemo(() => lastLines(lines, COLLAPSED_LINES, COLLAPSED_CHARS), [lines]);
   const open = p.shown !== undefined;
   const hidden = open ? Math.max(0, lines.length - (p.shown as number)) : 0;
