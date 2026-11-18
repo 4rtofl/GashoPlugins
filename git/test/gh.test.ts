@@ -164,6 +164,14 @@ test("a pull request of more commits than gh lists is counted with the REST API"
   asked.length = 0;
   assert.equal((await viewGitHub(ctx(99) as never, repo, "pulls", 67273, 15)).commits, 99);
   assert.equal(asked.length, 1);
+  // When the REST API cannot be read, the pull request is still shown, with the commits gh listed.
+  const failing = {
+    github: {
+      read: async (args: string[]) =>
+        args[0] === "api" ? Promise.reject(Object.assign(new Error("Command failed: gh api"), { stderr: "HTTP 502: Bad Gateway" })) : { stdout: pull(COMMITS_LISTED), stderr: "" },
+    },
+  };
+  assert.equal((await viewGitHub(failing as never, repo, "pulls", 67273, 15)).commits, COMMITS_LISTED);
 });
 
 test("checks are summed up by their result", () => {

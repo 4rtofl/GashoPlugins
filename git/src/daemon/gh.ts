@@ -149,6 +149,8 @@ const PULL_DETAIL_FIELDS =
 const TEXT_MAX = 60_000;
 /** The commits `gh pr view --json commits` gives at most; a pull request of more is counted with the REST API. */
 export const COMMITS_LISTED = 100;
+/** What reading one item may take in all, within the item read's 25 seconds (gasho-plugin.json). */
+const ITEM_MS = 23_000;
 const COMMENTS_MAX = 200;
 const FILES_MAX = 300;
 
@@ -261,6 +263,7 @@ export function parseGhItemDetail(json: string, kind: GitHubListKind): GitHubIte
  * what gh said up to `maxAgeSeconds` ago.
  */
 export async function viewGitHub(ctx: Gh, repo: GitHubRepo, kind: GitHubListKind, number: number, maxAgeSeconds: number): Promise<GitHubItemDetail> {
+  const began = Date.now();
   const { stdout } = await ctx.github.read(
     [
       kind === "issues" ? "issue" : "pr",
@@ -275,10 +278,15 @@ export async function viewGitHub(ctx: Gh, repo: GitHubRepo, kind: GitHubListKind
   );
   const item = parseGhItemDetail(stdout, kind);
   if (!item) throw new Error(`gh returned no ${kind === "issues" ? "issue" : "pull request"} #${number}`);
-  if ((item.commits ?? 0) >= COMMITS_LISTED) {
-    const pull = await ctx.github.read(["api", `repos/${repo.owner}/${repo.name}/pulls/${number}`], { maxAgeSeconds, timeoutMs: 20_000 });
-    const commits = num((JSON.parse(pull.stdout) as { commits?: unknown } | null)?.commits);
-    if (commits !== undefined) item.commits = commits;
+  const left = ITEM_MS - (Date.now() - began);
+  if ((item.commits ?? 0) >= COMMITS_LISTED && left >= 1_000) {
+    try {
+      const pull = await ctx.github.read(["api", `repos/${repo.owner}/${repo.name}/pulls/${number}`], { maxAgeSeconds, timeoutMs: left });
+      const commits = num((JSON.parse(pull.stdout) as { commits?: unknown } | null)?.commits);
+      if (commits !== undefined) item.commits = commits;
+    } catch {
+      // The count is all it adds: the pull request is shown with the commits gh listed.
+    }
   }
   return item;
 }
