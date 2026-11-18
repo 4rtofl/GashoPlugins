@@ -403,4 +403,19 @@ test("まとめてレビューさせる: the pull requests with no worktree on a
     batchTargets(withFork, "A").map((x) => x.item.pr.number),
     [1],
   );
+
+  // A search without is:open lists merged and closed ones too: only the open one is done.
+  const { requested: withEnded } = pageItems([
+    {
+      machine: "A",
+      listing: {
+        ...a,
+        requested: [row(1, { primary: "/a/r" }), { ...row(5, { primary: "/a/r" }), state: "merged" }, { ...row(6, { primary: "/a/r" }), state: "closed" }],
+      },
+    },
+  ]);
+  assert.deepEqual(
+    batchTargets(withEnded, "A").map((x) => x.item.pr.number),
+    [1],
+  );
 });
