@@ -5,7 +5,7 @@
 // look, it reads at most once a minute. A repository that fails keeps what it read before, with the error. The board
 // plugin's `fetch` runs in every other reading, and not while few of GitHub's GraphQL points are left for the hour; what
 // it keeps for itself (FetchStore) is in a file of its own for each repository.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PluginError } from "@gasho/plugin-sdk/daemon";
@@ -51,10 +51,49 @@ interface Fetched {
   error?: string;
 }
 
-/** Why `fetch` failed: gh's own words when gh failed, the plugin's otherwise. */
+/** The errors `fetch` got from gh ("gh") and from the commands it ran (their name), as they came. */
+const failedIn = new WeakMap<object, string>();
+
+/** Notes that `e` came from `what` (gh, or a command's name), and throws it on. */
+const thrownBy =
+  (what: string) =>
+  (e: unknown): never => {
+    if (typeof e === "object" && e !== null) failedIn.set(e, what);
+    throw e;
+  };
+
+/** Why a command `fetch` ran failed (ctx.exec throws as Node.js's execFile does). */
+function commandError(command: string, e: unknown): string {
+  const err = (e ?? {}) as { code?: unknown; killed?: unknown; stderr?: unknown; message?: unknown };
+  if (err.code === "ENOENT") return `working server に ${command} がありません。`;
+  if (err.killed === true) return `${command} が時間内に終わりませんでした。`;
+  const first = [err.stderr, err.message]
+    .filter((t): t is string => typeof t === "string")
+    .join("\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith("Command failed"));
+  return `${command} が失敗しました：${(first ?? "原因が分かりません").slice(0, 200)}`;
+}
+
+/** Why `fetch` failed: gh's words when what it threw came from gh, the command's when from a command, the plugin's otherwise. */
 function fetchError(name: string, e: unknown): string {
-  const why = typeof (e as { stderr?: unknown } | null)?.stderr === "string" ? ghError(e) : e instanceof Error ? e.message : String(e);
+  const from = typeof e === "object" && e !== null ? failedIn.get(e) : undefined;
+  const why = from === "gh" ? ghError(e) : from !== undefined ? commandError(from, e) : e instanceof Error ? e.message : String(e);
   return `カンバン用のプラグイン（${name}）の fetch が失敗しました：${why}`;
+}
+
+/** Writes `text` to `file` whole or not at all: through a file of its own, renamed over it. */
+async function writeWhole(file: string, text: string): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmp, text);
+    await fs.rename(tmp, file);
+  } catch (e) {
+    await fs.rm(tmp, { force: true });
+    throw e;
+  }
 }
 
 /** `value` as JSON, up to FETCH_MAX_BYTES; `what` names it when it is larger. */
@@ -94,14 +133,7 @@ async function openStore(dir: string, name: string, p: string, log: ReaderDeps["
     async set(value) {
       const json = asJson({ path: p, value }, "store に入れる値") ?? "{}";
       kept = (JSON.parse(json) as { value?: unknown }).value;
-      writing = writing
-        .catch(() => undefined)
-        .then(async () => {
-          await fs.mkdir(path.dirname(file), { recursive: true });
-          const tmp = `${file}.${process.pid}.tmp`;
-          await fs.writeFile(tmp, `${json}\n`);
-          await fs.rename(tmp, file);
-        });
+      writing = writing.catch(() => undefined).then(() => writeWhole(file, `${json}\n`));
       return writing;
     },
   };
@@ -143,6 +175,8 @@ export class Reader {
   private reading: Promise<void> | undefined;
   private options: { at: number; folders: string; list: RepoOption[] } | undefined;
   private listing: Promise<RepoOption[]> | undefined;
+  /** The `watch` going on: one at a time, so that the file and what is watched here are the last one's. */
+  private watching: Promise<unknown> = Promise.resolve();
   private stopped = false;
 
   constructor(deps: ReaderDeps) {
@@ -150,19 +184,19 @@ export class Reader {
     this.now = deps.now ?? Date.now;
   }
 
-  /** Reads the watched repositories from the file, once. */
+  /** Reads the watched repositories from the file, once. A file that cannot be read watches none, until the next `watch`. */
   load(): Promise<void> {
-    this.loaded ??= fs.readFile(this.deps.file, "utf8").then(
-      (raw) => {
+    this.loaded ??= fs
+      .readFile(this.deps.file, "utf8")
+      .then((raw) => {
         const v = JSON.parse(raw) as { paths?: unknown; plugins?: unknown } | null;
         const paths = Array.isArray(v?.paths) ? v.paths.filter((p): p is string => typeof p === "string") : [];
         this.watched = [...new Set(paths)].slice(0, MAX_REPOS);
         this.plugins = pluginsOf(v?.plugins, this.watched);
-      },
-      (e: unknown) => {
-        if ((e as { code?: unknown }).code !== "ENOENT") this.deps.log("kanban: could not read the watched repositories", e);
-      },
-    );
+      })
+      .catch((e: unknown) => {
+        if ((e as { code?: unknown }).code !== "ENOENT") this.deps.log("kanban: could not read the watched repositories; watching none", e);
+      });
     return this.loaded;
   }
 
@@ -200,7 +234,13 @@ export class Reader {
    * not given), and keeps them in the file. Each path must be a repository on GitHub that can be watched now, or one
    * watched already (whose folder may be gone: it can stay until it is taken off).
    */
-  async watch(paths: unknown, plugins?: unknown): Promise<Board> {
+  watch(paths: unknown, plugins?: unknown): Promise<Board> {
+    const done = this.watching.then(() => this.watchNow(paths, plugins));
+    this.watching = done.catch(() => undefined);
+    return done;
+  }
+
+  private async watchNow(paths: unknown, plugins?: unknown): Promise<Board> {
     await this.load();
     if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) throw new PluginError("見る repo の指定が正しくありません。");
     if (plugins !== undefined && (typeof plugins !== "object" || plugins === null || !Object.values(plugins).every(pluginName))) {
@@ -210,8 +250,11 @@ export class Reader {
     if (next.length > MAX_REPOS) throw new PluginError(`見る repo は、1 台の working server に ${MAX_REPOS} 個までです。`);
     const added = next.filter((p) => !this.watched.includes(p));
     if (added.length > 0) {
-      const offered = new Set((await this.repoOptions(30_000)).filter((o) => o.github).map((o) => o.path));
-      const bad = added.filter((p) => !offered.has(p));
+      // Those the dialog was offered are in the list it got, kept a while; it is made again only for others.
+      const offered = async (maxAgeMs: number) => new Set((await this.repoOptions(maxAgeMs)).filter((o) => o.github).map((o) => o.path));
+      let ok = await offered(OPTIONS_MAX_AGE_MS);
+      if (added.some((p) => !ok.has(p))) ok = await offered(30_000);
+      const bad = added.filter((p) => !ok.has(p));
       if (bad.length > 0) throw new PluginError(`選べない repo です：${bad.join("、")}`);
     }
     const nextPlugins = pluginsOf(plugins ?? this.plugins, next);
@@ -219,10 +262,7 @@ export class Reader {
     // A repository given a board plugin with a `fetch` is read again, for what its `state` gets.
     const toFetch = next.some((p) => nextPlugins[p] !== this.plugins[p] && this.fetcher(nextPlugins[p]));
     if (moved || JSON.stringify(nextPlugins) !== JSON.stringify(this.plugins)) {
-      await fs.mkdir(path.dirname(this.deps.file), { recursive: true });
-      const tmp = `${this.deps.file}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, `${JSON.stringify({ paths: next, plugins: nextPlugins }, null, 2)}\n`);
-      await fs.rename(tmp, this.deps.file);
+      await writeWhole(this.deps.file, `${JSON.stringify({ paths: next, plugins: nextPlugins }, null, 2)}\n`);
       this.watched = next;
       this.plugins = nextPlugins;
     }
@@ -380,7 +420,13 @@ export class Reader {
         const at = this.startedAt;
         this.refetch.delete(p);
         const done = await openStore(this.deps.storeDir, name, p, this.deps.log)
-          .then((store) => runFetch(fetch, material, { github: { read: gh }, exec: this.deps.exec, store }))
+          .then((store) =>
+            runFetch(fetch, material, {
+              github: { read: (args, o) => gh(args, o).catch(thrownBy("gh")) },
+              exec: (command, args, o) => this.deps.exec(command, args, o).catch(thrownBy(command)),
+              store,
+            }),
+          )
           .then(
             (value): Fetched => ({ plugin: name, at, value }),
             (e: unknown): Fetched => ({ plugin: name, at, ...(last?.value !== undefined ? { value: last.value } : {}), error: fetchError(name, e) }),

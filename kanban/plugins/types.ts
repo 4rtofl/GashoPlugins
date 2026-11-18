@@ -32,8 +32,14 @@ export interface StateCard {
   title: string;
   /** The issue number in the branch name (feat/12-x → 12). */
   issue?: number;
-  /** The open pull request of the branch, or else its latest closed one. */
+  /**
+   * My open pull request from the branch (of this repository: a fork's branch of the same name is not it), or else my
+   * latest closed one from the branch when the worktree is on its last commit; on a review worktree, the pull request
+   * it is for.
+   */
   pr?: { number: number; url: string; state: "open" | "merged" | "closed"; draft?: boolean };
+  /** A worktree github-review made to review a pull request (review-<number> beside the primary checkout), whoever opened it. */
+  review?: true;
   /** When the open pull request last changed (ISO 8601). */
   updatedAt?: string;
   sessions: CardSession[];
@@ -90,7 +96,7 @@ export interface Placement {
  */
 export type State<T = unknown> = (card: StateCard, fetched: T | undefined) => Placement;
 
-/** An open pull request of mine, as `gh pr list --json number,title,url,headRefName,isDraft,updatedAt` gives it. */
+/** An open pull request of mine, as `gh pr list --json number,title,url,headRefName,isDraft,updatedAt,isCrossRepository` gives it. */
 export interface OpenPr {
   number: number;
   title: string;
@@ -99,12 +105,16 @@ export interface OpenPr {
   isDraft?: boolean;
   /** ISO 8601 */
   updatedAt?: string;
+  /** From a fork's branch: it is not the worktree's on the branch of the same name. */
+  isCrossRepository?: boolean;
 }
 
-/** A closed or merged pull request of mine: the latest of its branch. */
+/** A closed or merged pull request of mine: the latest of its branch of this repository. */
 export interface ClosedPr {
   number: number;
   headRefName: string;
+  /** Its last commit: a worktree on the branch is its worktree only on this commit. */
+  headRefOid?: string;
   /** MERGED or CLOSED */
   state: string;
   title: string;
@@ -115,9 +125,10 @@ export interface ClosedPr {
 export interface FetchRepo {
   /** OWNER/REPO */
   repo: string;
-  primary: { path: string; branch?: string };
-  /** Worktrees other than the primary checkout, on a branch. */
-  worktrees: { branch: string; path: string }[];
+  /** `head`: the commit it is on. */
+  primary: { path: string; branch?: string; head?: string };
+  /** Worktrees other than the primary checkout, on a branch, whose folder is there. */
+  worktrees: { branch: string; path: string; head?: string }[];
   /** My open pull requests. */
   prs: OpenPr[];
   /** My latest closed pull request of each branch. */
