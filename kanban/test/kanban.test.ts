@@ -245,7 +245,15 @@ test("the repositories that can be watched are read from the files of .git, and 
 test("a review worktree gets the pull request it is for from one GraphQL query, also when GitHub has not got one of them", async () => {
   assert.match(reviewQuery("o/r", [8, 12]).join(" "), /pr8: pullRequest\(number: 8\).* pr12: pullRequest\(number: 12\).* -f owner=o -f name=r$/);
   const exec: Exec = async () => ({
-    stdout: ["worktree /r/main", "branch refs/heads/main", "", "worktree /r/review-8", "branch refs/heads/feat/x", "", "worktree /r/review-9", "branch refs/heads/feat/y", "", "worktree /r/other/review-10", "branch refs/heads/z", ""].join("\n"),
+    stdout: [
+      ...["worktree /r/main", "branch refs/heads/main", ""],
+      // The name github-review gives now (REPO in another case than GitHub's), and the one from before.
+      ...["worktree /r/review-R-8", "branch refs/heads/feat/x", ""],
+      ...["worktree /r/review-9", "branch refs/heads/feat/y", ""],
+      // Another repository's name, and not beside the primary checkout.
+      ...["worktree /r/review-other-11", "branch refs/heads/w", ""],
+      ...["worktree /r/other/review-10", "branch refs/heads/z", ""],
+    ].join("\n"),
     stderr: "",
   });
   const queries: string[][] = [];
@@ -259,7 +267,8 @@ test("a review worktree gets the pull request it is for from one GraphQL query, 
   const material = await readRepo(exec, github, { path: "/r/main", github: "o/r" });
   assert.equal(queries.length, 1);
   assert.match(queries[0]?.join(" ") ?? "", /pr8:.*pr9:.* o\/r$/);
-  assert.deepEqual(material.reviews, [{ path: "/r/review-8", number: 8, title: "Someone's", url: "https://github.com/o/r/pull/8", state: "merged" }]);
+  assert.doesNotMatch(queries[0]?.join(" ") ?? "", /pr1[01]:/);
+  assert.deepEqual(material.reviews, [{ path: "/r/review-R-8", number: 8, title: "Someone's", url: "https://github.com/o/r/pull/8", state: "merged" }]);
   assert.deepEqual(parseReviews({ data: { repository: { pr8: { ...answer.data.repository.pr8, url: "javascript:x" } } } }, [{ number: 8, path: "/r/review-8" }]), []);
   // Without a review worktree, nothing more is asked of GitHub.
   const noReview: Exec = async () => ({ stdout: "worktree /r/main\nbranch refs/heads/main\n", stderr: "" });

@@ -43,7 +43,7 @@ export interface StateCard {
    * it is for.
    */
   pr?: { number: number; url: string; state: "open" | "merged" | "closed"; draft?: boolean };
-  /** A worktree github-review made to review a pull request (review-<number> beside the primary checkout), whoever opened it. */
+  /** A worktree github-review made to review a pull request (review-<REPO>-<number>, or review-<number> before, beside the primary checkout), whoever opened it. */
   review?: true;
   /** When the open pull request last changed (ISO 8601). */
   updatedAt?: string;

@@ -13,7 +13,7 @@ export interface RepoOption {
   github?: string;
 }
 
-/** The pull request a review worktree (review-<number>, made by github-review) is for, whoever opened it. */
+/** The pull request a review worktree (review-<REPO>-<number> or review-<number>, made by github-review) is for, whoever opened it. */
 export interface ReviewPr {
   /** The review worktree. */
   path: string;

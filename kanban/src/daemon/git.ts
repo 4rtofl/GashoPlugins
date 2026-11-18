@@ -276,11 +276,18 @@ export async function repoOptions(exec: Exec, folders: readonly string[]): Promi
   return [...byPath.values()].sort((a, b) => Number(!a.github) - Number(!b.github) || (a.github ?? a.path).localeCompare(b.github ?? b.path));
 }
 
-/** The review worktrees github-review makes: review-<number> in the folder that holds the primary checkout. */
-export function reviewWorktrees(primary: string, worktrees: readonly { path: string }[]): { number: number; path: string }[] {
+/**
+ * The review worktrees github-review makes in the folder that holds the primary checkout: review-<REPO>-<number> of
+ * OWNER/REPO `repo` (REPO with only what GitHub allows in a name, as github-review writes it), or review-<number>
+ * before. REPO is compared in any case: github-review takes it from origin, which may write it otherwise than GitHub.
+ */
+export function reviewWorktrees(primary: string, repo: string, worktrees: readonly { path: string }[]): { number: number; path: string }[] {
+  const name = (repo.split("/").pop() ?? "").replace(/[^A-Za-z0-9._-]/g, "").replace(/^\.+/, "").toLowerCase();
   return worktrees.flatMap((w) => {
-    const n = Number(/^review-(\d{1,9})$/.exec(path.basename(w.path))?.[1]);
-    return n >= 1 && w.path === path.join(path.dirname(primary), `review-${n}`) ? [{ number: n, path: w.path }] : [];
+    const m = /^review-(?:(.+)-)?(\d{1,9})$/.exec(path.basename(w.path));
+    const n = Number(m?.[2]);
+    const named = m?.[1] === undefined || m[1].toLowerCase() === name;
+    return n >= 1 && named && path.dirname(w.path) === path.dirname(primary) ? [{ number: n, path: w.path }] : [];
   });
 }
 
@@ -340,7 +347,7 @@ export async function readRepo(exec: Exec, gh: GitHubRead, option: RepoOption): 
   if (!primary) throw new KanbanError("worktree の一覧を読めませんでした。");
   const list = (state: string, fields: string) =>
     ghJson(gh, ["pr", "list", "--repo", repo, "--author", "@me", "--state", state, "--limit", String(PR_LIMIT), "--json", fields]);
-  const [open, closed, reviews] = await Promise.all([list("open", PR_FIELDS), list("closed", CLOSED_FIELDS), readReviews(gh, repo, reviewWorktrees(primary.path, worktrees))]).catch(
+  const [open, closed, reviews] = await Promise.all([list("open", PR_FIELDS), list("closed", CLOSED_FIELDS), readReviews(gh, repo, reviewWorktrees(primary.path, repo, worktrees))]).catch(
     (e: unknown) => {
       throw new KanbanError(ghError(e));
     },
