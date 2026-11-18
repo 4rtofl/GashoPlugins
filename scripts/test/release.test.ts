@@ -376,7 +376,7 @@ test("a released version is in the catalog as its file has it, with the genre na
   assert.deepEqual(unreleased, [{ folder: "hello", id: "hello", version: "1.2.0", files: ["hello/gasho-plugin.json"] }]);
 });
 
-test("a plugin changed since its version was released is named, and not released; READMEs, tests and its genre do not count", () => {
+test("a plugin changed since its version was released is named, and not released; its README.md, tests and genre do not count, but other .md and tests, which a build can take in, do", () => {
   const root = repo({ hello: manifest });
   write(root, { "hello/src/index.ts": "export {};\n" });
   commit(root, "hello-v1.2.0");
@@ -388,15 +388,16 @@ test("a plugin changed since its version was released is named, and not released
   assert.deepEqual(release(options(root, github(released), log, true)).unreleased, []);
   assert.equal(log[0], "hello 1.2.0: released before");
 
-  write(root, { "hello/src/index.ts": "export const changed = true;\n" });
+  write(root, { "hello/src/index.ts": "export const changed = true;\n", "hello/plugins/AGENTS.md": "# Agents\n", "hello/plugins/example/index.test.ts": "" });
   commit(root);
   const { unreleased } = release(options(root, github(released), [], true));
   const [changed] = unreleased;
-  assert.deepEqual(unreleased, [{ folder: "hello", id: "hello", version: "1.2.0", files: ["hello/src/index.ts"] }]);
+  const files = ["hello/plugins/AGENTS.md", "hello/plugins/example/index.test.ts", "hello/src/index.ts"];
+  assert.deepEqual(unreleased, [{ folder: "hello", id: "hello", version: "1.2.0", files }]);
   assert.ok(changed);
   assert.deepEqual(unreleasedWarning(changed), {
     file: "hello/gasho-plugin.json",
-    message: "hello 1.2.0 is released, and 1 file(s) of hello changed since (hello/src/index.ts): they are not released until its version goes up",
+    message: `hello 1.2.0 is released, and 3 file(s) of hello changed since (${files.join(", ")}): they are not released until its version goes up`,
   });
 
   run("git", ["tag", "-d", "hello-v1.2.0"], root);

@@ -69,7 +69,7 @@ npm run test:coverage         # npm test と同じテストを流し、テスト
 
 公開済みの版のカタログの項目（api・権限など）は、その版の tgz の中の `gasho-plugin.json` から作る。ジャンルだけは、今の `gasho-plugin.json` から取る。
 
-版を上げずにマージしたものは公開しない。ただし、ジャンル（`genre` や `genres.json`）を変えたときは、`catalog.json` だけを作り直す。公開した版のあとにプラグインのフォルダーのファイル（README などの `.md` と、テストを除く）が変わっていると、GitHub Actions がそのプラグインの `gasho-plugin.json` に警告を出し、ジョブの Summary に表を出す。公開するときは版を上げる。
+版を上げずにマージしたものは公開しない。ただし、ジャンル（`genre` や `genres.json`）を変えたときは、`catalog.json` だけを作り直す。公開した版のあとにプラグインのフォルダーのファイル（フォルダー直下の `README.md`・`test/` と、`src/` の `*.test.ts` を除く）が変わっていると、GitHub Actions がそのプラグインの `gasho-plugin.json` に警告を出し、ジョブの Summary に表を出す。公開するときは版を上げる。
 
 公開済みのいちばん新しい版より低い版にすると（revert など）、失敗にして何も公開しない。カタログの版は下がらない。main の先頭より古い commit の run（Re-run など）は、何も公開しない。
 

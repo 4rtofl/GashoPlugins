@@ -251,9 +251,10 @@ function tarArgs(gnu: boolean, out: string, dir: string): string[] {
 }
 
 /**
- * The files of `folder` that changed from its release `tag` (the commit it was made at) to HEAD, but for READMEs and
- * tests, which are not in its file. Its gasho-plugin.json counts when it is not the one in the released file, but for its
- * genre, which only the catalog has. Undefined when git does not have the tag.
+ * The files of `folder` that changed from its release `tag` (the commit it was made at) to HEAD, but for its README.md,
+ * test/ and the tests of src/, which are not in its file. Only those: a build can take in other files as text (the
+ * kanban's daemon.js has kanban/plugins/, with its .md and tests). Its gasho-plugin.json counts when it is not the one in
+ * the released file, but for its genre, which only the catalog has. Undefined when git does not have the tag.
  */
 function changesSince(root: string, folder: string, tag: string, released: Manifest, current: Manifest): string[] | undefined {
   const git = (args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -265,9 +266,9 @@ function changesSince(root: string, folder: string, tag: string, released: Manif
   const files = git([
     "diff", "--name-only", `refs/tags/${tag}`, "HEAD", "--", folder,
     `:(exclude)${folder}/gasho-plugin.json`,
-    `:(exclude,glob)${folder}/**/*.md`,
-    `:(exclude,glob)${folder}/**/test/**`,
-    `:(exclude,glob)${folder}/**/*.test.ts`,
+    `:(exclude)${folder}/README.md`,
+    `:(exclude)${folder}/test`,
+    `:(exclude,glob)${folder}/src/**/*.test.ts`,
   ]).split("\n").filter(Boolean);
   const { genre: _a, ...was } = released;
   const { genre: _b, ...now } = current;
