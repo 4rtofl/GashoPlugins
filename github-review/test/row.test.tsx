@@ -160,7 +160,8 @@ describe("a pull request with a worktree", () => {
     const dialog = await screen.findByRole("dialog", { name: "レビュー用の worktree を片付けますか" });
     expect(within(dialog).getByText("pr-7")).toBeTruthy();
     await userEvent.click(within(dialog).getByRole("button", { name: "片付ける" }));
-    expect((await screen.findByRole("status")).textContent).toContain("review-7 を片付けました（ローカルのブランチ pr-7 も消しました）。");
+    // The "removing…" notice may still be leaving while this one comes in, so both can be a status for a moment.
+    expect((await screen.findByText("review-7 を片付けました（ローカルのブランチ pr-7 も消しました）。")).closest('[role="status"]')).not.toBeNull();
     expect(callsOf("remove")).toEqual([{ repo: "4rtofl/app", number: 7 }]);
   });
 

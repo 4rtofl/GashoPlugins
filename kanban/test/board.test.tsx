@@ -76,7 +76,8 @@ describe("KanbanPage", () => {
 
     await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
     expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/issue-1-x", trust: true });
-    expect(screen.getByRole("status")).toHaveProperty("textContent", expect.stringContaining("issue-1-x でセッションを起動しました。"));
+    // The "starting…" notice may still be leaving while this one comes in, so both can be a status for a moment.
+    expect((await screen.findByText("issue-1-x でセッションを起動しました。")).closest('[role="status"]')).not.toBeNull();
   });
 
   it("starts nothing when the person does not trust the folder", async () => {
