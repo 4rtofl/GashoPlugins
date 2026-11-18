@@ -63,6 +63,7 @@ function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[
       dismiss: (n) => {
         if (notices.at(-1) === n) notices.push(undefined);
       },
+      askFork: async () => false,
       askTrust: async (q) => {
         asked.push(q);
         return answers.shift() ?? true;

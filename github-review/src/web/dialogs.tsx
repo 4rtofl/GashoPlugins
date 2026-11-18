@@ -1,62 +1,85 @@
-// What the page asks and tells around the rows' buttons: whether Claude Code may trust a folder before a session
-// starts there, whether to remove a review worktree, whether to ask the Agent to merge or to send it back (and to
-// remove its review worktree once that is done), and a notice at the bottom of what a button is doing or did.
+// What the page asks and tells around the rows' buttons: whether to start a session in a fork's code, whether Claude
+// Code may trust a folder before a session starts there, whether to remove a review worktree, whether to ask the Agent
+// to merge or to send it back (and to remove its review worktree once that is done), one of them on screen at a time,
+// and a notice at the bottom of what a button is doing or did.
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from "react";
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
 import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
-import { canPush } from "../types.ts";
-import { sessionsIn, type Item, type Notice, type Spot } from "./actions";
+import { canPush, PROJECT_FILES } from "../types.ts";
+import { sessionsIn, type ForkQuestion, type Item, type Notice, type Spot } from "./actions";
 import { Button, DrawCheckbox, PortalScope } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
 
 /**
- * How long the buttons of a folder's question do nothing once it shows: the next question opens where the one just
- * answered was, so the second click of a double click would trust a folder that was never read.
+ * The questions asked in the dialogs below, from the review page, the side panel of a pull request and the run of
+ * "まとめてレビューさせる", in the order they are asked: only the first is on screen. Each dialog is drawn in the same
+ * place, so one shown over another the person is reading would be answered in its stead.
  */
-const TRUST_ANSWER_AFTER_MS = 500;
-
-/**
- * The folders' questions on screen, the one that opened last at the end: Radix draws it over the others. The review
- * page, the panel of a pull request and "まとめてレビューさせる" each ask their own, so more than one can show at once.
- */
-const shownTrusts: object[] = [];
-const trustListeners = new Set<() => void>();
-const onShownTrusts = (listener: () => void) => {
-  trustListeners.add(listener);
+let asked: object[] = [];
+const askedWatchers = new Set<() => void>();
+function setAsked(next: object[]): void {
+  asked = next;
+  for (const w of askedWatchers) w();
+}
+function watchAsked(w: () => void): () => void {
+  askedWatchers.add(w);
   return () => {
-    trustListeners.delete(listener);
+    askedWatchers.delete(w);
   };
-};
-const frontTrust = () => shownTrusts[shownTrusts.length - 1];
+}
 
-/** Whether `question` has been the one in front for TRUST_ANSWER_AFTER_MS, so it may be answered. */
-function useAnswerable(question: object | undefined): boolean {
+/** `question` (undefined: none) while it is the one on screen; it waits in the line from when it is asked. */
+function useOnScreen<Q extends object>(question: Q | undefined): Q | undefined {
+  const first = useSyncExternalStore(watchAsked, () => asked[0]);
   useEffect(() => {
     if (!question) return;
-    shownTrusts.push(question);
-    for (const listener of trustListeners) listener();
-    return () => {
-      const i = shownTrusts.indexOf(question);
-      if (i >= 0) shownTrusts.splice(i, 1);
-      for (const listener of trustListeners) listener();
-    };
+    setAsked([...asked, question]);
+    return () => setAsked(asked.filter((q) => q !== question));
   }, [question]);
-  const front = useSyncExternalStore(onShownTrusts, frontTrust);
-  const inFront = question !== undefined && front === question;
-  // Counted again whenever it comes to the front: the one over it, answered by the first click, leaves it there.
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    setReady(false);
-    if (!inFront) return;
-    const t = setTimeout(() => setReady(true), TRUST_ANSWER_AFTER_MS);
-    return () => clearTimeout(t);
-  }, [inFront, question]);
-  return inFront && ready;
+  return question && first === question ? question : undefined;
 }
+
+/** How long after a question shows a press is not taken for its answer (ms). */
+const SETTLE_MS = 500;
+
+/**
+ * A question shows in the place of the one answered or over the page at once, so what would answer it unseen is not
+ * taken: a press begun before it showed or within SETTLE_MS of that (judged when the button went down, also when it
+ * comes up later: a click, Enter, Space or Esc), the second of a double click, a key held down, and a click outside
+ * the panel (`stayOpen`; the buttons and Esc answer). Such a press does not move the focus to its buttons either. Each
+ * question gets a new panel (`key`), which puts the focus on its first button, the no.
+ */
+function useAnswer(shown: object | undefined, onAnswer: (yes: boolean) => void) {
+  const shownAt = useRef(Infinity);
+  const pressedAt = useRef<number>(undefined);
+  useEffect(() => {
+    shownAt.current = performance.now();
+  }, [shown]);
+  const early = (t: number) => t - shownAt.current < SETTLE_MS;
+  return {
+    onMouseDown: (e: MouseEvent) => {
+      pressedAt.current = e.timeStamp;
+      if (e.detail >= 2 || early(e.timeStamp)) e.preventDefault();
+    },
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.repeat) e.preventDefault();
+      else pressedAt.current = e.timeStamp;
+    },
+    onEscapeKeyDown: (e: globalThis.KeyboardEvent) => {
+      if (e.repeat || early(e.timeStamp)) e.preventDefault();
+    },
+    answer: (yes: boolean) => (e: MouseEvent) => {
+      const at = pressedAt.current ?? e.timeStamp;
+      pressedAt.current = undefined;
+      if (e.detail < 2 && !early(at)) onAnswer(yes);
+    },
+  };
+}
+const stayOpen = (e: Event) => e.preventDefault();
 
 /**
  * Claude Code asks whether to trust a folder before a session starts there: the person answers here. `note`: what else
@@ -71,15 +94,21 @@ export function TrustDialog({
   note?: string;
   onAnswer: (yes: boolean) => void;
 }) {
-  const answerable = useAnswerable(question);
+  const shown = useOnScreen(question);
+  const { answer, onMouseDown, onKeyDown, onEscapeKeyDown } = useAnswer(shown, onAnswer);
   return (
-    // A click outside or Esc says no only once it may be answered: the second click of a double click lands outside
-    // a smaller question that opened under it.
-    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && answerable && onAnswer(false)}>
+    <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
         <PortalScope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
-          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+          <Dialog.Content
+            key={shown?.path}
+            onKeyDown={onKeyDown}
+            onMouseDown={onMouseDown}
+            onEscapeKeyDown={onEscapeKeyDown}
+            onPointerDownOutside={stayOpen}
+            className={cn(DIALOG_PANEL, "flex flex-col gap-4")}
+          >
             <div className="space-y-1.5">
               <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
               <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
@@ -87,20 +116,76 @@ export function TrustDialog({
                 {note && <span className="mt-1 block">{note}</span>}
               </Dialog.Description>
             </div>
-            <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>
-            {(question?.warnings.length ?? 0) > 0 && (
+            <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{shown?.path}</p>
+            {(shown?.warnings.length ?? 0) > 0 && (
               <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
-                {question?.warnings.map((w) => (
+                {shown?.warnings.map((w) => (
                   <li key={w}>{w}</li>
                 ))}
               </ul>
             )}
             <div className="flex justify-end gap-2 border-t border-border pt-4">
-              <Button size="sm" disabled={!answerable} onClick={() => onAnswer(false)}>
+              <Button size="sm" onClick={answer(false)}>
                 やめる
               </Button>
-              <Button size="sm" variant="primary" disabled={!answerable} onClick={() => onAnswer(true)}>
+              <Button size="sm" variant="primary" onClick={answer(true)}>
                 信頼して起動する
+              </Button>
+            </div>
+          </Dialog.Content>
+        </PortalScope>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/**
+ * Before a session starts in a fork's code: Claude Code asks nothing there (it trusts the worktree as it trusts the
+ * primary checkout), so the person is shown which of PROJECT_FILES the worktree has, and may leave it unstarted.
+ */
+export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | undefined; onAnswer: (yes: boolean) => void }) {
+  const shown = useOnScreen(question);
+  const { answer, onMouseDown, onKeyDown, onEscapeKeyDown } = useAnswer(shown, onAnswer);
+  const pr = shown?.pr;
+  const files = shown?.files ?? [];
+  return (
+    <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
+      <Dialog.Portal>
+        <PortalScope>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content
+            key={shown?.path}
+            onKeyDown={onKeyDown}
+            onMouseDown={onMouseDown}
+            onEscapeKeyDown={onEscapeKeyDown}
+            onPointerDownOutside={stayOpen}
+            className={cn(DIALOG_PANEL, "flex flex-col gap-4")}
+          >
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">fork のコードでセッションを起動しますか</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                #{pr?.number}「{pr?.title}」は、{pr?.author ? `${pr.author} の ` : ""}fork からの Pull request です。Claude Code はこのフォルダーを確かめずに信頼し、fork が置いた設定（.claude/ の hooks はコマンドを実行します）や CLAUDE.md を読みます。
+              </Dialog.Description>
+            </div>
+            <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{shown?.path}</p>
+            {files.length > 0 ? (
+              <div className="space-y-1 text-xs text-amber-700 dark:text-amber-300">
+                <p>この worktree の一番上にあるもの。中身を確かめてから起動してください。</p>
+                <ul className="list-disc space-y-0.5 pl-5 font-mono">
+                  {files.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">worktree の一番上に {PROJECT_FILES.join("・")} はありません。</p>
+            )}
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" onClick={answer(false)}>
+                起動しない
+              </Button>
+              <Button size="sm" variant="primary" onClick={answer(true)}>
+                起動する
               </Button>
             </div>
           </Dialog.Content>
@@ -112,10 +197,11 @@ export function TrustDialog({
 
 /** Before a review worktree is removed: what goes, and the sessions that keep running in it. */
 export function RemoveDialog({ question, onAnswer }: { question: { item: Item; spot: Spot } | undefined; onAnswer: (yes: boolean) => void }) {
-  const wt = question?.spot.worktree;
-  const running = question && wt ? sessionsIn(question.spot.machine, wt.path).length : 0;
+  const shown = useOnScreen(question);
+  const wt = shown?.spot.worktree;
+  const running = shown && wt ? sessionsIn(shown.spot.machine, wt.path).length : 0;
   return (
-    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
+    <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
         <PortalScope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
@@ -189,24 +275,25 @@ export function AskDialog({
   merge: { method: MergeMethod; deleteBranch: boolean };
   onAnswer: (answer: { cleanup: boolean } | undefined) => void;
 }) {
-  const pr = question?.item.pr;
-  const kind = question?.kind ?? "merge";
+  const shown = useOnScreen(question);
+  const pr = shown?.item.pr;
+  const kind = shown?.kind ?? "merge";
   const text = ASK_TEXT[kind];
-  const wt = question?.spot.worktree;
+  const wt = shown?.spot.worktree;
   const cannot =
-    !question || !wt
+    !shown || !wt
       ? undefined
-      : wt.path === question.spot.primary
+      : wt.path === shown.spot.primary
         ? "リポジトリの本体の checkout なので、片付けません。"
-        : !cleanable(kind, wt, question.spot.primary)
+        : !cleanable(kind, wt, shown.spot.primary)
           ? "差し戻しのあとも作業が続くので、レビュー用の worktree（review-<リポジトリ名>-<番号>）だけを片付けます。"
-          : removeWorktreeProblem(question.spot.machine, { path: wt.path, repo: question.spot.primary });
+          : removeWorktreeProblem(shown.spot.machine, { path: wt.path, repo: shown.spot.primary });
   const [cleanup, setCleanup] = useState(true);
   // Every question starts checked.
-  useEffect(() => setCleanup(true), [question]);
+  useEffect(() => setCleanup(true), [shown]);
   const steps = pr ? askSteps(kind, pr, merge) : [];
   return (
-    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(undefined)}>
+    <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(undefined)}>
       <Dialog.Portal>
         <PortalScope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
@@ -252,14 +339,14 @@ const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? 
 
 /** A notice at the bottom of the page (after EasyUI's VelocityToast); it goes after a few seconds once nothing is going on. */
 export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose: () => void }) {
-  // While a folder's question shows, the notice cannot be pressed (the page under a modal dialog is not), and a press
-  // there would say no to the question: its buttons wait, and so does its going, until no question shows.
-  const asking = useSyncExternalStore(onShownTrusts, () => shownTrusts.length > 0);
+  // While a question shows, the notice cannot be pressed (the page under a modal dialog is not), and a press there would
+  // say no to the question: its buttons wait, and so does its going, until no question is left.
+  const asking = useSyncExternalStore(watchAsked, () => asked.length > 0);
   useEffect(() => {
     if (!notice || notice.busy || asking) return;
     const t = setTimeout(onClose, notice.action ? 10_000 : 6000);
     return () => clearTimeout(t);
-    // Restarts only for a new notice, or once no question shows.
+    // Restarts only for a new notice, or once no question is left.
   }, [notice, asking]);
   return (
     <AnimatePresence>

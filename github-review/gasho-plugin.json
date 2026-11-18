@@ -15,6 +15,7 @@
     "watched": { "kind": "read" },
     "watch": { "kind": "write", "timeoutSeconds": 60 },
     "create": { "kind": "write", "timeoutSeconds": 120 },
+    "projectFiles": { "kind": "read", "timeoutSeconds": 30 },
     "remove": { "kind": "write", "timeoutSeconds": 60 },
     "cleanup": { "kind": "write", "timeoutSeconds": 30 },
     "reviewSession": { "kind": "write", "timeoutSeconds": 30 }
