@@ -86,10 +86,14 @@ export function useDraft<T>(name: string): [T | undefined, (next: T | undefined 
   const at = draftsAt(where);
   const [drafts, setDrafts] = usePluginState<Drafts | undefined>(draftsKey(machine, worktree), undefined);
   const value = drafts?.at === at ? (drafts.values[name] as T | undefined) : undefined;
+  // A change sent from this number can end after the worktree's screen moved to another (its drafts then are that one's).
   const set = (next: T | undefined | ((prev: T | undefined) => T | undefined)) =>
     setDrafts((d) => {
-      const { [name]: prev, ...rest } = d?.at === at ? d.values : {};
+      if (d && d.at !== at) return d;
+      const { [name]: prev, ...rest } = d?.values ?? {};
       const v = typeof next === "function" ? (next as (prev: T | undefined) => T | undefined)(prev as T | undefined) : next;
+      // Nothing to write: the drafts stay none, so that they do not become this number's while another one shows.
+      if (v === undefined && prev === undefined) return d;
       return { at, values: v === undefined ? rest : { ...rest, [name]: v } };
     });
   return [value, set];
