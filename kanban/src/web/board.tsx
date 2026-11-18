@@ -916,7 +916,9 @@ function useAnswerable(question: object | undefined): boolean {
 function TrustDialog({ question, onAnswer }: { question: { path: string; warnings: string[] } | undefined; onAnswer: (yes: boolean) => void }) {
   const answerable = useAnswerable(question);
   return (
-    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
+    // A click outside or Esc says no only once it may be answered: the second click of a double click lands outside
+    // a smaller question that opened in its place.
+    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && answerable && onAnswer(false)}>
       <Dialog.Portal>
         <PortalScope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
