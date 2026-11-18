@@ -82,10 +82,11 @@ const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? 
 type Started = { ok: true; sessionId: string; trusted: boolean } | { ok: false; error?: string };
 
 /**
- * Starts a session in a folder, asking the person first when Claude Code does not trust it yet. `trustQuietly`: a folder
- * Claude Code has no warnings about is trusted without asking (the person has said yes once in this run).
+ * Starts a session in a folder, asking the person first when Claude Code does not trust it yet; the notice the caller
+ * shows while it starts (`starting`) is hidden while the person is asked, and back once they say yes. `trustQuietly`: a
+ * folder Claude Code has no warnings about is trusted without asking (the person has said yes once in this run).
  */
-async function launchIn(machine: MachineInfo, cwd: string, t: Tools, trustQuietly = false): Promise<Started> {
+async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: Tools, trustQuietly = false): Promise<Started> {
   let r = await t.launch({ machine: machine.id, cwd });
   let trusted = false;
   if (!r.ok && r.needsTrust) {
@@ -93,6 +94,7 @@ async function launchIn(machine: MachineInfo, cwd: string, t: Tools, trustQuietl
     if (!(trustQuietly && warnings.length === 0)) {
       t.actions.notify(undefined);
       if (!(await t.actions.askTrust({ path: cwd, warnings }))) return { ok: false };
+      t.actions.notify(starting);
     }
     trusted = true;
     r = await t.launch({ machine: machine.id, cwd, trust: true });
@@ -102,8 +104,9 @@ async function launchIn(machine: MachineInfo, cwd: string, t: Tools, trustQuietl
 
 /** Starts a session in a folder; its id, or undefined (with the reason shown) when it did not start. */
 async function start(machine: MachineInfo, cwd: string, t: Tools): Promise<string | undefined> {
-  t.actions.notify({ text: `${folderName(cwd)} でセッションを起動しています…`, busy: true });
-  const r = await launchIn(machine, cwd, t);
+  const starting: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
+  t.actions.notify(starting);
+  const r = await launchIn(machine, cwd, starting, t);
   if (r.ok) return r.sessionId;
   if (r.error) t.actions.notify({ text: r.error, tone: "danger" });
   return undefined;
@@ -236,7 +239,8 @@ export async function reviewAll(
       onStep(pr.url, step);
     };
     onStep(pr.url, { state: "working" });
-    t.actions.notify({ text: `${i + 1} / ${targets.length}：#${pr.number} のレビューを用意しています…`, busy: true });
+    const preparing: Notice = { text: `${i + 1} / ${targets.length}：#${pr.number} のレビューを用意しています…`, busy: true };
+    t.actions.notify(preparing);
     const r = await t.call<Created>({
       machine: machine.id,
       method: "create",
@@ -253,7 +257,7 @@ export async function reviewAll(
       end({ state: "skipped", text: `worktree（${folderName(r.data.path)}）がもうあるので、作りませんでした。` });
       continue;
     }
-    const started = await launchIn(machine, r.data.path, t, trustQuietly);
+    const started = await launchIn(machine, r.data.path, preparing, t, trustQuietly);
     if (!started.ok) {
       end({ state: "failed", text: started.error ?? "フォルダーを信頼しなかったので、セッションを起動しませんでした（worktree は作りました）。" });
       continue;

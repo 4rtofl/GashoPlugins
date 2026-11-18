@@ -104,6 +104,12 @@ test("batch: trust is asked on the first folder; after a yes, folders with no wa
     ["#1", "#2", "#3"].map((n) => f.steps[n]?.at(-1)?.state),
     ["done", "done", "done"],
   );
+  // While the person is asked, the notice of how far it is hides; it is back once they say yes.
+  const two = "2 / 3：#2 のレビューを用意しています…";
+  assert.deepEqual(
+    f.notices.map((n) => n?.text ?? null),
+    ["1 / 3：#1 のレビューを用意しています…", null, "1 / 3：#1 のレビューを用意しています…", two, null, two, "3 / 3：#3 のレビューを用意しています…"],
+  );
   // The list is read again after each worktree is made, so that a row done shows it.
   assert.deepEqual(
     f.log.filter((l) => /^(create|reload)/.test(l)),
