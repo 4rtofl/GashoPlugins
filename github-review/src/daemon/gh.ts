@@ -1,5 +1,5 @@
-// GitHub for github-review: one GraphQL query (gh api graphql, about 1 point of the hourly 5000) reads the page of a
-// working server: the open pull requests I am asked to review, those of the watched repositories, and those that have
+// GitHub for github-review: one GraphQL query (gh api graphql, about 3 points of the hourly 5000) reads the page of a
+// working server: the open pull requests I am asked to review and those I opened, those of the watched repositories, and those that have
 // a review worktree, each with the marks of the latest comments (verdict.ts). The search words go into variables of the query, never into the query itself; GitHub's search
 // takes them as its list of pull requests does (author:, label:, …). Everything here only builds arguments and reads
 // output, so that it can be tested without gh.
@@ -21,12 +21,54 @@ const PR_FIELDS =
   `viewerDidAuthor mergeable maintainerCanModify recent: comments(last: ${MARK_COMMENTS}) { nodes { viewerDidAuthor body url createdAt } } ` +
   `changes: reviews(last: ${CHANGES_REVIEWS}, states: [CHANGES_REQUESTED]) { nodes { viewerDidAuthor submittedAt } }`;
 const SEARCH_NODES = `issueCount nodes { ... on PullRequest { ${PR_FIELDS} } }`;
+/** The upper part's two searches also read what GitHub can sort by, to put their answers in one order. */
+const UPPER_NODES = `issueCount nodes { ... on PullRequest { ${PR_FIELDS} updatedAt reactions { totalCount } reactionGroups { content reactors { totalCount } } } }`;
 
 /** GitHub sorts a search by best match: the list of pull requests puts the newest first. */
 const sorted = (words: string): string => (/(^|\s)sort:/.test(words) ? words : `${words} sort:created-desc`.trim());
 
 /** The search of the pull requests I am asked to review, in all of GitHub. */
 export const requestedQuery = (words: string): string => sorted(`is:pr review-requested:@me archived:false ${words}`.trim());
+
+/** The search words one by one; a quoted part stays in its word. */
+const wordsOf = (words: string): string[] => words.match(/(?:[^\s"]+|"[^"]*"?)+/g) ?? [];
+
+/**
+ * The search words about who opened a pull request, apart from the others. GitHub takes `author:` only in lower case,
+ * its value in any case and with or without quotes.
+ */
+export function authorWords(words: string): { rest: string; only: string[]; not: string[] } {
+  const rest: string[] = [];
+  const only: string[] = [];
+  const not: string[] = [];
+  for (const word of wordsOf(words)) {
+    const m = /^(-?)author:(.+)$/.exec(word);
+    if (m) (m[1] ? not : only).push((m[2] ?? "").replaceAll('"', "").toLowerCase());
+    else rest.push(word);
+  }
+  return { rest: rest.join(" "), only, not };
+}
+
+/**
+ * The upper part's searches: those I am asked to review, those I opened, and how many are both. GitHub widens
+ * `author:@me author:octocat` to either one and lets `-author:@me` undo `author:@me`, so the words about the author stay
+ * out of the search of mine: ownWanted decides from them whether mine are shown at all.
+ */
+export function upperSearches(words: string): { requested: string; own: string; both: string } {
+  const { rest } = authorWords(words);
+  return {
+    requested: requestedQuery(words),
+    own: sorted(`is:pr author:@me archived:false ${rest}`.trim()),
+    both: `is:pr author:@me review-requested:@me archived:false ${rest}`.trim(),
+  };
+}
+
+/** Whether the search words leave the pull requests opened by `login` (me) in the list. */
+export function ownWanted(words: string, login: string | undefined): boolean {
+  const { only, not } = authorWords(words);
+  const me = (author: string) => author === "@me" || author === login?.toLowerCase();
+  return !not.some(me) && (only.length === 0 || only.some(me));
+}
 
 /** The searches of the watched repositories' pull requests: as few as fit GitHub's limit on a query. */
 export function watchedQueries(repos: readonly string[], words: string): string[] {
@@ -51,16 +93,18 @@ export interface Lookup {
 }
 
 /** The gh arguments of the page's query. */
-export function listArgs(p: { requested: string; watched: string[]; lookups: Lookup[] }): string[] {
+export function listArgs(p: { requested: string; own: string; both: string; watched: string[]; lookups: Lookup[] }): string[] {
   const decls: string[] = [];
-  const fields: string[] = [];
+  const fields: string[] = ["viewer { login }"];
   const vars: string[] = [];
-  const search = (alias: string, q: string) => {
+  const search = (alias: string, q: string, nodes = SEARCH_NODES, first = SEARCH_LIMIT) => {
     decls.push(`$${alias}: String!`);
-    fields.push(`${alias}: search(query: $${alias}, type: ISSUE, first: ${SEARCH_LIMIT}) { ${SEARCH_NODES} }`);
+    fields.push(`${alias}: search(query: $${alias}, type: ISSUE, first: ${first}) { ${nodes} }`);
     vars.push("-f", `${alias}=${q}`);
   };
-  search("req", p.requested);
+  search("req", p.requested, UPPER_NODES);
+  search("own", p.own, UPPER_NODES);
+  search("both", p.both, "issueCount", 0);
   p.watched.forEach((q, i) => search(`w${i}`, q));
   p.lookups.forEach((l, i) => {
     const [owner, name] = l.repo.split("/") as [string, string];
@@ -166,11 +210,92 @@ function searchResult(v: unknown): { prs: ParsedPr[]; more: number } | undefined
   return { prs, more: Math.max(0, (typeof v.issueCount === "number" ? v.issueCount : 0) - nodes.length) };
 }
 
+/** A pull request of the upper part, with what GitHub gave for it to sort by. */
+interface Ranked {
+  pr: ParsedPr;
+  raw: Record<string, unknown>;
+}
+
+const totalOf = (v: unknown): number => (isRecord(v) && typeof v.totalCount === "number" ? v.totalCount : 0);
+const issueCountOf = (v: unknown): number => (isRecord(v) && typeof v.issueCount === "number" ? v.issueCount : 0);
+const timeOf = (v: unknown): number => {
+  const t = typeof v === "string" ? Date.parse(v) : Number.NaN;
+  return Number.isNaN(t) ? 0 : t;
+};
+
+/** The reactions `sort:reactions-<name>` counts, by the names GitHub has for them in its answers. */
+const REACTION_NAMES: Record<string, string> = { "+1": "THUMBS_UP", "-1": "THUMBS_DOWN", smile: "LAUGH", tada: "HOORAY", thinking_face: "CONFUSED", heart: "HEART", rocket: "ROCKET", eyes: "EYES" };
+
 /**
- * The answer of listArgs' query. GitHub answers what it can and lists the rest in `errors` (a review worktree
- * whose number is no pull request, say); gh then fails, with the answer on its output.
+ * The order GitHub gives the search words: by the first `sort:`, in any case. One it does not know, like none, is the
+ * newest first.
  */
-export function parseList(json: string, p: { watched: number; lookups: Lookup[] }): ListAnswer {
+function orderOf(words: string): (a: Ranked, b: Ranked) => number {
+  const asked = wordsOf(words).find((w) => w.startsWith("sort:"))?.slice("sort:".length).toLowerCase() ?? "";
+  const m = /^(created|updated|comments|interactions|reactions(?:-(\+1|-1|smile|tada|thinking_face|heart|rocket|eyes))?)(?:-(asc|desc))?$/.exec(asked);
+  const by = m?.[1] ?? "created";
+  const reaction = m?.[2] ? REACTION_NAMES[m[2]] : undefined;
+  const comments = (raw: Record<string, unknown>) => (typeof raw.totalCommentsCount === "number" ? raw.totalCommentsCount : 0);
+  const key = (raw: Record<string, unknown>): number => {
+    if (by === "updated") return timeOf(raw.updatedAt);
+    if (by === "comments") return comments(raw);
+    if (by === "interactions") return comments(raw) + totalOf(raw.reactions);
+    if (reaction) {
+      const groups = Array.isArray(raw.reactionGroups) ? raw.reactionGroups : [];
+      return totalOf((groups.find((g) => isRecord(g) && g.content === reaction) as { reactors?: unknown } | undefined)?.reactors);
+    }
+    return by === "created" ? timeOf(raw.createdAt) : totalOf(raw.reactions);
+  };
+  const sign = m?.[3] === "asc" ? 1 : -1;
+  return (a, b) => sign * (key(a.raw) - key(b.raw));
+}
+
+/** One of the upper part's searches: what it found, how many GitHub counted, and the nodes that are no pull request. */
+function upperResult(v: unknown): { list: Ranked[]; count: number; skipped: number } {
+  const nodes = isRecord(v) && Array.isArray(v.nodes) ? v.nodes : [];
+  const list = nodes.flatMap((raw): Ranked[] => {
+    const pr = parsePr(raw);
+    return pr && isRecord(raw) ? [{ pr, raw }] : [];
+  });
+  return { list, count: issueCountOf(v), skipped: nodes.length - list.length };
+}
+
+/**
+ * The upper part from its two searches: each pull request once, in the order of the search words, up to the limit of
+ * one search. Each search is in that order and holds its first SEARCH_LIMIT, so the first of the two together are there.
+ */
+function upperAnswer(data: Record<string, unknown>, words: string): { prs: ParsedPr[]; more: number } {
+  const login = str((data.viewer as { login?: unknown } | null | undefined)?.login);
+  const wanted = ownWanted(words, login);
+  const asked = upperResult(data.req);
+  const mine = wanted ? upperResult(data.own) : { list: [], count: 0, skipped: 0 };
+  const before = orderOf(words);
+  const prs: ParsedPr[] = [];
+  const seen = new Set<string>();
+  let i = 0;
+  let j = 0;
+  while (prs.length < SEARCH_LIMIT) {
+    const a = asked.list[i];
+    const b = mine.list[j];
+    const next = a && (!b || before(a, b) <= 0) ? a : b;
+    if (!next) break;
+    if (next === a) i++;
+    else j++;
+    if (seen.has(next.pr.url)) continue;
+    seen.add(next.pr.url);
+    prs.push(next.pr);
+  }
+  // Those both searches found count once; GitHub's count of them may be missing when it could not answer that search.
+  const urls = new Set(asked.list.map((x) => x.pr.url));
+  const both = wanted ? Math.max(issueCountOf(data.both), mine.list.filter((x) => urls.has(x.pr.url)).length) : 0;
+  return { prs, more: Math.max(0, asked.count + mine.count - both - prs.length - asked.skipped - mine.skipped) };
+}
+
+/**
+ * The answer of listArgs' query, for the search words `words`. GitHub answers what it can and lists the rest in `errors`
+ * (a review worktree whose number is no pull request, say); gh then fails, with the answer on its output.
+ */
+export function parseList(json: string, p: { watched: number; lookups: Lookup[]; words?: string }): ListAnswer {
   const body = JSON.parse(json) as { data?: Record<string, unknown> | null; errors?: unknown };
   const data = body.data ?? {};
   const errors = (Array.isArray(body.errors) ? body.errors : []).flatMap((e) => {
@@ -178,7 +303,7 @@ export function parseList(json: string, p: { watched: number; lookups: Lookup[] 
     return m ? [m.slice(0, 300)] : [];
   });
   return {
-    requested: searchResult(data.req) ?? { prs: [], more: 0 },
+    requested: upperAnswer(data, p.words ?? ""),
     watched: Array.from({ length: p.watched }, (_, i) => searchResult(data[`w${i}`]) ?? { prs: [], more: 0 }),
     lookups: p.lookups.map((l, i) => {
       const repo = data[`l${i}`];

@@ -1,8 +1,8 @@
 {
   "id": "github-review",
   "name": "GitHub Review",
-  "version": "1.31.0",
-  "description": "レビューを頼まれた Pull request と、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
+  "version": "1.34.0",
+  "description": "レビューを頼まれた Pull request、自分の Pull request、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
   "genre": "workflow",
   "api": "1.14",
   "permissions": ["session.input", "session.launch", "session.remove", "worktree.remove"],
