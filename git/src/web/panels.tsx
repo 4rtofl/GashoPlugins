@@ -1,7 +1,8 @@
 // The panels of the Git plugin (moved here from Gasho's views/github-list.tsx and github-item.tsx): the open issues
 // or pull requests of the session's repository, and one of them read in Gasho, with its conversation (comments and
 // reviews) and, for a pull request, its branches, size, checks and changed files. An item opens in place of the list
-// and goes back to it. Both read again whenever they are opened, as before (staleSeconds: 0).
+// and goes back to it. Both ask again whenever they are opened (staleSeconds: 0), answered from what gh said recently;
+// the reload button makes gh read GitHub again.
 import {
   ArrowLeft,
   ChevronRight,
@@ -16,7 +17,7 @@ import {
   GitPullRequestDraft,
   RefreshCw,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   cn,
   Markdown,
@@ -26,10 +27,12 @@ import {
   RelativeTime,
   RepoTabs,
   relativeTime,
+  useCall,
   useNavigation,
   useNow,
   useRequest,
   type PanelProps,
+  type RequestTarget,
 } from "@gasho/plugin-sdk";
 import type { GitHubCheck, GitHubComment, GitHubItem, GitHubItemDetail, GitHubList, GitHubListKind, GitHubReview } from "../types.ts";
 
@@ -47,6 +50,36 @@ const REVIEW: Record<NonNullable<GitHubItem["review"]>, { label: string; classNa
 
 const kindOf = (params: Record<string, string>): GitHubListKind => (params.kind === "pulls" ? "pulls" : "issues");
 
+/**
+ * A read of the daemon part. `reload` (the reload button) asks with `fresh`, so that gh reads GitHub again rather than
+ * gasho-daemon answering from what it kept, then asks again (now answered with that). When GitHub could not be read,
+ * what was read stays and `error` says why, until it is read again or the target changes.
+ */
+function useRead<T>(target: RequestTarget | undefined) {
+  const r = useRequest<T>(target, { staleSeconds: 0 });
+  const call = useCall();
+  const [refreshing, setRefreshing] = useState(false);
+  const [failed, setFailed] = useState<{ key: string; at?: number; error: string }>();
+  const key = JSON.stringify(target ?? null);
+  const reload = async () => {
+    if (!target) return;
+    setRefreshing(true);
+    const result = await call<T>({ ...target, params: { ...(target.params as Record<string, unknown>), fresh: true } }).catch((e: unknown) => ({
+      ok: false as const,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    setRefreshing(false);
+    if (result.ok) {
+      setFailed(undefined);
+      r.reload();
+    } else {
+      setFailed({ key, at: r.at, error: result.error });
+    }
+  };
+  const error = failed && failed.key === key && failed.at === r.at ? `再読み込みできませんでした：${failed.error}` : r.error;
+  return { ...r, error, loading: r.loading || refreshing, reload };
+}
+
 export function ListPanel({ machine, session, params }: PanelProps) {
   const kind = kindOf(params);
   const nav = useNavigation();
@@ -55,10 +88,7 @@ export function ListPanel({ machine, session, params }: PanelProps) {
   const { repos, selected } = panelRepo(session, params.repo, (r) => Boolean(r.github));
   const noRepo = repos ? repos.length === 0 : !session.github;
   const where: Record<string, string> = selected ? { repo: selected.path } : {};
-  const r = useRequest<GitHubList>(
-    machine.connected && !noRepo ? { machine: machine.id, sessionId: session.sessionId, method: "list", params: { kind, ...where } } : undefined,
-    { staleSeconds: 0 },
-  );
+  const r = useRead<GitHubList>(machine.connected && !noRepo ? { machine: machine.id, sessionId: session.sessionId, method: "list", params: { kind, ...where } } : undefined);
   const list = r.data;
   const github = list?.repo ?? (selected ? selected.github : session.github);
   return (
@@ -74,7 +104,7 @@ export function ListPanel({ machine, session, params }: PanelProps) {
           )}
           <button
             type="button"
-            onClick={r.reload}
+            onClick={() => void r.reload()}
             disabled={r.loading || !machine.connected || noRepo}
             aria-label="再読み込み"
             title="再読み込み"
@@ -168,10 +198,7 @@ export function ItemPanel({ machine, session, params }: PanelProps) {
   const now = useNow(60_000);
   const { selected } = panelRepo(session, params.repo, (r) => Boolean(r.github));
   const where: Record<string, string> = selected ? { repo: selected.path } : {};
-  const r = useRequest<GitHubItemDetail>(
-    machine.connected && valid ? { machine: machine.id, sessionId: session.sessionId, method: "item", params: { kind, number, ...where } } : undefined,
-    { staleSeconds: 0 },
-  );
+  const r = useRead<GitHubItemDetail>(machine.connected && valid ? { machine: machine.id, sessionId: session.sessionId, method: "item", params: { kind, number, ...where } } : undefined);
   const item = r.data;
   const github = selected ? selected.github : session.github;
   const url = item?.url ?? (github && valid ? `${github.url}/${kind === "issues" ? "issues" : "pull"}/${number}` : undefined);
@@ -186,7 +213,7 @@ export function ItemPanel({ machine, session, params }: PanelProps) {
               GitHub <ExternalLink className="size-3.5" />
             </a>
           )}
-          <button type="button" onClick={r.reload} disabled={r.loading || !machine.connected || !valid} aria-label="再読み込み" title="再読み込み" className={PANEL_BUTTON}>
+          <button type="button" onClick={() => void r.reload()} disabled={r.loading || !machine.connected || !valid} aria-label="再読み込み" title="再読み込み" className={PANEL_BUTTON}>
             <RefreshCw className={cn("size-3.5", r.loading && "animate-spin")} />
           </button>
         </>

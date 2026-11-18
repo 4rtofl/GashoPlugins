@@ -1,14 +1,26 @@
 // The Actions panels: the repository's runs, filtered by workflow and branch (the session's branch one press away),
-// and one run with its jobs, steps and the end of a failed job's log. While a run shown is going, both read again by
-// themselves.
+// and one run with its jobs, steps and the end of a failed job's log, at its latest attempt or an earlier one. While a
+// run shown is going, both read again by themselves. Back from a run, the list is where it was scrolled to.
 import { ArrowLeft, ChevronRight, GitBranch } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn, relativeTime, useNavigation, useNow, type PanelProps, type Params } from "@gasho/plugin-sdk";
 import type { Job, Run, RunDetail, Runs } from "../types.ts";
 import { duration, Empty, isRunning, LoadedAt, PanelFrame, PanelRepoTabs, RUN_STATE, RunStateIcon, Status, usePanelRepo, useRead } from "./common";
 
 /** How often a panel reads again while a run it shows is going (seconds). */
 const LIVE_SECONDS = 15;
+
+/** Where each list (of a session, with its filters) was scrolled to when a run was opened from it. */
+const SCROLLED = new Map<string, number>();
+
+/** The element that scrolls the panel's content. */
+function scroller(el: HTMLElement | null): HTMLElement | undefined {
+  for (let p = el?.parentElement; p; p = p.parentElement) if (/auto|scroll/.test(getComputedStyle(p).overflowY)) return p;
+  return undefined;
+}
+
+/** A run's workflow, also when GitHub could not read the name in its file. */
+const workflowName = (run: Run): string => run.workflow || "ワークフロー";
 
 const EVENT: Record<string, string> = {
   push: "push",
@@ -34,13 +46,23 @@ export function RunsPanel({ machine, session, params }: PanelProps) {
   const anyRunning = Boolean(data?.runs.some((run) => isRunning(run.state)));
   useEffect(() => setLive(anyRunning), [anyRunning]);
   const setFilter = (next: Params) => nav.replacePanel("actions", { ...filters, ...next });
-  // The branches to choose from: the session's, the one chosen, and those of the runs read.
-  const branches = [...new Set([sessionBranch, branch, ...(data?.runs.map((run) => run.branch) ?? [])].filter((b): b is string => Boolean(b)))];
+  // The branches to choose from: the session's, the one chosen, and those of the runs of any branch.
+  const branches = [...new Set([sessionBranch, branch, ...(data?.branches ?? [])].filter((b): b is string => Boolean(b)))];
   const href = github ? `${github.url}/actions` : undefined;
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollKey = `${machine.id} ${session.sessionId} ${JSON.stringify(filters)}`;
+  const restored = useRef<string>(undefined);
+  useLayoutEffect(() => {
+    if (!data || restored.current === scrollKey) return;
+    restored.current = scrollKey;
+    const top = SCROLLED.get(scrollKey);
+    const box = scroller(listRef.current);
+    if (top !== undefined && box) box.scrollTop = top;
+  }, [data, scrollKey]);
   return (
     <PanelFrame title="Actions" github={github} cwd={session.cwd} href={href} r={r} disabled={!machine.connected || noRepo}>
       <PanelRepoTabs session={session} params={params} panel="actions" />
-      <div className="space-y-3">
+      <div ref={listRef} className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <select
             aria-label="ワークフロー"
@@ -100,6 +122,7 @@ export function RunsPanel({ machine, session, params }: PanelProps) {
                       onClick={(e) => {
                         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
                         e.preventDefault();
+                        SCROLLED.set(scrollKey, scroller(listRef.current)?.scrollTop ?? 0);
                         nav.openPanel("run", target);
                       }}
                       className="flex gap-2.5 px-3 py-2.5 hover:bg-surface-raised"
@@ -122,13 +145,15 @@ export function RunsPanel({ machine, session, params }: PanelProps) {
 
 function RunSummary({ run, now }: { run: Run; now: number }) {
   const created = Date.parse(run.createdAt);
-  const took = duration(run.startedAt ?? run.createdAt, isRunning(run.state) ? undefined : run.updatedAt, now);
+  const running = isRunning(run.state);
+  // A run waiting for approval, or whose workflow could not start, has not run at all.
+  const took = run.state === "action_required" || run.startupFailure ? undefined : duration(run.startedAt ?? run.createdAt, running ? undefined : run.updatedAt, now, running);
   return (
     <div className="min-w-0 flex-1">
-      <p className="text-sm leading-snug break-words">{run.title || run.workflow}</p>
+      <p className="text-sm leading-snug break-words">{run.title || workflowName(run)}</p>
       <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
         <span className="text-foreground/80">
-          {run.workflow}
+          {workflowName(run)}
           {run.number ? <span className="tabular-nums"> #{run.number}</span> : null}
         </span>
         {run.branch && (
@@ -137,7 +162,9 @@ function RunSummary({ run, now }: { run: Run; now: number }) {
           </span>
         )}
         <span>{EVENT[run.event] ?? run.event}</span>
-        <span className={cn(run.state === "failure" && "text-red-400", isRunning(run.state) && "text-amber-400")}>{RUN_STATE[run.state]}</span>
+        <span className={cn(run.state === "failure" && "text-red-400", (running || run.state === "action_required") && "text-amber-400")}>
+          {run.startupFailure ? "始められなかった" : RUN_STATE[run.state]}
+        </span>
         {took && <span className="tabular-nums">{took}</span>}
         {Number.isFinite(created) && <span title={new Date(created).toLocaleString("ja-JP")}>{relativeTime(created, now)}</span>}
         {run.attempt && run.attempt > 1 ? <span>{run.attempt} 回目</span> : null}
@@ -146,23 +173,35 @@ function RunSummary({ run, now }: { run: Run; now: number }) {
   );
 }
 
+/** What a run without jobs says: why there are none. */
+function noJobs(run: RunDetail): string {
+  if (run.startupFailure) return "ワークフローのファイルに誤りがあり、実行を始められませんでした。理由は GitHub で見られます。";
+  if (run.state === "action_required") return "GitHub で承認されると、ジョブが始まります。";
+  if (run.state === "cancelled") return "ジョブが始まる前に取り消されました。";
+  return isRunning(run.state) ? "ジョブはまだありません。" : "ジョブはありません。";
+}
+
 export function RunPanel({ machine, session, params }: PanelProps) {
   const nav = useNavigation();
   const now = useNow(5_000);
   const { where, github } = usePanelRepo(session, params);
   const id = /^\d{1,16}$/.test(params.id ?? "") ? params.id : undefined;
+  const attempt = /^\d{1,4}$/.test(params.attempt ?? "") ? params.attempt : undefined;
   const [live, setLive] = useState(false);
-  const r = useRead<RunDetail>(machine, session, "run", id ? { ...where, id } : undefined, live ? { refreshSeconds: LIVE_SECONDS } : undefined);
+  const r = useRead<RunDetail>(machine, session, "run", id ? { ...where, id, ...(attempt ? { attempt } : {}) } : undefined, live ? { refreshSeconds: LIVE_SECONDS } : undefined);
   const run = r.data;
   const going = Boolean(run && isRunning(run.state));
   useEffect(() => setLive(going), [going]);
-  const back: Params = { ...where, ...(params.workflow ? { workflow: params.workflow } : {}), ...(params.branch ? { branch: params.branch } : {}) };
+  const filters: Params = { ...(params.workflow ? { workflow: params.workflow } : {}), ...(params.branch ? { branch: params.branch } : {}) };
+  const back: Params = { ...where, ...filters };
+  const attempts = run?.attempts ?? run?.attempt ?? 1;
   return (
     <PanelFrame
-      title={run ? `${run.workflow}${run.number ? ` #${run.number}` : ""}` : "Actions の実行"}
+      title={run ? `${workflowName(run)}${run.number ? ` #${run.number}` : ""}` : "Actions の実行"}
       github={github}
       cwd={session.cwd}
-      href={run?.url ?? (github && id ? `${github.url}/actions/runs/${id}` : undefined)}
+      // gh gives an earlier attempt's url with its /attempts/<n>.
+      href={run ? run.url : github && id ? `${github.url}/actions/runs/${id}` : undefined}
       r={r}
       disabled={!machine.connected || !id}
     >
@@ -179,8 +218,27 @@ export function RunPanel({ machine, session, params }: PanelProps) {
               <RunStateIcon state={run.state} className="mt-1" />
               <RunSummary run={run} now={now} />
             </header>
+            {attempts > 1 && (
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                実行した回
+                <select
+                  value={String(run.attempt ?? attempts)}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    nav.replacePanel("run", { ...where, id: id ?? "", ...(n < attempts ? { attempt: String(n) } : {}), ...filters });
+                  }}
+                  className="h-7 rounded-md border border-border bg-surface px-2 text-foreground"
+                >
+                  {Array.from({ length: attempts }, (_, i) => attempts - i).map((n) => (
+                    <option key={n} value={String(n)}>
+                      {n} 回目{n === attempts ? "（最新）" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {run.jobs.length === 0 ? (
-              <Empty>ジョブはまだありません。</Empty>
+              <Empty>{noJobs(run)}</Empty>
             ) : (
               <ul className="space-y-2">
                 {run.jobs.map((job) => (
@@ -198,7 +256,7 @@ export function RunPanel({ machine, session, params }: PanelProps) {
 }
 
 function JobCard({ job, now }: { job: Job; now: number }) {
-  const took = duration(job.startedAt, job.completedAt, now);
+  const took = duration(job.startedAt, job.completedAt, now, isRunning(job.state));
   // A failed job opens by itself, with its log.
   return (
     <li>
@@ -219,7 +277,7 @@ function JobCard({ job, now }: { job: Job; now: number }) {
                 <span className="min-w-0 flex-1 truncate" title={s.name}>
                   {s.name}
                 </span>
-                <span className="shrink-0 text-muted-foreground tabular-nums">{s.state === "skipped" ? "" : (duration(s.startedAt, s.completedAt, now) ?? "")}</span>
+                <span className="shrink-0 text-muted-foreground tabular-nums">{s.state === "skipped" ? "" : (duration(s.startedAt, s.completedAt, now, isRunning(s.state)) ?? "")}</span>
               </li>
             ))}
           </ol>

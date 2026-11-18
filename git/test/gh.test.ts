@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkState, ghError, listGitHub, parseGhItemDetail, parseGhItems } from "../src/daemon/gh.ts";
+import { checkState, COMMITS_LISTED, ghError, listGitHub, parseGhItemDetail, parseGhItems, viewGitHub } from "../src/daemon/gh.ts";
 
 test("gh's issue and pull request lists are read, and anything odd is left out", () => {
   const json = JSON.stringify([
@@ -141,9 +141,29 @@ test("one issue is read; a closed one says how, long text is cut, and only the l
 
 test("a repository whose issues are turned off has no list of them, and says so", async () => {
   const repo = { owner: "o", name: "fork", url: "https://github.com/o/fork" };
-  const ctx = { exec: async () => Promise.reject(Object.assign(new Error("Command failed: gh issue list"), { stderr: "the 'o/fork' repository has disabled issues\n" })) };
-  assert.deepEqual(await listGitHub(ctx as never, repo, "issues"), { repo, kind: "issues", items: [], truncated: false, disabled: true });
-  await assert.rejects(listGitHub(ctx as never, repo, "pulls"));
+  const ctx = { github: { read: async () => Promise.reject(Object.assign(new Error("Command failed: gh issue list"), { stderr: "the 'o/fork' repository has disabled issues\n" })) } };
+  assert.deepEqual(await listGitHub(ctx as never, repo, "issues", 30), { repo, kind: "issues", items: [], truncated: false, disabled: true });
+  await assert.rejects(listGitHub(ctx as never, repo, "pulls", 30));
+});
+
+test("a pull request of more commits than gh lists is counted with the REST API", async () => {
+  // nodejs/node#67273: gh pr view gives 100 of its 240 commits.
+  const repo = { owner: "nodejs", name: "node", url: "https://github.com/nodejs/node" };
+  const pull = (commits: number) => JSON.stringify({ number: 67273, title: "t", url: "https://github.com/nodejs/node/pull/67273", state: "CLOSED", commits: Array.from({ length: commits }, (_, i) => ({ oid: String(i) })) });
+  const asked: string[][] = [];
+  const ctx = (commits: number) => ({
+    github: {
+      read: async (args: string[]) => {
+        asked.push(args);
+        return { stdout: args[0] === "api" ? JSON.stringify({ number: 67273, commits: 240 }) : pull(commits), stderr: "" };
+      },
+    },
+  });
+  assert.equal((await viewGitHub(ctx(COMMITS_LISTED) as never, repo, "pulls", 67273, 15)).commits, 240);
+  assert.deepEqual(asked.at(-1), ["api", "repos/nodejs/node/pulls/67273"]);
+  asked.length = 0;
+  assert.equal((await viewGitHub(ctx(99) as never, repo, "pulls", 67273, 15)).commits, 99);
+  assert.equal(asked.length, 1);
 });
 
 test("checks are summed up by their result", () => {

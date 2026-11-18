@@ -1,5 +1,6 @@
-// The Packages panels: the packages whose repository is the session's (kind, visibility, versions, last update), and
-// one package with its versions (a container's tags) and the command that installs the newest.
+// The Packages panels: the packages whose repository is the session's (kind, visibility, versions, when the newest
+// version was published), and one package with its versions (a container's tags) and the command that installs the
+// newest.
 import { ArrowLeft, Box, Container } from "lucide-react";
 import { relativeTime, useNavigation, useNow, type PanelProps } from "@gasho/plugin-sdk";
 import type { Package, PackageDetail, Packages, PackageType } from "../types.ts";
@@ -62,7 +63,7 @@ export function PackagesPanel({ machine, session, params }: PanelProps) {
                         <span>{TYPE[p.type]}</span>
                         {p.visibility && <span>{VISIBILITY[p.visibility] ?? p.visibility}</span>}
                         {p.versions !== undefined && <span>{p.versions} 版</span>}
-                        {p.updatedAt && <span title={new Date(p.updatedAt).toLocaleString("ja-JP")}>更新 {relativeTime(Date.parse(p.updatedAt), now)}</span>}
+                        {p.publishedAt && <span title={new Date(p.publishedAt).toLocaleString("ja-JP")}>更新 {relativeTime(Date.parse(p.publishedAt), now)}</span>}
                       </div>
                     </div>
                   </a>
