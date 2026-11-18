@@ -30,6 +30,8 @@ export interface PrWorktree {
    * review, which "片付ける" removes. A worktree of another name is removed only when "マージしてもらう" asked for it.
    */
   review: boolean;
+  /** Its folder is gone, though git still has it: it does not open, and is made again or removed. */
+  missing?: boolean;
 }
 
 /**
