@@ -114,6 +114,39 @@ test("instructions: the review is posted with the heading and the mark; merge, s
   assert.equal(mergeMethodOf(undefined), "merge");
 });
 
+test("severity: the review sorts its findings into High, Medium and Low, and only a High one makes it changes", () => {
+  const m = markInstruction(PR);
+  assert.match(m, /^- High: マージすると実害が出るもの/m);
+  assert.match(m, /^- Medium: 直したほうがよいが、マージを止めるほどではないもの/m);
+  assert.match(m, /^- Low: 好みや細かい改善/m);
+  assert.ok(m.includes("`### High`・`### Medium`・`### Low`"));
+  assert.ok(m.includes("High の指摘が1件以上あれば changes、High の指摘がなければ mergeable"));
+  assert.ok(m.includes("Medium・Low だけのときも、指摘がないときも mergeable"));
+});
+
+test("severity: send back and mend must deal with the High findings, and say what becomes of Medium and Low", () => {
+  const mark: ReviewMark = { verdict: "changes", sha: SHA, url: "https://github.com/o/r/pull/5#issuecomment-1" };
+  const merge = { method: "merge", deleteBranch: true } as const;
+
+  const back = askInstruction("sendBack", PR, mark, merge);
+  assert.ok(back.includes("必ず直してほしい点として High の指摘"));
+  assert.ok(back.includes("Medium・Low の指摘があれば、High とは分けて「参考」の見出しの下に"));
+
+  const fix = askInstruction("fix", PR, mark, merge);
+  assert.ok(fix.includes("High の指摘をすべて"));
+  assert.ok(fix.includes("Medium・Low の指摘は直さなくてかまいません"));
+
+  // A review posted before the severities still has what it asked to mend mended.
+  for (const text of [back, fix]) assert.ok(text.includes("分かれていないとき（この分け方を始める前のレビュー）は、直すとされた点をすべて High の指摘として扱って"));
+});
+
+test("severity: a comment from before the severities and one sorted into them are read the same way", () => {
+  assert.deepEqual(readMark(`${REVIEW_HEADING}\n\n直すところがあります。\n<!-- gasho-review verdict=changes sha=${SHA} -->`), { verdict: "changes", sha: SHA });
+  const sorted = `${REVIEW_HEADING}\n\n### High\nなし\n\n### Medium\n- テストが足りない\n\n### Low\nなし\n\n<!-- gasho-review verdict=mergeable sha=${SHA} -->`;
+  assert.deepEqual(readMark(sorted), { verdict: "mergeable", sha: SHA });
+  assert.ok(withoutMark(sorted).endsWith("### Low\nなし"));
+});
+
 test("effort: the review at xhigh, merge and send back at medium, mend at the session's own; switched only where gasho-daemon can", () => {
   assert.equal(REVIEW_EFFORT, "xhigh");
   assert.equal(askEffort("merge"), "medium");
