@@ -254,6 +254,20 @@ export function parseHead(json: string): ParsedPr | undefined {
   return parsePr((JSON.parse(json) as { data?: { repository?: { pullRequest?: unknown } | null } | null }).data?.repository?.pullRequest);
 }
 
+/**
+ * The query that tells whether GitHub has a commit in a repository. It still has one a force-push left behind (of a
+ * fork's pull request too), and gives null for one never pushed.
+ */
+export function commitArgs(repo: string, oid: string): string[] {
+  const [owner, name] = repo.split("/") as [string, string];
+  const query = "query($owner: String!, $name: String!, $oid: GitObjectID!) { repository(owner: $owner, name: $name) { object(oid: $oid) { ... on Commit { oid } } } }";
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `oid=${oid}`];
+}
+
+export function parseCommit(json: string, oid: string): boolean {
+  return (JSON.parse(json) as { data?: { repository?: { object?: { oid?: unknown } | null } | null } | null }).data?.repository?.object?.oid === oid;
+}
+
 /** Comments the side panel shows, at most. */
 export const DETAIL_COMMENTS = 30;
 /** Checks the side panel shows, at most. */
