@@ -4,7 +4,7 @@ import type { SessionInfo } from "@gasho/plugin-sdk";
 import headOid from "../src/daemon/detail/head-oid.ts";
 import { detailArgs, parseDetail } from "../src/daemon/gh.ts";
 import { changesText, isMergedHeadWorktree, pushedOf, sessionName, sessionsIn } from "../src/web/item/cleanup.ts";
-import type { GitHubItemDetail } from "../src/types.ts";
+import type { GitHubItemDetail, WorktreeItems } from "../src/types.ts";
 
 const pull = (over: Partial<GitHubItemDetail> = {}): GitHubItemDetail => ({
   kind: "pulls",
@@ -23,20 +23,25 @@ const pull = (over: Partial<GitHubItemDetail> = {}): GitHubItemDetail => ({
 });
 
 const tree = { path: "/home/u/r-feat", branch: "feat/7", repo: "/home/u/r" };
+const items: WorktreeItems = { pulls: [{ kind: "pulls", number: 7, title: "t", state: "merged", url: "https://github.com/o/r/pull/7" }], added: [], missing: [], at: 0 };
 
 test("only a merged pull request opened in its head branch's worktree, not the main one, offers the removal", () => {
-  assert.equal(isMergedHeadWorktree(pull(), tree), true);
-  assert.equal(isMergedHeadWorktree(pull(), { ...tree, path: "/home/u/r-feat/" }), true);
-  assert.equal(isMergedHeadWorktree(pull({ state: "open" }), tree), false);
-  assert.equal(isMergedHeadWorktree(pull({ state: "closed" }), tree), false);
-  assert.equal(isMergedHeadWorktree(pull({ kind: "issues" }), tree), false);
-  assert.equal(isMergedHeadWorktree(pull(), { ...tree, branch: "other" }), false);
-  assert.equal(isMergedHeadWorktree(pull(), { ...tree, branch: undefined }), false);
+  assert.equal(isMergedHeadWorktree(pull(), tree, items), true);
+  assert.equal(isMergedHeadWorktree(pull(), { ...tree, path: "/home/u/r-feat/" }, items), true);
+  assert.equal(isMergedHeadWorktree(pull({ state: "open" }), tree, items), false);
+  assert.equal(isMergedHeadWorktree(pull({ state: "closed" }), tree, items), false);
+  assert.equal(isMergedHeadWorktree(pull({ kind: "issues" }), tree, items), false);
+  assert.equal(isMergedHeadWorktree(pull(), { ...tree, branch: "other" }, items), false);
+  assert.equal(isMergedHeadWorktree(pull(), { ...tree, branch: undefined }, items), false);
   // The repository's main worktree, even with the head branch checked out, and a folder outside a repository.
-  assert.equal(isMergedHeadWorktree(pull(), { ...tree, path: "/home/u/r" }), false);
-  assert.equal(isMergedHeadWorktree(pull(), { ...tree, path: "/home/u/r/", repo: "/home/u/r" }), false);
-  assert.equal(isMergedHeadWorktree(pull(), { ...tree, repo: undefined }), false);
-  assert.equal(isMergedHeadWorktree(pull({ head: undefined }), tree), false);
+  assert.equal(isMergedHeadWorktree(pull(), { ...tree, path: "/home/u/r" }, items), false);
+  assert.equal(isMergedHeadWorktree(pull(), { ...tree, path: "/home/u/r/", repo: "/home/u/r" }, items), false);
+  assert.equal(isMergedHeadWorktree(pull(), { ...tree, repo: undefined }, items), false);
+  assert.equal(isMergedHeadWorktree(pull({ head: undefined }), tree, items), false);
+  // One merged before from a branch of the same name, or from a fork's: the worktree's items do not count it, even
+  // when it was added by hand. Nor before they are read.
+  assert.equal(isMergedHeadWorktree(pull(), tree, { ...items, pulls: [], added: items.pulls }), false);
+  assert.equal(isMergedHeadWorktree(pull(), tree, undefined), false);
 });
 
 test("the sessions that end are those in the worktree's folder or below it", () => {

@@ -109,7 +109,8 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
   await run("git", ["init", "-b", "main", primary]);
   await git(primary, "commit", "--allow-empty", "-m", "base");
   await git(primary, "remote", "add", "origin", "https://github.com/o/r.git");
-  for (const n of [5, 6, 7]) await git(primary, "worktree", "add", "--detach", path.join(root, "r", `review-${n}`), "HEAD");
+  // review-6 by the name from before the repository's name was in it.
+  for (const name of ["review-r-5", "review-6", "review-r-7"]) await git(primary, "worktree", "add", "--detach", path.join(root, "r", name), "HEAD");
   const file = path.join(root, "watched.json");
   await fs.writeFile(file, JSON.stringify({ paths: [primary] }));
 

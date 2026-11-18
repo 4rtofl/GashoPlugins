@@ -4,7 +4,8 @@ import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
 import type { GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
 import { itemRead, readItems, type Ctx } from "../src/daemon/core.ts";
-import { branchArg, branchNumber, detailArgs, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
+import { branchArg, branchNumber, detailArgs, ghError, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
+import { worktreeHeads } from "../src/daemon/head.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
 import { editArgs } from "../src/daemon/ops/edit.ts";
 import { stateArgs } from "../src/daemon/ops/state.ts";
@@ -63,6 +64,51 @@ test("the answer becomes the worktree's items, and numbers GitHub does not have 
     missing: [99],
     at: 1000,
   });
+});
+
+test("a fork's pull request, and one merged before from a branch of the same name, are not the worktree's", () => {
+  const head = "a".repeat(40);
+  const node = (number: number, o: Record<string, unknown>) => ({ __typename: "PullRequest", number, title: `#${number}`, url: `https://github.com/o/r/pull/${number}`, isCrossRepository: false, ...o });
+  const json = JSON.stringify({
+    data: {
+      repository: {
+        pulls: {
+          nodes: [
+            node(9, { state: "OPEN", isCrossRepository: true, headRefOid: head }),
+            node(8, { state: "MERGED", isCrossRepository: true, headRefOid: head }),
+            node(7, { state: "OPEN", headRefOid: "c".repeat(40) }),
+            node(6, { state: "MERGED", headRefOid: "b".repeat(40) }),
+            node(5, { state: "MERGED", headRefOid: head.toUpperCase() }),
+            node(4, { state: "CLOSED", headRefOid: "d".repeat(40) }),
+          ],
+        },
+      },
+    },
+  });
+  const pulls = (h?: string) => parseItems(json, undefined, [], 0, h).pulls.map((p) => p.number);
+  // An open one is the branch's whatever the worktree's HEAD; a merged one only at its head commit.
+  assert.deepEqual(pulls(head), [7, 5, 4]);
+  // Without the worktree's HEAD, no merged one is the worktree's.
+  assert.deepEqual(pulls(), [7, 4]);
+  const query = itemsQueryArgs("o/r", "feat/5-x", []).find((a) => a.startsWith("query=")) ?? "";
+  assert.match(query, /isCrossRepository/);
+
+  // The worktree's HEAD, as `git worktree list --porcelain` gives it.
+  const list = ["worktree /home/u/r", `HEAD ${"e".repeat(40)}`, "branch refs/heads/main", "", "worktree /home/u/r-feat", `HEAD ${head}`, "branch refs/heads/feat/5-x", "", "worktree /home/u/r-x", `HEAD ${"f".repeat(40)}`, "detached", ""].join("\n");
+  assert.equal(worktreeHeads(list).get("/home/u/r-feat"), head);
+  assert.equal(worktreeHeads(list).size, 3);
+});
+
+test("a label, person or reviewer gh did not find is named; a repository it did not find is not taken for one", () => {
+  const error = (stderr: string) => ghError({ stderr, message: "Command failed: gh …" });
+  assert.equal(error("could not add label: 'won't fix' not found\n"), "ラベル「won't fix」が、このリポジトリで見つかりません。");
+  assert.equal(error("could not assign user: 'nobody' not found\n"), "担当者「nobody」が、このリポジトリで見つかりません。");
+  assert.equal(error("could not request reviewer: 'o/team' not found\n"), "レビュアー「o/team」が、このリポジトリで見つかりません。");
+  // gh issue edit, gh pr edit: without what it was.
+  assert.equal(error("failed to update https://github.com/o/r/issues/1: 'bug2' not found\nfailed to update 1 issue\n"), "「bug2」が、このリポジトリで見つかりません。");
+  assert.equal(error("'nobody' not found\n"), "「nobody」が、このリポジトリで見つかりません。");
+  assert.match(error("GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)\n"), /このリポジトリを読めませんでした/);
+  assert.match(error("HTTP 404: Not Found (https://api.github.com/repos/o/r)\n"), /このリポジトリを読めませんでした/);
 });
 
 test("what the browser sends never becomes a flag of gh", () => {

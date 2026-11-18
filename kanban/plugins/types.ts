@@ -25,7 +25,12 @@ export interface StateCard {
   /** The worktree's folder name; "PR #12" for a pull request without a worktree. */
   label: string;
   path?: string;
+  /** While a rebase stopped in the worktree, the branch it puts back. */
   branch?: string;
+  /** The worktree's HEAD is detached: a rebase stopped there (`rebasing`), or a commit is checked out. */
+  detached?: boolean;
+  /** A rebase stopped in the worktree. */
+  rebasing?: boolean;
   /** The repository's primary checkout, shown only while it has an open pull request or a session needs it. */
   primary?: boolean;
   /** The pull request's title, or else the branch. */
@@ -111,13 +116,25 @@ export interface ClosedPr {
   url: string;
 }
 
-/** A repository as `fetch` and `headings` get it: what the kanban has just read of it. Paths are real paths. */
+/** A worktree of a repository, as `fetch` and `headings` get it. */
+export interface Worktree {
+  /** A real path. */
+  path: string;
+  /** Its branch; while a rebase stopped there, the branch the rebase puts back. Absent when HEAD is detached otherwise. */
+  branch?: string;
+  /** HEAD is detached: a rebase stopped there, or a commit is checked out. */
+  detached?: true;
+  /** A rebase stopped there (HEAD is detached). */
+  rebasing?: true;
+}
+
+/** A repository as `fetch` and `headings` get it: what the kanban has just read of it. */
 export interface FetchRepo {
-  /** OWNER/REPO */
+  /** OWNER/REPO, as GitHub names it now: its origin may still say a name from before the repository or its owner was renamed. */
   repo: string;
-  primary: { path: string; branch?: string };
-  /** Worktrees other than the primary checkout, on a branch. */
-  worktrees: { branch: string; path: string }[];
+  primary: Worktree;
+  /** Worktrees other than the primary checkout. */
+  worktrees: Worktree[];
   /** My open pull requests. */
   prs: OpenPr[];
   /** My latest closed pull request of each branch. */

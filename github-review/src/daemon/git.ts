@@ -1,8 +1,8 @@
 // git for github-review, run with ctx.exec (no shell, no terminal, no prompts), and only in the clones found in the
-// folders Gasho can start sessions in: a path from a browser never reaches git. A review worktree is review-<number>
-// beside the primary checkout (review-<repository>-<number> when another repository's is there). A pull request of the
-// same repository gets a local branch of its name that tracks origin's, so the reviewer can push to it; one from a fork
-// is checked out at its head, detached, to read and test.
+// folders Gasho can start sessions in: a path from a browser never reaches git. A review worktree is
+// review-<repository>-<number> beside the primary checkout (review-<number> before, still taken as one). A pull
+// request of the same repository gets a local branch of its name that tracks origin's, so the reviewer can push to
+// it; one from a fork is checked out at its head, detached, to read and test.
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -60,20 +60,20 @@ export interface Clone {
  */
 export const repoName = (github: string): string => (github.split("/").pop() ?? "").replace(/[^A-Za-z0-9._-]/g, "").replace(/^\.+/, "");
 
-/** A pull request's review worktree's folder name with its repository's: review-<repository>-<number>. */
+/** The folder name of a pull request's review worktree: review-<repository>-<number>. */
 export const reviewName = (github: string, number: number): string => {
   const repo = repoName(github);
   return repo ? `review-${repo}-${number}` : `review-${number}`;
 };
 
-/**
- * Where the review worktree of a pull request goes: review-<number> in the folder that holds the primary checkout, or,
- * when another repository's (or another folder) has that name, review-<repository>-<number>.
- */
-export function reviewPaths(clone: Pick<Clone, "path" | "github">, number: number): [string, string] {
-  const dir = path.dirname(clone.path);
-  return [path.join(dir, `review-${number}`), path.join(dir, reviewName(clone.github, number))];
-}
+/** The review worktree a pull request gets now: review-<repository>-<number> in the folder that holds the primary checkout. */
+export const reviewPath = (clone: Pick<Clone, "path" | "github">, number: number): string => path.join(path.dirname(clone.path), reviewName(clone.github, number));
+
+/** The review worktree of a pull request made before the name held the repository's: review-<number>. */
+export const legacyReviewPath = (primary: string, number: number): string => path.join(path.dirname(primary), `review-${number}`);
+
+/** Where a pull request's review worktree may be: the name it gets now first, then the one from before. */
+export const reviewPaths = (clone: Pick<Clone, "path" | "github">, number: number): string[] => [reviewPath(clone, number), legacyReviewPath(clone.path, number)];
 
 /** The pull requests that have a review worktree in a clone, under either name. */
 export function reviewNumbers(clone: Clone): number[] {
@@ -90,8 +90,7 @@ export function reviewNumbers(clone: Clone): number[] {
  * worktree on its branch, which may be the primary checkout. A fork's branch name says nothing about a local branch.
  */
 export function prWorktree(clone: Clone, pr: { number: number; branch: string; fork?: boolean }): PrWorktree | undefined {
-  const review = reviewPaths(clone, pr.number);
-  const at = clone.worktrees.find((w) => review.includes(w.path));
+  const at = reviewPaths(clone, pr.number).flatMap((p) => clone.worktrees.filter((w) => w.path === p))[0];
   if (at) return { path: at.path, ...(at.branch ? { branch: at.branch } : {}), review: true };
   if (pr.fork) return undefined;
   const on = clone.worktrees.find((w) => w.branch === pr.branch);
@@ -229,18 +228,13 @@ function branchName(b: string): string {
 export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Created> {
   const found = prWorktree(clone, pr);
   if (found) return { path: found.path, created: false, ...(found.branch ? { branch: found.branch } : {}) };
-  // Neither is a worktree of this clone (else it was found above): another repository's, or some other folder.
-  const [plain, named] = reviewPaths(clone, pr.number);
-  const taken = await succeeds(fs.lstat(plain));
-  const dest = taken ? named : plain;
-  if (taken && (await succeeds(fs.lstat(named)))) {
-    throw new ReviewError(`${plain} も ${named} もあり、この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
+  const dest = reviewPath(clone, pr.number);
+  if (await succeeds(fs.lstat(dest))) {
+    throw new ReviewError(`${dest} がもうあります。この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
   }
-  const elsewhere = taken ? `${path.basename(plain)} がほかのものに使われているので、${path.basename(named)} に作りました。` : "";
   const w = { write: true, timeoutMs: 60_000 };
   const made = async (note: string, branch?: string): Promise<Created> => {
-    const all = `${elsewhere}${note}`;
-    return { path: await realPath(dest), created: true, ...(branch ? { branch } : {}), ...(all ? { note: all } : {}) };
+    return { path: await realPath(dest), created: true, ...(branch ? { branch } : {}), ...(note ? { note } : {}) };
   };
   /** At the pull request's head, detached. */
   const detached = async (note: string): Promise<Created> => {
@@ -298,7 +292,7 @@ export const SHOWN_FILES = 50;
  */
 export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { agreed?: string; check?: boolean } = {}): Promise<Removed> {
   const wt = prWorktree(clone, pr);
-  if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（review-${pr.number}）はありません。`);
+  if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
   const changes = (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean).length;
   if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
   // The pull request's head counts as pushed: its branch may be gone from origin once merged. A head pushed after the
