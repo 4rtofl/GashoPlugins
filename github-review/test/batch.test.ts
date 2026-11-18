@@ -104,6 +104,11 @@ test("batch: trust is asked on the first folder; after a yes, folders with no wa
     ["#1", "#2", "#3"].map((n) => f.steps[n]?.at(-1)?.state),
     ["done", "done", "done"],
   );
+  // The list is read again after each worktree is made, so that a row done shows it.
+  assert.deepEqual(
+    f.log.filter((l) => /^(create|reload)/.test(l)),
+    ["create #1", "reload m1", "create #2", "reload m1", "create #3", "reload m1"],
+  );
 });
 
 test("batch: a no to trusting leaves that worktree with no session and goes on; one there already is skipped", async () => {

@@ -228,11 +228,9 @@ export async function reviewAll(
 ): Promise<BatchCount> {
   const count: BatchCount = { done: 0, failed: 0, skipped: 0, warned: 0 };
   let trustQuietly = false;
-  const machines = new Set<string>();
   for (const [i, { item, spot }] of targets.entries()) {
     const { pr } = item;
     const { machine } = spot;
-    machines.add(machine.id);
     const end = (step: BatchStep & { state: "done" | "skipped" | "failed" }) => {
       count[step.state] += 1;
       onStep(pr.url, step);
@@ -245,6 +243,8 @@ export async function reviewAll(
       params: { repo: pr.repo, number: pr.number },
       summary: `${pr.repo}#${pr.number} のレビュー用の worktree を作る`,
     });
+    // As "worktree を作る" does: its row shows the worktree, not "worktree を作る", once its buttons are back.
+    t.actions.reload(machine.id);
     if (!r.ok) {
       end({ state: "failed", text: r.error });
       continue;
@@ -269,7 +269,6 @@ export async function reviewAll(
     if (sent.data.warning) count.warned += 1;
     end({ state: "done", sessionId, ...(sent.data.warning ? { text: sent.data.warning } : {}) });
   }
-  for (const id of machines) t.actions.reload(id);
   return count;
 }
 
