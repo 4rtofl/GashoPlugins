@@ -12,6 +12,11 @@ export function isComposing(e: ReactKeyboardEvent | KeyboardEvent): boolean {
   return key.isComposing || key.keyCode === 229;
 }
 
+/** For a checkbox in a form: Enter on it would submit the form (Chrome), and does nothing instead. Space checks it. */
+export function noSubmit(e: ReactKeyboardEvent): void {
+  if (e.key === "Enter") e.preventDefault();
+}
+
 /** Gasho draws the plugin's parts and its popups inside an element with the plugin's id (gasho-plugin.json). */
 const PLUGIN = '[data-gasho-plugin="github-implement"]';
 

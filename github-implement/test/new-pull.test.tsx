@@ -123,6 +123,15 @@ describe("NewPullBox", () => {
     expect(screen.queryByRole("textbox", { name: "Pull request の題" })).toBeNull();
   });
 
+  it("makes none on Enter in the checkbox, which submits a form otherwise", async () => {
+    newPull({ "": pushed() });
+    show({ title: "題" });
+    await userEvent.click(screen.getByRole("button", { name: "Pull request を作る" }));
+    screen.getByRole("checkbox", { name: "Draft にする" }).focus();
+    await userEvent.keyboard("{Enter}");
+    expect(callsOf("write")).toEqual([]);
+  });
+
   it("creates with ⌘Enter in the body", async () => {
     newPull({ "": pushed() });
     show({ title: "題" });

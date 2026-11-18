@@ -9,7 +9,7 @@ import type { NewPull } from "../../types.ts";
 import { readOp, useWriteOp } from "../daemon.ts";
 import { Alert } from "../ui/alert.tsx";
 import { Button } from "../ui/button.tsx";
-import { INPUT, isComposing } from "../ui/input.ts";
+import { INPUT, isComposing, noSubmit } from "../ui/input.ts";
 import { Skeleton } from "../ui/skeleton.tsx";
 import { useToast } from "../ui/toast.tsx";
 
@@ -173,7 +173,7 @@ export function NewPullBox({ machine, worktree, branch, repo, title, onCreated }
               </label>
             )}
             <label className="flex items-center gap-1.5">
-              <input type="checkbox" checked={form.draft} onChange={(e) => setForm({ ...form, draft: e.target.checked })} />
+              <input type="checkbox" checked={form.draft} onChange={(e) => setForm({ ...form, draft: e.target.checked })} onKeyDown={noSubmit} />
               Draft にする
             </label>
           </div>

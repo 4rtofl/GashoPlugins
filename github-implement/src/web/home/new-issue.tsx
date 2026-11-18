@@ -10,7 +10,7 @@ import { assignableSearch, labelSearch, Picker, type Choice } from "../item/pick
 import { Alert } from "../ui/alert.tsx";
 import { Badge } from "../ui/badge.tsx";
 import { Button } from "../ui/button.tsx";
-import { INPUT, isComposing, leftAfter } from "../ui/input.ts";
+import { INPUT, isComposing, leftAfter, noSubmit } from "../ui/input.ts";
 import { useToast } from "../ui/toast.tsx";
 
 type Label = RepoMeta["labels"][number];
@@ -172,7 +172,7 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
         />
       </div>
       <label className="flex items-center gap-1.5 text-xs">
-        <input type="checkbox" checked={form.add} onChange={(e) => setForm({ ...form, add: e.target.checked })} />
+        <input type="checkbox" checked={form.add} onChange={(e) => setForm({ ...form, add: e.target.checked })} onKeyDown={noSubmit} />
         この worktree に足す（タブに出す）
       </label>
       {error && <Alert tone="danger">{error}</Alert>}
