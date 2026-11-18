@@ -166,9 +166,11 @@ test("an edit that started from another title or body than GitHub's now is refus
   assert.equal(calls[0]?.options?.maxAgeSeconds, 0);
   await assert.rejects(edit.run({ repo: "o/r", kind: "pulls", number: 3, ...bodyEditParams("new", "b\r\n- [ ] done") }, ctx), /本文が変わりました/);
   await assert.rejects(edit.run({ repo: "o/r", kind: "issues", number: 3, title: "u", was: { title: "s" } }, ctx), /題が変わりました/);
+  // GitHub's title may be longer than a new one may be (an emoji is two UTF-16 units): it is compared, not refused.
+  await assert.rejects(edit.run({ repo: "o/r", kind: "issues", number: 3, title: "u", was: { title: "😀".repeat(200) } }, ctx), /題が変わりました/);
   // Assignees and labels start from nothing typed: they are written without a read.
   await edit.run({ repo: "o/r", kind: "issues", number: 3, addLabels: ["bug"] }, ctx);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.deepEqual(
     writes.map((w) => w.map((a) => (a.startsWith("--body-file=") ? "--body-file=…" : a))),
     [

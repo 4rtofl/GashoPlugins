@@ -22,13 +22,17 @@ export function editArgs(repo: string, kind: GitHubKind, number: number, change:
   return args;
 }
 
-/** The title and the hash of the body the edit started from; only those it edits. */
+/**
+ * The title and the hash of the body the edit started from; only those it edits. The title is only compared, so it has
+ * no limit of length: GitHub's may be longer than a new one may be (textArg counts UTF-16 units, two for an emoji).
+ */
 function wasArg(v: unknown): { title?: string; bodyHash?: string } | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== "object" || v === null) throw new PluginError("編集を始めたときの値の指定が正しくありません。");
   const w = v as Record<string, unknown>;
+  if (w.title !== undefined && typeof w.title !== "string") throw new PluginError("編集を始めたときの題の指定が正しくありません。");
   if (w.bodyHash !== undefined && (typeof w.bodyHash !== "string" || !TEXT_HASH.test(w.bodyHash))) throw new PluginError("編集を始めたときの本文の指定が正しくありません。");
-  return { ...(w.title !== undefined ? { title: textArg(w.title, "編集を始めたときの題", 256) } : {}), ...(w.bodyHash !== undefined ? { bodyHash: w.bodyHash } : {}) };
+  return { ...(w.title !== undefined ? { title: w.title } : {}), ...(w.bodyHash !== undefined ? { bodyHash: w.bodyHash } : {}) };
 }
 
 async function checkUnchanged(ctx: Ctx, repo: string, kind: GitHubKind, number: number, was: { title?: string; bodyHash?: string }): Promise<void> {
