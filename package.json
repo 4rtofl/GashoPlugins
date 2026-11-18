@@ -24,6 +24,7 @@
     "test": "npm run test:node && npm run test:web",
     "test:node": "node --test --disable-warning=ExperimentalWarning \"*/test/*.test.ts\" \"kanban/plugins/*/*.test.ts\"",
     "test:web": "vitest run",
+    "test:coverage": "node --disable-warning=ExperimentalWarning scripts/coverage.ts",
     "check": "node scripts/check.ts"
   },
   "devDependencies": {

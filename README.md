@@ -51,9 +51,10 @@ npm test                      # npm run test:node と npm run test:web を順に
 npm run test:node             # .ts の処理のテスト（node --test）
 npm run test:web              # 画面の部品のテスト（Vitest）
 npx vitest run github         # 画面の部品のテストを、パスで絞って流す
+npm run test:coverage         # npm run test:node と同じテストを流し、テストが通ったコードの割合をプラグインごとに出す
 ```
 
-`npm run test:node` は `*/test/*.test.ts` を `node --test` で流し、`npm run test:web` は `*/test/*.test.tsx` を Vitest で流す。GitHub Actions も、この 2 つを別の step で流す。`.tsx` のテストは、画面の部品を happy-dom の上に描き、Testing Library で押したり文字を読んだりする。
+`npm run test:node` は `*/test/*.test.ts` を `node --test` で流し、`npm run test:web` は `*/test/*.test.tsx` を Vitest で流す。GitHub Actions は、`npm run test:coverage` と `npm run test:web` を別の step で流す。`.tsx` のテストは、画面の部品を happy-dom の上に描き、Testing Library で押したり文字を読んだりする。
 
 `@gasho/plugin-sdk` の hooks と部品は、Gasho の画面が実行時に渡すので、テストの中には無い。Vitest は、`@gasho/plugin-sdk` の import を `test/sdk.tsx` に向ける（`vitest.config.ts`）。
 
@@ -63,6 +64,13 @@ npx vitest run github         # 画面の部品のテストを、パスで絞っ
 - `Page`・`Panel`・`Tile` などの部品は、受け取った題と中身を描くだけにした。`Popover` は、trigger を押すと開き、開いているあいだだけ中身を描く。Gasho の見た目や、`Popover` の出る位置は確かめられない
 - 決めた値と記録は、テストごとに `test/setup.ts` が消す
 - SDK の版を上げて hooks や部品が増えたら、`test/sdk.tsx` にも足す。足りないと、`npm run typecheck`（`tsc -p test`）が足りない名前を出して落ちる
+
+`npm run test:coverage`（`scripts/coverage.ts`）は、テストが通った行・分岐・関数の割合（カバレッジ）を、プラグインのフォルダーと `scripts/` ごとの表で出す。GitHub Actions では、`npm run test:node` の代わりに流し、表をジョブの Summary に出す。数字は目標にしないので、割合がいくつでも失敗にはしない。失敗にするのは、テストが落ちたときだけである。
+
+- テストが読み込まない `.ts` も数える。Node がテストの読み込んだファイルを数えるのと同じく、空行とコメントの行もふくめたファイルのすべての行を、通っていない行として数える。型を消すとコードの行が残らないファイル（型だけのファイル）は数えない。
+- テストが読み込まない `.ts` の分岐と関数は数えない。Node は、ファイルを読み込んで動かさないと、分岐と関数を数えられないためである。分岐と関数の割合は、テストが読み込んだファイルだけのものになる。
+- 画面の `.tsx` は数えない。Node は JSX を読み込めないので、`node --test` からは測れない。
+- `.d.ts` と、`test/` の中のファイルと `*.test.ts`、`vitest.config.ts` も数えない。
 
 ## 公開する
 
