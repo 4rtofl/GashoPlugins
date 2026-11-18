@@ -10,6 +10,7 @@ import { readOp } from "../../daemon.ts";
 import { Alert } from "../../ui/alert.tsx";
 import { Badge, type BadgeTone } from "../../ui/badge.tsx";
 import { Button } from "../../ui/button.tsx";
+import { isComposing } from "../../ui/input.ts";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 import { Row } from "../row.tsx";
@@ -152,7 +153,7 @@ function BasePicker({ current, head, first, disabled, onPick }: { current: strin
         onKeyDown={(e) => {
           // Only from the branches of what is typed now, not of what was typed before.
           const top = asked === query.trim() ? names?.[0] : undefined;
-          if (e.key === "Enter" && top) {
+          if (e.key === "Enter" && top && !isComposing(e)) {
             e.preventDefault();
             pick(top);
           }

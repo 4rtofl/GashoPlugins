@@ -26,7 +26,7 @@ function useStateCommands(): PaletteCommand[] {
     const reason = item.kind === "issues" ? (item.stateReason ?? "completed") : undefined;
     changes.push({ id: "reopen", label: `${item.kind === "issues" ? "Issue" : "Pull request"} を開き直す`, icon: item.kind === "issues" ? CircleDot : GitPullRequest, keywords: "reopen", ...reopen, done: "開き直しました", undo: { op: "state", params: { action: "close", ...(reason ? { reason } : {}) }, summary: `${id} を閉じる` } });
   }
-  return changes.map(({ label, icon, keywords, ...c }) => ({ id: `state-${c.id}`, label, icon, keywords, disabled: busy !== undefined, run: () => void run(c) }));
+  return changes.map(({ label, icon, keywords, ...c }) => ({ id: `state-${c.id}`, label, icon, keywords, disabled: busy !== undefined, writes: true, run: () => void run(c) }));
 }
 
 export default { order: 10, useCommands: useStateCommands } satisfies ItemCommands;

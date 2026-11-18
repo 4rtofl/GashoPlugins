@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Popover } from "@gasho/plugin-sdk";
 import { Button } from "../ui/button.tsx";
+import { isComposing } from "../ui/input.ts";
 
 export interface Choice {
   key: string;
@@ -39,7 +40,8 @@ export function Picker({ label, choices, error, disabled }: { label: string; cho
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             const first = shown?.[0];
-            if (e.key === "Enter" && first) {
+            // The Enter that ends a composition picks nothing.
+            if (e.key === "Enter" && first && !isComposing(e)) {
               e.preventDefault();
               setOpen(false);
               setQuery("");

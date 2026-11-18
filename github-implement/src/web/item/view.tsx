@@ -3,18 +3,17 @@
 // as the merge), and the tabs of tabs/ (the conversation, and for a pull request its commits, checks and files). After
 // a change, gasho-daemon drops what it kept of the repository, so reading again shows GitHub as it is now.
 import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
-import { useState } from "react";
 import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
 import { readOp } from "../daemon.ts";
 import { itemsTarget, useRefreshOptions } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
 import { Button, buttonClass } from "../ui/button.tsx";
-import { INPUT } from "../ui/input.ts";
+import { INPUT, isComposing, useComposingEscape } from "../ui/input.ts";
 import { Skeleton, SkeletonText } from "../ui/skeleton.tsx";
 import { AnimatedTabs } from "../ui/tabs.tsx";
 import { ToastProvider } from "../ui/toast.tsx";
-import { ItemProvider, useChanges, useItem, type Where } from "./context.tsx";
+import { ItemProvider, useChanges, useDraft, useDraftsOf, useItem, type Where } from "./context.tsx";
 import { ItemPalette } from "./palette.tsx";
 import { partsOf, type ItemSection, type ItemTab } from "./parts.ts";
 import { Rows } from "./row.tsx";
@@ -26,6 +25,7 @@ const SECTIONS = partsOf(import.meta.glob<{ default: ItemSection }>("./sections/
 const NAME: Record<GitHubKind, string> = { issues: "Issue", pulls: "Pull request" };
 
 export function ItemView(props: WorktreeViewProps) {
+  useComposingEscape();
   return (
     <ToastProvider>
       <ItemScreen {...props} />
@@ -43,6 +43,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
   const clock = useNow(60_000);
   const options = useRefreshOptions();
   const where: Where | undefined = repo && valid ? { repo, kind, number } : undefined;
+  useDraftsOf(machine.id, worktree, where);
   const r = useRequest<GitHubItemDetail>(daemon.ready && where ? readOp(machine.id, "item", { ...where }) : undefined, options);
   // The worktree's tabs show the title and the state: they are read again after a change too.
   const tabs = useRequest<WorktreeItems>(itemsTarget(machine.id, worktree, daemon.ready), options);
@@ -161,7 +162,7 @@ function Detail() {
 
 function Title() {
   const { item, where, busy, run } = useItem();
-  const [draft, setDraft] = useState<string>();
+  const [draft, setDraft] = useDraft<string>("title");
   if (draft === undefined) {
     return (
       <div className="flex items-start gap-2">
@@ -173,19 +174,34 @@ function Title() {
     );
   }
   const save = async () => {
+    const sent = draft;
     const ok = await run({
       id: "title",
       op: "edit",
-      params: { title: draft },
+      params: { title: sent },
       summary: `#${where.number} の題を変える`,
       done: "題を変えました",
       undo: { op: "edit", params: { title: item.title }, summary: `#${where.number} の題を戻す` },
     });
-    if (ok) setDraft(undefined);
+    // A title changed while it was being saved stays in the box, to be saved again.
+    if (ok) setDraft((d) => (d === sent ? undefined : d));
   };
   return (
     <div className="space-y-2">
-      <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="題" className={INPUT} maxLength={256} />
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && !isComposing(e)) {
+            e.preventDefault();
+            setDraft(undefined);
+          }
+        }}
+        aria-label="題"
+        className={INPUT}
+        maxLength={256}
+      />
       <div className="flex gap-2">
         <Button variant="primary" onClick={() => void save()} isLoading={busy === "title"} loadingText="保存しています…" disabled={busy !== undefined || !draft.trim() || draft === item.title}>
           保存する

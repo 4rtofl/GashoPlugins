@@ -1,11 +1,12 @@
-// ⌘K (Ctrl+K) on github-implement's screens: a box that finds what the screen offers (its operations, the worktree's
-// issues and pull requests) by words of its name, and runs one with Enter or a click. Gasho has nothing of its own on
-// ⌘K, and one of the plugin's screens shows at a time, so the screen that shows listens for it on the window.
+// ⌘K (Ctrl+K but on a Mac) on github-implement's screens: a box that finds what the screen offers (its operations, the
+// worktree's issues and pull requests) by words of its name, and runs one with Enter or a click. Gasho has nothing of
+// its own on ⌘K, and one of the plugin's screens shows at a time, so the screen that shows listens for it on the window.
 import { ExternalLink, ListPlus, RefreshCw, Search } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ComponentType, type KeyboardEvent } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { GitHubKind, WorktreeItems } from "../types.ts";
 import { itemLook, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.ts";
+import { isComposing, isComposingEscape } from "./ui/input.ts";
 
 export interface PaletteCommand {
   id: string;
@@ -17,6 +18,8 @@ export interface PaletteCommand {
   keywords?: string;
   /** Shown but not run: a change runs now. */
   disabled?: boolean;
+  /** It changes something on GitHub: the box does not open with it chosen, so that ⌘K and Enter at once write nothing. */
+  writes?: boolean;
   run: () => void;
 }
 
@@ -33,12 +36,17 @@ function findCommands(groups: PaletteGroup[], text: string): PaletteGroup[] {
     .filter((g) => g.commands.length > 0);
 }
 
-const isPaletteKey = (e: globalThis.KeyboardEvent) => (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k";
+/** On a Mac, Ctrl+K in a text box deletes to the end of the line. */
+const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
-/** Opens on ⌘K or Ctrl+K and closes on it again, on Esc, and on a press outside it. */
+const isPaletteKey = (e: globalThis.KeyboardEvent) => (MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k";
+
+/** Opens on ⌘K (Ctrl+K but on a Mac) and closes on it again, on Esc, and on a press outside it. */
 export function Palette({ groups, label }: { groups: PaletteGroup[]; label: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
+  // Whether the press now going on began on the backdrop: one that began inside (selecting text) ends nothing.
+  const pressedBackdrop = useRef(false);
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (!isPaletteKey(e) || e.isComposing) return;
@@ -63,8 +71,11 @@ export function Palette({ groups, label }: { groups: PaletteGroup[]; label: stri
       ref={dialog}
       aria-label={label}
       onClose={() => setOpen(false)}
+      // The Esc that cancels a composition in the box cancels only that.
+      onCancel={(e) => isComposingEscape() && e.preventDefault()}
       // A press on the backdrop is a press on the dialog itself.
-      onClick={(e) => e.target === e.currentTarget && e.currentTarget.close()}
+      onPointerDown={(e) => (pressedBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => pressedBackdrop.current && e.target === e.currentTarget && e.currentTarget.close()}
       className="mx-auto mt-[12vh] mb-auto w-[min(36rem,calc(100vw-2rem))] max-w-none overflow-hidden rounded-xl border border-border bg-surface p-0 text-foreground shadow-2xl backdrop:bg-black/40"
     >
       {open && <PaletteBox groups={groups} onChoose={choose} />}
@@ -75,17 +86,19 @@ export function Palette({ groups, label }: { groups: PaletteGroup[]; label: stri
 function PaletteBox({ groups, onChoose }: { groups: PaletteGroup[]; onChoose: (c: PaletteCommand) => void }) {
   const id = useId();
   const [text, setText] = useState("");
-  const [active, setActive] = useState(0);
+  // Chosen with ↑↓ or the pointer; until then, the first that writes nothing when nothing is typed, or the first found.
+  const [active, setActive] = useState<number>();
   const list = useRef<HTMLDivElement>(null);
   const found = findCommands(groups, text);
   const flat = found.flatMap((g) => g.commands);
-  const at = Math.min(active, Math.max(0, flat.length - 1));
+  const first = text.trim() ? 0 : Math.max(0, flat.findIndex((c) => !c.writes));
+  const at = Math.min(active ?? first, Math.max(0, flat.length - 1));
   useEffect(() => {
     list.current?.querySelector(`[data-index="${at}"]`)?.scrollIntoView({ block: "nearest" });
   }, [at]);
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     // Enter that ends the composition of Japanese text chooses nothing.
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (isComposing(e)) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       if (flat.length > 0) setActive((at + (e.key === "ArrowDown" ? 1 : -1) + flat.length) % flat.length);
@@ -105,7 +118,7 @@ function PaletteBox({ groups, onChoose }: { groups: PaletteGroup[]; onChoose: (c
           value={text}
           onChange={(e) => {
             setText(e.target.value);
-            setActive(0);
+            setActive(undefined);
           }}
           onKeyDown={onKeyDown}
           role="combobox"

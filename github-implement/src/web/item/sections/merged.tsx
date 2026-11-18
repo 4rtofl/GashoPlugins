@@ -43,6 +43,8 @@ function RemoveDialog({ onClose }: { onClose: () => void }) {
   const { machine, machineInfo, worktree, item } = useItem();
   const remove = useRemoveWorktree();
   const dialog = useRef<HTMLDialogElement>(null);
+  // Whether the press now going on began on the backdrop: one that began inside (selecting the folder) ends nothing.
+  const pressedBackdrop = useRef(false);
   const [deleteBranch, setDeleteBranch] = useState(true);
   const [step, setStep] = useState<Step>({ kind: "ask" });
   const branch = worktree.branch;
@@ -75,7 +77,8 @@ function RemoveDialog({ onClose }: { onClose: () => void }) {
       aria-labelledby="merged-cleanup-title"
       onClose={onClose}
       onCancel={(e) => removing && e.preventDefault()}
-      onClick={(e) => !removing && e.target === e.currentTarget && e.currentTarget.close()}
+      onPointerDown={(e) => (pressedBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => !removing && pressedBackdrop.current && e.target === e.currentTarget && e.currentTarget.close()}
       className="mx-auto my-auto w-[min(32rem,calc(100vw-2rem))] max-w-none rounded-xl border border-border bg-surface p-0 text-foreground shadow-2xl backdrop:bg-black/40"
     >
       <div className="space-y-3 p-4 text-xs">
