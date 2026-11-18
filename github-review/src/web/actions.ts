@@ -149,6 +149,13 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
  */
 async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<boolean> {
   t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
+  // Before it is sent, so that the end of the review cannot come first. Without it the review goes on, with Gasho's own notification.
+  await t.call({
+    machine: machine.id,
+    method: "trackReview",
+    params: { sessionId, repo: pr.repo, number: pr.number },
+    summary: `${pr.repo}#${pr.number} のレビューの終わりを通知する`,
+  });
   const sent = await t.send({
     machine: machine.id,
     sessionId,

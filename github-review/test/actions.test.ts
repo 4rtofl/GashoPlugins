@@ -14,14 +14,21 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
   const sent: string[] = [];
   const launched: string[] = [];
   const efforts: (string | undefined)[] = [];
+  const steps: string[] = [];
+  const tracked: unknown[] = [];
   const machine = { id: "m1", name: "m1", canLaunch: true, features: ["effort"], sessions: (opts.sessions ?? []) as SessionInfo[] } as MachineInfo;
   const tools = {
-    call: (async () => ({ ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created })) as unknown as Tools["call"],
+    call: (async ({ method, params }: { method: string; params: unknown }) => {
+      steps.push(`call:${method}`);
+      if (method === "trackReview") tracked.push(params);
+      return { ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created };
+    }) as unknown as Tools["call"],
     launch: (async ({ cwd }: { cwd: string }) => {
       launched.push(cwd);
       return opts.launch === "fail" ? { ok: false, error: "起動できません" } : { ok: true, sessionId: "s-new" };
     }) as unknown as Tools["launch"],
     send: (async ({ sessionId, text, effort }: { sessionId: string; text: string; effort?: string }) => {
+      steps.push("send");
       sent.push(`${sessionId}: ${text}`);
       efforts.push(effort);
       if (opts.send === "fail") return { ok: false, error: "送れません" };
@@ -38,7 +45,7 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
     },
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };
-  return { tools, spot, item: { pr: PR, spots: [spot] } as Item, notices, opened, sent, launched, efforts, last: () => notices.at(-1) };
+  return { tools, spot, item: { pr: PR, spots: [spot] } as Item, notices, opened, sent, launched, efforts, steps, tracked, last: () => notices.at(-1) };
 }
 
 test("create: starts a session and sends the template, but stays on the page; the notice opens the session", async () => {
@@ -55,6 +62,16 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.equal(n?.action?.label, "セッションを開く");
   n?.action?.run();
   assert.deepEqual(f.opened, ["m1/s-new"]);
+});
+
+test("create: the session is tracked before the review is sent, and not when nothing is sent", async () => {
+  const f = fake();
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.deepEqual(f.steps, ["call:create", "call:trackReview", "send"]);
+  assert.deepEqual(f.tracked, [{ sessionId: "s-new", repo: "o/r", number: 5 }]);
+  const none = fake();
+  await createWorktree(none.item, none.spot, undefined, none.tools);
+  assert.deepEqual(none.tracked, []);
 });
 
 test("create: with 何も送らない it sends nothing, and stays", async () => {
