@@ -143,6 +143,13 @@ test("remove: not while something would be lost; then the worktree and its local
   await git(s.primary, "worktree", "add", path.join(s.root, "r", "issue-6"), "-b", "feat/6-b", "origin/feat/6-b");
   assert.deepEqual(prWorktree(await s.clone(), { number: 6, branch: "feat/6-b" }), { path: path.join(s.root, "r", "issue-6"), branch: "feat/6-b", review: false });
   await assert.rejects(removeWorktree(exec, await s.clone(), { number: 6, branch: "feat/6-b", fork: false }), ReviewError);
+  // A merge asked to clean it up removes it, whatever its name.
+  const handmade = { number: 6, branch: "feat/6-b", fork: false, head: await s.sha("feat/6-b") };
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), handmade, { anyName: true }), { path: path.join(s.root, "r", "issue-6"), branch: "feat/6-b" });
+  // The primary checkout never goes, even on the pull request's branch.
+  await git(s.primary, "checkout", "-b", "feat/10-c");
+  await assert.rejects(removeWorktree(exec, await s.clone(), { number: 10, branch: "feat/10-c", fork: false }, { anyName: true }), ReviewError);
+  await fs.access(s.primary);
 });
 
 test("worktree: the name holds REPO of OWNER/REPO, kept to what a folder name can safely have", () => {
