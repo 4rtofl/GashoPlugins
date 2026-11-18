@@ -3,9 +3,9 @@
 // Gasho session, or one started there), or start a new session there and open it; remove its review worktree; and send
 // the Agent in its worktree what "マージしてもらう", "差し戻す" or "修正してもらう" asks, and remove its review worktree
 // once a merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when). Before
-// sending, it switches the session's effort level (max for the review, medium to merge or send back). The daemon part
+// sending, it switches the session's effort level (high for the review, medium to merge or send back). The daemon part
 // does the git; the page asks the person before trusting a folder, before removing, and before asking for a merge or a
-// send-back.
+// send-back. The session a review was sent to is removed once it has posted the result (review-session.ts).
 import {
   type EffortLevel,
   type MachineInfo,
@@ -13,10 +13,11 @@ import {
   type SessionInfo,
   type useCall,
   type useLaunchSession,
+  type useRemoveSession,
   type useRemoveWorktree,
   type useSendInput,
 } from "@gasho/plugin-sdk";
-import { changesProblem, type CleanupKind } from "../cleanup.ts";
+import { cleanable, changesProblem, type CleanupKind } from "../cleanup.ts";
 import type { Item as AnyItem, Spot as AnySpot } from "../items.ts";
 import { effortFor, markInstruction, REVIEW_EFFORT } from "../instructions.ts";
 import { fillTemplate, type Template } from "../template.ts";
@@ -50,6 +51,8 @@ export interface Actions {
   askAgentFor: (q: { kind: CleanupKind; item: Item; spot: Spot }) => Promise<{ cleanup: boolean } | undefined>;
   /** Reads a working server's list again. */
   reload: (machine: string) => void;
+  /** Reads a working server's list from GitHub again, as "更新" does; done once the list that gives is asked for. */
+  refresh: (machine: string) => Promise<void>;
 }
 
 export interface Tools {
@@ -57,16 +60,27 @@ export interface Tools {
   launch: ReturnType<typeof useLaunchSession>;
   send: ReturnType<typeof useSendInput>;
   remove: ReturnType<typeof useRemoveWorktree>;
+  removeSession: ReturnType<typeof useRemoveSession>;
   nav: Navigation;
   actions: Actions;
 }
 
 /** Where the review of a pull request is: from its mark, its head, and the sessions at work in its worktrees. */
-export function progressOf({ pr, spots }: Item): ReviewProgress | undefined {
-  return reviewProgress(
-    pr,
-    spots.some((s) => s.worktree && working(s.machine.sessions, s.worktree.path)),
-  );
+export function progressOf(item: Item): ReviewProgress | undefined {
+  return reviewProgress(item.pr, workingIn(item));
+}
+
+/** A session in one of a pull request's worktrees works on something (verdict.ts working). */
+export function workingIn({ spots }: Item): boolean {
+  return spots.some((s) => s.worktree && working(s.machine.sessions, s.worktree.path));
+}
+
+/** A session sent the review of a pull request works on something in its worktree. */
+export function reviewingIn({ spots }: Item): boolean {
+  return spots.some((s) => {
+    const dir = s.worktree?.path;
+    return dir !== undefined && working(s.machine.sessions.filter((x) => s.reviewSessions?.includes(x.sessionId)), dir);
+  });
 }
 
 const lastUsed = (s: SessionInfo): number => s.lastActivityAt ?? s.startedAt ?? 0;
@@ -112,8 +126,9 @@ function sentNotice(machine: MachineInfo, sessionId: string, text: string, t: To
  * for "何も送らない") at the effort level of a review. When the worktree turns out to be there already, it takes the
  * Gasho session used last there (or starts one) and sends nothing. Either way the page stays, so the person can go on to
  * other pull requests; the notice offers to open the session, and says why when the effort level could not be switched.
+ * True when a review was sent.
  */
-export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<void> {
+export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<boolean> {
   const { machine } = spot;
   t.actions.notify({ text: `#${pr.number} のレビュー用の worktree を作っています…`, busy: true });
   const r = await t.call<Created>({
@@ -125,30 +140,42 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
   t.actions.reload(machine.id);
   if (!r.ok) {
     t.actions.notify({ text: r.error, tone: "danger" });
-    return;
+    return false;
   }
   if (!r.data.created) {
     const sessionId = sessionsIn(machine, r.data.path)[0]?.sessionId ?? (await start(machine, r.data.path, t));
     if (sessionId) sentNotice(machine, sessionId, `#${pr.number} のレビュー用の worktree はもうありました（${folderName(r.data.path)}）。`, t);
-    return;
+    return false;
   }
   const sessionId = await start(machine, r.data.path, t);
-  if (!sessionId) return;
-  if (template && !(await sendTemplate(pr, machine, sessionId, template, t))) return;
+  if (!sessionId) return false;
+  const sent = template ? await sendTemplate(pr, machine, sessionId, template, t) : undefined;
+  if (sent === "failed") return false;
+  // The notice of what went wrong with the effort level stays.
+  if (sent === "warned") return true;
   sentNotice(
     machine,
     sessionId,
     template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`,
     t,
   );
+  return sent === "sent";
 }
 
 /**
  * Sends a session the template, with the verdict's mark asked for after it whatever it says, at the effort level of a
- * review. False (with the reason shown) when it did not go, or went without the effort level.
+ * review. "failed" (with the reason shown) when it did not go, "warned" (with the reason shown) when it went without the
+ * effort level.
  */
-async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<boolean> {
+async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<"sent" | "warned" | "failed"> {
   t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
+  // Before it is sent, so that the result cannot come first. Without it the review goes on, and the session stays.
+  await t.call({
+    machine: machine.id,
+    method: "reviewSession",
+    params: { action: "track", sessionId, repo: pr.repo, number: pr.number, ...(pr.mark ? { before: pr.mark.url } : {}) },
+    summary: `${pr.repo}#${pr.number} のレビューの結果を投稿したら、セッションを削除する`,
+  });
   // Before it is sent, so that the end of the review cannot come first. Without it the review goes on, with Gasho's own notification.
   await t.call({
     machine: machine.id,
@@ -164,26 +191,56 @@ async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: str
   });
   const open = { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) };
   if (!sent.ok) {
+    await forgetSession(machine, sessionId, t);
     t.actions.notify({ text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`, tone: "danger", action: open });
-    return false;
+    return "failed";
   }
   if (sent.data.warning) {
     t.actions.notify({ text: `「${template.name}」を送りました。${sent.data.warning}`, tone: "danger", action: open });
-    return false;
+    return "warned";
   }
-  return true;
+  return "sent";
+}
+
+/** The session stays: it did not get the review, or it was given other work. */
+async function forgetSession(machine: MachineInfo, sessionId: string, t: Tools): Promise<void> {
+  await t.call({ machine: machine.id, method: "reviewSession", params: { action: "forget", sessionId }, summary: "レビューのセッションを自動では削除しない" });
+}
+
+/**
+ * Removes the session a review was sent to, now that it has posted the result and is at rest (review-session.ts); first
+ * claimed from the daemon part, so that one page does it. It is tried once: a session that cannot be removed stays.
+ */
+export async function removeFinishedSession(pr: Pick<PrRow, "repo" | "number">, machine: MachineInfo, sessionId: string, t: Tools): Promise<void> {
+  const claim = await t.call<{ claimed: boolean }>({
+    machine: machine.id,
+    method: "reviewSession",
+    params: { action: "claim", sessionId },
+    summary: `${pr.repo}#${pr.number} のレビューのセッションを削除し始める`,
+  });
+  if (!claim.ok || !claim.data.claimed) return;
+  const r = await t.removeSession({ machine: machine.id, sessionId });
+  await forgetSession(machine, sessionId, t);
+  t.actions.notify(
+    r.ok
+      ? { text: `#${pr.number} のレビューの結果を投稿したので、セッションを削除しました。` }
+      : { text: `#${pr.number} のレビューのセッションを削除できませんでした：${r.error}`, tone: "danger" },
+  );
 }
 
 /**
  * "レビューする" on my own pull request, whose worktree is there already (the one I made it in): starts a new session
  * there, apart from the one that made the changes, and sends it the template as "worktree を作る" does. The page stays.
+ * True when the review was sent.
  */
-export async function reviewIn({ pr }: Item, spot: Spot, template: Template, t: Tools): Promise<void> {
-  if (!spot.worktree) return;
+export async function reviewIn({ pr }: Item, spot: Spot, template: Template, t: Tools): Promise<boolean> {
+  if (!spot.worktree) return false;
   const { machine } = spot;
   const sessionId = await start(machine, spot.worktree.path, t);
-  if (!sessionId) return;
-  if (await sendTemplate(pr, machine, sessionId, template, t)) sentNotice(machine, sessionId, `#${pr.number} のレビューのセッションを起動し、「${template.name}」を送りました。`, t);
+  if (!sessionId) return false;
+  const sent = await sendTemplate(pr, machine, sessionId, template, t);
+  if (sent === "sent") sentNotice(machine, sessionId, `#${pr.number} のレビューのセッションを起動し、「${template.name}」を送りました。`, t);
+  return sent !== "failed";
 }
 
 /** Opens the worktree a pull request has on a working server. */
@@ -212,6 +269,8 @@ export async function askAgent(spot: Spot, label: string, text: string, effort: 
   const session = sessionsIn(machine, dir)[0];
   const sessionId = session?.sessionId ?? (await start(machine, dir, t));
   if (!sessionId) return false;
+  // It has more to do than the review: it is not removed when the review is posted.
+  if (session) await forgetSession(machine, sessionId, t);
   t.actions.notify({ text: `「${label}」を送っています…`, busy: true });
   const sent = await t.send({ machine: machine.id, sessionId, text, ...effortFor(machine, effort) });
   if (!sent.ok) {
@@ -232,19 +291,22 @@ export async function askAgent(spot: Spot, label: string, text: string, effort: 
 
 /**
  * After a merge or a send-back was sent: the daemon part keeps whether to remove the review worktree once it is done
- * (`cleanup`), or forgets what an earlier ask said. Only a review worktree
- * (review-<repository>-<number>, or review-<number> from before) is ever removed.
+ * (`cleanup`), with the head of the verdict it was asked of, or forgets what an earlier ask said. A merge may remove a
+ * worktree of any name, a send-back only a review worktree (review-<repository>-<number>, or review-<number> from before);
+ * the primary checkout is never removed. An ask that may not remove the worktree forgets the one before it too: a send-back
+ * takes the place of the merge asked earlier.
  */
 export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind, cleanup: boolean, t: Tools): Promise<void> {
-  if (!spot.worktree?.review) return;
+  if (!spot.worktree) return;
+  const follow = cleanup && cleanable(kind, spot.worktree, spot.primary);
   const r = await t.call({
     machine: spot.machine.id,
     method: "cleanup",
-    params: { repo: pr.repo, number: pr.number, ...(cleanup ? { action: "follow", kind } : { action: "forget" }) },
-    summary: cleanup ? `${pr.repo}#${pr.number} の${KIND_TEXT[kind]}が終わったら、レビュー用の worktree を片付ける` : `${pr.repo}#${pr.number} のレビュー用の worktree を自動では片付けない`,
+    params: { repo: pr.repo, number: pr.number, ...(follow ? { action: "follow", kind, ...(pr.mark ? { sha: pr.mark.sha } : {}) } : { action: "forget" }) },
+    summary: follow ? `${pr.repo}#${pr.number} の${KIND_TEXT[kind]}が終わったら、worktree を片付ける` : `${pr.repo}#${pr.number} の worktree を自動では片付けない`,
   });
   t.actions.reload(spot.machine.id);
-  if (!r.ok && cleanup) t.actions.notify({ text: `指示は送りましたが、終わったら片付けるように覚えられませんでした：${r.error}`, tone: "danger" });
+  if (!r.ok && follow) t.actions.notify({ text: `指示は送りましたが、終わったら片付けるように覚えられませんでした：${r.error}`, tone: "danger" });
 }
 
 const KIND_TEXT: Record<CleanupKind, string> = { merge: "マージ", sendBack: "差し戻し" };
@@ -257,10 +319,10 @@ const KIND_TEXT: Record<CleanupKind, string> = { merge: "マージ", sendBack: "
  */
 export async function cleanUp(pr: Pick<PrRow, "repo" | "number" | "head">, machine: MachineInfo, place: Place, t: Tools): Promise<void> {
   const { worktree, cleanup } = place;
-  if (!worktree?.review || !cleanup) return;
+  if (!worktree || !cleanup) return;
   const target = { machine: machine.id, method: "cleanup" } as const;
   const ref = { repo: pr.repo, number: pr.number };
-  const claim = await t.call<{ claimed: boolean }>({ ...target, params: { ...ref, action: "claim" }, summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付け始める` });
+  const claim = await t.call<{ claimed: boolean }>({ ...target, params: { ...ref, action: "claim" }, summary: `${pr.repo}#${pr.number} の worktree を片付け始める` });
   if (!claim.ok || !claim.data.claimed) return;
   const r = await t.remove({
     machine: machine.id,
@@ -270,28 +332,28 @@ export async function cleanUp(pr: Pick<PrRow, "repo" | "number" | "head">, machi
   });
   const name = folderName(worktree.path);
   if (r.ok) {
-    await t.call({ ...target, params: { ...ref, action: "forget" }, summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付けた` });
+    await t.call({ ...target, params: { ...ref, action: "forget" }, summary: `${pr.repo}#${pr.number} の worktree を片付けた` });
     t.actions.notify({
       text: `#${pr.number} の${KIND_TEXT[cleanup.kind]}が終わったので、${name}${worktree.branch ? "とローカルのブランチ" : ""}を片付けました。${r.warning ? `（${r.warning}）` : ""}`,
     });
   } else {
     const problem = r.changes ? changesProblem(r.changes) : `自動では片付けられませんでした：${r.error}`;
-    await t.call({ ...target, params: { ...ref, action: "fail", problem }, summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付けられなかった` });
+    await t.call({ ...target, params: { ...ref, action: "fail", problem }, summary: `${pr.repo}#${pr.number} の worktree を片付けられなかった` });
     t.actions.notify({ text: `#${pr.number} の ${name}：${problem}`, tone: "danger" });
   }
   t.actions.reload(machine.id);
 }
 
-/** Removes a pull request's review worktree and its local branch, once the person agrees. */
+/** Removes a pull request's review worktree, or the one a merge asked to clean up, and its local branch, once the person agrees. */
 export async function removeWorktree(item: Item, spot: Spot, t: Tools): Promise<void> {
   const { pr } = item;
-  if (!spot.worktree?.review || !(await t.actions.askRemove({ item, spot }))) return;
+  if (!(spot.worktree?.review || spot.cleanup) || !spot.worktree || !(await t.actions.askRemove({ item, spot }))) return;
   t.actions.notify({ text: `${folderName(spot.worktree.path)} を片付けています…`, busy: true });
   const r = await t.call<Removed>({
     machine: spot.machine.id,
     method: "remove",
     params: { repo: pr.repo, number: pr.number },
-    summary: `${pr.repo}#${pr.number} のレビュー用の worktree を片付ける`,
+    summary: `${pr.repo}#${pr.number} の worktree を片付ける`,
   });
   t.actions.reload(spot.machine.id);
   t.actions.notify(
