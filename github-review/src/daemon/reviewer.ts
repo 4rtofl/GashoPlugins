@@ -198,9 +198,9 @@ export class Reviewer {
   }
 
   /**
-   * The page: the pull requests I am asked to review and those I opened, the watched repositories' (all narrowed by
-   * `words`, GitHub's search words), and those with a review worktree here that none lists (closed ones, say), so they
-   * can be removed.
+   * The page: the pull requests I am asked to review, those I opened in the watched repositories, the watched
+   * repositories' (all narrowed by `words`, GitHub's search words), and those with a review worktree here that none
+   * lists (closed ones, say), so they can be removed.
    * `fresh`: without what gasho-daemon kept of gh.
    */
   async list(github: GitHubRead, words: unknown, fresh: boolean): Promise<Listing> {
@@ -234,7 +234,8 @@ export class Reviewer {
       if (l) l.numbers.push(...numbers);
       else lookups.push({ repo: c.github, numbers });
     }
-    const asked = { ...upperSearches(q), watched: watchedQueries(watchedRepos, q), lookups };
+    const upper = upperSearches(q, watchedRepos);
+    const asked = { ...upper, watched: watchedQueries(watchedRepos, q), lookups };
     let json: string;
     try {
       json = (await github(listArgs(asked), { timeoutMs: 30_000, maxBuffer: 16 * 1024 * 1024, ...(fresh ? { maxAgeSeconds: 0 } : {}) })).stdout;
@@ -244,7 +245,7 @@ export class Reviewer {
       if (typeof out !== "string" || !out.includes('"data"')) throw new ReviewError(ghError(e));
       json = out;
     }
-    const answer = parseList(json, { watched: asked.watched.length, lookups, words: q });
+    const answer = parseList(json, { watched: asked.watched.length, lookups, words: q, upper });
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));
 
     // Those whose worktree is gone from every clone of their repository here are forgotten. A worktree of another name
