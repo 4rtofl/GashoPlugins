@@ -4,7 +4,7 @@
 // and answers a read from what it kept when the same arguments were read recently. Everything here only builds
 // arguments and reads output, so that it can be tested without gh.
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import type { GitHubItemDetail, GitHubKind, ItemSummary, WorktreeItems } from "../types.ts";
+import type { CloseReason, GitHubItemDetail, GitHubKind, ItemSummary, WorktreeItems } from "../types.ts";
 
 // ---- what comes from the browser ----
 
@@ -88,6 +88,12 @@ export const labelColor = (v: unknown): string | undefined => {
 const TEXT_MAX = 60_000;
 export const clip = (s: string): string => (s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX)}\n\n…（長いので、ここから先は GitHub で読んでください）` : s);
 
+/** An issue's stateReason as GitHub gives it (COMPLETED, NOT_PLANNED, DUPLICATE); undefined for any other (REOPENED, none). */
+export function closeReason(v: unknown): CloseReason | undefined {
+  const r = str(v)?.toUpperCase();
+  return r === "COMPLETED" ? "completed" : r === "NOT_PLANNED" ? "not_planned" : r === "DUPLICATE" ? "duplicate" : undefined;
+}
+
 /** gh's command for an issue or a pull request. */
 export const cmd = (kind: GitHubKind): "issue" | "pr" => (kind === "issues" ? "issue" : "pr");
 
@@ -110,11 +116,12 @@ export const SUMMARY = "__typename ... on Issue { number title state stateReason
 const PULL_VERSION =
   "updatedAt headRefOid baseRefOid mergeable commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 0) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }";
 const ITEM = `__typename ... on Issue { number title state stateReason url updatedAt } ... on PullRequest { number title state isDraft url ${PULL_VERSION} }`;
-const PULL = `__typename number title state isDraft url ${PULL_VERSION}`;
+const PULL = `__typename number title state isDraft url ${PULL_VERSION} isCrossRepository`;
 
 /**
- * The gh arguments that read a worktree's issues and pull requests at once: the pull requests whose head is `branch`
- * and every number asked for. The numbers go into the query itself (aliases n<number>), which only ever holds digits.
+ * The gh arguments that read a worktree's issues and pull requests at once: the pull requests whose head has the name
+ * `branch` (forks' too: parseItems leaves them out) and every number asked for. The numbers go into the query itself
+ * (aliases n<number>), which only ever holds digits.
  */
 export function itemsQueryArgs(repo: string, branch: string | undefined, numbers: number[]): string[] {
   const [owner, name] = repo.split("/") as [string, string];
@@ -134,24 +141,38 @@ export function summary(raw: unknown): ItemSummary | undefined {
   if (number === undefined || title === undefined || !url?.startsWith("https://github.com/")) return undefined;
   const kind: GitHubKind = r.__typename === "PullRequest" ? "pulls" : "issues";
   const state = str(r.state)?.toUpperCase();
-  const reason = str(r.stateReason)?.toUpperCase();
+  const reason = kind === "issues" && state === "CLOSED" ? closeReason(r.stateReason) : undefined;
   return {
     kind,
     number,
     title,
     state: state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : "open",
     ...(kind === "pulls" && r.isDraft === true ? { draft: true } : {}),
-    ...(kind === "issues" && state === "CLOSED" && reason === "NOT_PLANNED" ? { stateReason: "not_planned" as const } : {}),
-    ...(kind === "issues" && state === "CLOSED" && reason === "COMPLETED" ? { stateReason: "completed" as const } : {}),
+    ...(reason ? { stateReason: reason } : {}),
     url,
   };
 }
 
-/** The output of itemsQueryArgs as a worktree's items. `named` and `added` are the numbers that were asked for. */
-export function parseItems(json: string, named: number | undefined, added: number[], at: number): WorktreeItems {
+/**
+ * Whether a pull request whose head has the worktree's branch name is the worktree's: never one from a fork, whose
+ * branch only has the same name, and a merged one only while `head` (the worktree's HEAD, when it could be read) is its
+ * head commit. One merged before from a branch of the same name has another head, even when that head is in the
+ * worktree's history (merged with a merge commit into the branch the worktree was made from).
+ */
+function isOwnPull(raw: unknown, head: string | undefined): boolean {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  if (r.isCrossRepository === true) return false;
+  return str(r.state)?.toUpperCase() !== "MERGED" || (head !== undefined && str(r.headRefOid)?.toLowerCase() === head.toLowerCase());
+}
+
+/**
+ * The output of itemsQueryArgs as a worktree's items. `named` and `added` are the numbers that were asked for, `head`
+ * the worktree's HEAD commit (none when it could not be read: then no merged pull request is the worktree's).
+ */
+export function parseItems(json: string, named: number | undefined, added: number[], at: number, head?: string): WorktreeItems {
   const data = (JSON.parse(json) as { data?: { repository?: Record<string, unknown> | null } }).data?.repository ?? {};
   const pullNodes = ((data.pulls as { nodes?: unknown[] } | undefined)?.nodes ?? []) as unknown[];
-  const pulls = pullNodes.flatMap((n) => summary(n) ?? []);
+  const pulls = pullNodes.flatMap((n) => (isOwnPull(n, head) ? (summary(n) ?? []) : []));
   const of = (n: number) => summary(data[`n${n}`]);
   const namedItem = named === undefined ? undefined : of(named);
   return {
@@ -161,6 +182,21 @@ export function parseItems(json: string, named: number | undefined, added: numbe
     missing: added.filter((n) => !of(n)),
     at,
   };
+}
+
+/** Whether two names are of one repository: GitHub still finds a repository by a name it had before a rename. */
+export function sameRepoArgs(a: string, b: string): string[] {
+  const [ao, an] = a.split("/") as [string, string];
+  const [bo, bn] = b.split("/") as [string, string];
+  const query = "query($ao: String!, $an: String!, $bo: String!, $bn: String!) { a: repository(owner: $ao, name: $an) { id } b: repository(owner: $bo, name: $bn) { id } }";
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `ao=${ao}`, "-f", `an=${an}`, "-f", `bo=${bo}`, "-f", `bn=${bn}`];
+}
+
+/** The output of sameRepoArgs: false when GitHub does not have either name. */
+export function isSameRepo(json: string): boolean {
+  const data = (JSON.parse(json) as { data?: Record<string, { id?: unknown } | null> | null }).data;
+  const a = str(data?.a?.id);
+  return a !== undefined && a === str(data?.b?.id);
 }
 
 /** The version of each item in the output of itemsQueryArgs, by number: it changes when what the item's screen reads does. */
@@ -217,7 +253,7 @@ export function parseDetail(json: string, kind: GitHubKind, parts: DetailPart[])
   const url = str(raw?.url);
   if (!raw || number === undefined || title === undefined || !url?.startsWith("https://github.com/")) return undefined;
   const state = str(raw.state)?.toUpperCase();
-  const reason = str(raw.stateReason)?.toUpperCase();
+  const reason = state === "CLOSED" ? closeReason(raw.stateReason) : undefined;
   const labels = (Array.isArray(raw.labels) ? raw.labels : []).flatMap((l) => {
     const name = str(l?.name);
     const color = labelColor(l?.color);
@@ -233,8 +269,7 @@ export function parseDetail(json: string, kind: GitHubKind, parts: DetailPart[])
     updatedAt: str(raw.updatedAt) ?? "",
     labels,
     state: state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : "open",
-    ...(state === "CLOSED" && reason === "NOT_PLANNED" ? { stateReason: "not_planned" as const } : {}),
-    ...(state === "CLOSED" && reason === "COMPLETED" ? { stateReason: "completed" as const } : {}),
+    ...(reason ? { stateReason: reason } : {}),
     ...(str(raw.closedAt) ? { closedAt: str(raw.closedAt) } : {}),
     ...(str(raw.mergedAt) ? { mergedAt: str(raw.mergedAt) } : {}),
     assignees: (Array.isArray(raw.assignees) ? raw.assignees : []).flatMap((a) => (login(a) ? [login(a) as string] : [])),
@@ -252,7 +287,40 @@ export function parseDetail(json: string, kind: GitHubKind, parts: DetailPart[])
     }
   }
   for (const part of parts) if (part.fields[kind]) part.read(raw, item);
-  return item;
+  return fitDetail(item);
+}
+
+/**
+ * What the read of one item may come to as JSON. Gasho's hub closes the working server's connection on a message past
+ * 16 MB, and the screen asks again while it shows: past this, the oldest comments and reviews are left out.
+ */
+export const DETAIL_MAX_BYTES = 8 * 1024 * 1024;
+
+const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v) ?? "");
+
+export function fitDetail(item: GitHubItemDetail, max = DETAIL_MAX_BYTES): GitHubItemDetail {
+  let over = jsonBytes(item) - max;
+  if (over <= 0) return item;
+  const texts: { at: string; text: unknown }[] = [...(item.comments ?? []).map((c) => ({ at: c.createdAt, text: c })), ...(item.reviews ?? []).map((r) => ({ at: r.submittedAt, text: r }))];
+  texts.sort((a, b) => a.at.localeCompare(b.at));
+  const out = new Set<unknown>();
+  for (const t of texts) {
+    if (over <= 0) break;
+    out.add(t.text);
+    // With the comma between it and the next.
+    over -= jsonBytes(t.text) + 1;
+  }
+  const comments = item.comments?.filter((c) => !out.has(c));
+  const reviews = item.reviews?.filter((r) => !out.has(r));
+  const commentsOut = (item.comments?.length ?? 0) - (comments?.length ?? 0);
+  const reviewsOut = (item.reviews?.length ?? 0) - (reviews?.length ?? 0);
+  return {
+    ...item,
+    ...(comments ? { comments } : {}),
+    ...(reviews ? { reviews } : {}),
+    ...(commentsOut > 0 ? { commentsLeftOut: (item.commentsLeftOut ?? 0) + commentsOut } : {}),
+    ...(reviewsOut > 0 ? { reviewsLeftOut: (item.reviewsLeftOut ?? 0) + reviewsOut } : {}),
+  };
 }
 
 // ---- errors ----
@@ -270,6 +338,13 @@ export function ghError(e: unknown): string {
     return "この working server の GitHub CLI（gh）がログインしていません。working server で gh auth login を実行してください。";
   }
   if (/Could not resolve to an? (issue|pull ?request)/i.test(text)) return "この番号の Issue や Pull request は見つかりません。";
+  // A name gh did not find among the repository's labels, people, teams, milestones or projects: "could not add label:
+  // 'x' not found" when an issue or pull request is made, only "'x' not found" when one is edited.
+  const name = /(?:^|: )'(.+)' not found\s*$/m.exec(text);
+  if (name) {
+    const what = /could not add label/i.test(text) ? "ラベル" : /could not assign user/i.test(text) ? "担当者" : /could not request reviewer/i.test(text) ? "レビュアー" : "";
+    return `${what}「${name[1]?.slice(0, 100)}」が、このリポジトリで見つかりません。`;
+  }
   if (/Could not resolve to a Repository|HTTP 404|not found/i.test(text)) {
     return "GitHub でこのリポジトリを読めませんでした。gh でログインしているアカウントに権限がないか、リポジトリがありません。";
   }
