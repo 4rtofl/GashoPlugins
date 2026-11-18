@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { installCommand, listPackages, packageNameArg, packagesBase, parsePackages, parseVersions, readPackage } from "../src/daemon/packages.ts";
+import { installCommand, listPackages, PACKAGE_PAGES, packageNameArg, packagesBase, parsePackages, parseVersions, readPackage } from "../src/daemon/packages.ts";
 
 const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}`, import.meta.url), "utf8");
+const json = (name: string) => JSON.parse(fixture(name)) as unknown;
+/** The answer that says whose the repository is (OWNER_QUERY). */
+const ownerAnswer = (typename: string, login: string, repo: string, viewer: string) =>
+  JSON.stringify({ data: { repository: { nameWithOwner: repo, owner: { __typename: typename, login } }, viewer: { login: viewer } } });
 
 test("an organization's packages are kept when their repository is the session's (real output)", () => {
-  const gasho = parsePackages(fixture("packages-org-npm.json"), "4rtofl/gasho");
+  const gasho = parsePackages(json("packages-org-npm.json"), "4rtofl/gasho");
   assert.ok(gasho.some((p) => p.name === "gasho-plugin-sdk"));
   const sdk = gasho.find((p) => p.name === "gasho-plugin-sdk");
   assert.deepEqual(sdk, {
@@ -19,9 +23,9 @@ test("an organization's packages are kept when their repository is the session's
     url: "https://github.com/orgs/4rtofl/packages/npm/package/gasho-plugin-sdk",
   });
   assert.equal(typeof sdk?.versions, "number");
-  assert.deepEqual(parsePackages(fixture("packages-org-npm.json"), "4rtofl/GashoPlugins"), []);
+  assert.deepEqual(parsePackages(json("packages-org-npm.json"), "4rtofl/GashoPlugins"), []);
   // A user's packages do not say how many versions they have.
-  const user = parsePackages(fixture("packages-user-container.json"), "4rna-y/AwakeVerify");
+  const user = parsePackages(json("packages-user-container.json"), "4rna-y/AwakeVerify");
   assert.equal(user.length, 3);
   assert.equal(user[0]?.versions, undefined);
   assert.equal(user[0]?.type, "container");
@@ -54,27 +58,72 @@ test("whose packages are read: an organization's, gh's own login's, or another u
   assert.equal(packagesBase("me", "me"), "user/packages");
   assert.equal(packagesBase("you", "user"), "users/you/packages");
   const asked: string[] = [];
-  const ctx = (type: string, login: string) => ({
+  const ctx = (typename: string, owner: string, viewer: string) => ({
     github: {
       read: async (args: string[]) => {
         const path = args[1] ?? "";
         asked.push(path);
-        if (path.startsWith("users/") && !path.includes("packages")) return { stdout: JSON.stringify({ type }), stderr: "" };
-        if (path === "user") return { stdout: JSON.stringify({ login }), stderr: "" };
+        if (path === "graphql") return { stdout: ownerAnswer(typename, owner, `${owner}/AwakeVerify`, viewer), stderr: "" };
         if (path.includes("package_type=container")) return { stdout: fixture("packages-user-container.json"), stderr: "" };
         return { stdout: "[]", stderr: "" };
       },
     },
   });
-  const mine = await listPackages(ctx("User", "4RNA-Y") as never, "4rna-y/AwakeVerify", { maxAgeSeconds: 60 });
+  const mine = await listPackages(ctx("User", "4rna-y", "4RNA-Y") as never, "4rna-y/AwakeVerify", { maxAgeSeconds: 60 });
   assert.equal(mine.packages.length, 3);
-  assert.ok(asked.includes("user/packages?package_type=container&per_page=100"));
+  assert.ok(asked.includes("user/packages?package_type=container&per_page=100&page=1"));
   asked.length = 0;
-  await listPackages(ctx("User", "someone") as never, "4rna-y/AwakeVerify", { maxAgeSeconds: 60 });
-  assert.ok(asked.includes("users/4rna-y/packages?package_type=npm&per_page=100"));
+  await listPackages(ctx("User", "4rna-y", "someone") as never, "4rna-y/AwakeVerify", { maxAgeSeconds: 60 });
+  assert.ok(asked.includes("users/4rna-y/packages?package_type=npm&per_page=100&page=1"));
   asked.length = 0;
-  await listPackages(ctx("Organization", "someone") as never, "acme/app", { maxAgeSeconds: 60 });
-  assert.ok(asked.includes("orgs/acme/packages?package_type=maven&per_page=100"));
+  await listPackages(ctx("Organization", "acme", "someone") as never, "acme/AwakeVerify", { maxAgeSeconds: 60 });
+  assert.ok(asked.includes("orgs/acme/packages?package_type=maven&per_page=100&page=1"));
+});
+
+test("a repository whose organization was renamed: its packages are read by the organization's name now (real output)", async () => {
+  const asked: string[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        const path = args[1] ?? "";
+        asked.push(path);
+        // Asked by the old login, as the clone's origin says it.
+        if (path === "graphql") return { stdout: args.includes("owner=4rtoflow") ? fixture("owner-renamed.json") : "{}", stderr: "" };
+        if (path.endsWith("/versions?per_page=100")) return { stdout: fixture("versions-npm.json"), stderr: "" };
+        if (path === "orgs/4rtofl/packages/npm/gasho-hub") return { stdout: JSON.stringify((json("packages-org-npm.json") as { name: string }[]).find((p) => p.name === "gasho-hub")), stderr: "" };
+        if (path.startsWith("orgs/4rtofl/packages?package_type=npm&")) return { stdout: fixture("packages-org-npm.json"), stderr: "" };
+        return { stdout: "[]", stderr: "" };
+      },
+    },
+  };
+  const list = await listPackages(ctx as never, "4rtoflow/Gasho", { maxAgeSeconds: 60 });
+  assert.deepEqual(list.packages.map((p) => p.name).sort(), ["gasho-daemon", "gasho-hub", "gasho-plugin-sdk"]);
+  assert.ok(!asked.some((p) => p.includes("4rtoflow")));
+  const read = await readPackage(ctx as never, "4rtoflow/Gasho", "npm", "gasho-hub", { maxAgeSeconds: 60 });
+  assert.match(read?.install ?? "", /^npm install @4rtofl\/gasho-hub@1\.10\.0 /);
+});
+
+test("an owner's packages are read page by page until a page is not full", async () => {
+  const others = Array.from({ length: 100 }, (_, i) => ({ ...(json("packages-org-npm.json") as Record<string, unknown>[])[0], name: `other-${i}`, repository: { full_name: "acme/other" } }));
+  const pages: string[] = [];
+  const ctx = (full: boolean) => ({
+    github: {
+      read: async (args: string[]) => {
+        const path = args[1] ?? "";
+        if (path === "graphql") return { stdout: ownerAnswer("Organization", "4rtofl", "4rtofl/Gasho", "someone"), stderr: "" };
+        if (!path.includes("package_type=npm")) return { stdout: "[]", stderr: "" };
+        pages.push(path.replace(/.*&page=/, ""));
+        // Page 1 holds 100 packages of other repositories; the repository's come after.
+        return { stdout: path.endsWith("&page=1") || full ? JSON.stringify(others) : fixture("packages-org-npm.json"), stderr: "" };
+      },
+    },
+  });
+  const list = await listPackages(ctx(false) as never, "4rtofl/Gasho", { maxAgeSeconds: 60 });
+  assert.equal(list.packages.length, 3);
+  assert.deepEqual(pages, ["1", "2"]);
+  pages.length = 0;
+  await listPackages(ctx(true) as never, "4rtofl/Gasho", { maxAgeSeconds: 60 });
+  assert.equal(pages.length, PACKAGE_PAGES);
 });
 
 test("without read:packages, the answer says how to add it; a package of another repository is not read", async () => {
@@ -82,7 +131,7 @@ test("without read:packages, the answer says how to add it; a package of another
     github: {
       read: async (args: string[]) => {
         if (args[1]?.includes("packages")) throw Object.assign(new Error("x"), { stderr: "gh: You need at least read:packages scope to list packages. (HTTP 403)" });
-        return { stdout: JSON.stringify({ type: "Organization" }), stderr: "" };
+        return { stdout: ownerAnswer("Organization", "acme", "acme/app", "someone"), stderr: "" };
       },
     },
   };
@@ -94,8 +143,9 @@ test("without read:packages, the answer says how to add it; a package of another
       read: async (args: string[]) => {
         const path = args[1] ?? "";
         if (path.endsWith("/versions?per_page=100")) return { stdout: fixture("versions-npm.json"), stderr: "" };
-        if (path.includes("packages/npm/")) return { stdout: JSON.stringify((JSON.parse(fixture("packages-org-npm.json")) as { name: string }[]).find((p) => p.name === "gasho-hub")), stderr: "" };
-        return { stdout: JSON.stringify({ type: "Organization" }), stderr: "" };
+        if (path.includes("packages/npm/")) return { stdout: JSON.stringify((json("packages-org-npm.json") as { name: string }[]).find((p) => p.name === "gasho-hub")), stderr: "" };
+        const repo = args.includes("name=Gasho") ? "4rtofl/Gasho" : "4rtofl/GashoPlugins";
+        return { stdout: ownerAnswer("Organization", "4rtofl", repo, "someone"), stderr: "" };
       },
     },
   };

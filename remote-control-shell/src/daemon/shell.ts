@@ -46,7 +46,8 @@ const INHERITED = ["HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL",
 
 /**
  * The environment of a command: the variables above, and what lets it print colors, keeps git and gh from paging or
- * waiting for an answer, and makes a command that opens an editor fail at once (there is no terminal to type in).
+ * waiting for an answer, makes a command that opens an editor fail at once (there is no terminal to type in), and keeps
+ * Python from holding its output back (its output goes to a pipe; README.md「出力をためるプログラム」).
  * Nothing else of gasho-daemon's (GASHO_HOOK_SECRET, …) gets through. PWD names the folder as given, so that `pwd`
  * keeps the path the session uses rather than where its links lead.
  */
@@ -70,6 +71,7 @@ export function shellEnv(base: NodeJS.ProcessEnv, opts: { cwd: string; cols?: nu
     EDITOR: "false",
     VISUAL: "false",
     GIT_EDITOR: "false",
+    PYTHONUNBUFFERED: "1",
     PWD: opts.cwd,
   });
   if (opts.cols !== undefined) env.COLUMNS = String(opts.cols);

@@ -1,12 +1,13 @@
 // The page's rows from the lists of every working server: a pull request once, with where it is on each working server
 // that listed it (the clone of its repository there, and its worktree), so that one with a worktree anywhere opens
 // there. One without a clone on any working server cannot get a worktree, and is left out.
-import type { Listing, PrRow, PrWorktree } from "./types.ts";
+import type { Cleanup, Listing, PrRow, PrWorktree } from "./types.ts";
 
 export interface Spot<M> {
   machine: M;
   primary: string;
   worktree?: PrWorktree;
+  cleanup?: Cleanup;
 }
 
 export interface Item<M> {

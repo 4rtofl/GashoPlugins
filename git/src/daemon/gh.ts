@@ -74,6 +74,19 @@ export function parseGhItems(json: string, kind: GitHubListKind): GitHubItem[] {
   return items;
 }
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** `text`, or when longer than `max` UTF-16 units, its start up to there between characters as shown (an emoji is never cut in two) and `more`. */
+export function cut(text: string, max: number, more: string): string {
+  if (text.length <= max) return text;
+  let end = 0;
+  for (const { index, segment } of graphemes.segment(text)) {
+    if (index + segment.length > max) break;
+    end = index + segment.length;
+  }
+  return `${text.slice(0, end)}${more}`;
+}
+
 /** Why a `gh` call failed, for the person looking at the list. */
 export function ghError(e: unknown): string {
   const err = (e ?? {}) as { code?: unknown; stderr?: unknown; message?: unknown; killed?: unknown };
@@ -93,27 +106,36 @@ export function ghError(e: unknown): string {
     .split("\n")
     .map((l) => l.trim())
     .find((l) => l && !l.startsWith("Command failed"));
-  return `GitHub から読み込めませんでした：${(first ?? "原因が分かりません").slice(0, 200)}`;
+  return `GitHub から読み込めませんでした：${cut(first ?? "原因が分かりません", 200, "")}`;
 }
 
 /** The open issues or pull requests of `repo`, newest first. */
 export async function listGitHub(ctx: Pick<DaemonContext, "exec">, repo: GitHubRepo, kind: GitHubListKind): Promise<GitHubList> {
-  const { stdout } = await ctx.exec(
-    GH,
-    [
-      kind === "issues" ? "issue" : "pr",
-      "list",
-      "--repo",
-      `${repo.owner}/${repo.name}`,
-      "--state",
-      "open",
-      "--limit",
-      String(GITHUB_LIST_LIMIT + 1),
-      "--json",
-      kind === "issues" ? ISSUE_FIELDS : PULL_FIELDS,
-    ],
-    { timeoutMs: 20_000, maxBuffer: 8 * 1024 * 1024 },
-  );
+  let stdout: string;
+  try {
+    ({ stdout } = await ctx.exec(
+      GH,
+      [
+        kind === "issues" ? "issue" : "pr",
+        "list",
+        "--repo",
+        `${repo.owner}/${repo.name}`,
+        "--state",
+        "open",
+        "--limit",
+        String(GITHUB_LIST_LIMIT + 1),
+        "--json",
+        kind === "issues" ? ISSUE_FIELDS : PULL_FIELDS,
+      ],
+      { timeoutMs: 20_000, maxBuffer: 8 * 1024 * 1024 },
+    ));
+  } catch (e) {
+    // gh: "the 'owner/name' repository has disabled issues"
+    if (kind === "issues" && /repository has disabled issues/i.test(String((e as { stderr?: unknown } | null)?.stderr ?? ""))) {
+      return { repo, kind, items: [], truncated: false, disabled: true };
+    }
+    throw e;
+  }
   const items = parseGhItems(stdout, kind);
   return { repo, kind, items: items.slice(0, GITHUB_LIST_LIMIT), truncated: items.length > GITHUB_LIST_LIMIT };
 }
@@ -137,7 +159,7 @@ const httpsUrl = (v: unknown): string | undefined => {
   const s = str(v);
   return s?.startsWith("https://") ? s : undefined;
 };
-const clip = (s: string): string => (s.length > TEXT_MAX ? `${s.slice(0, TEXT_MAX)}\n\n…（長いので、ここから先は GitHub で読んでください）` : s);
+const clip = (s: string): string => cut(s, TEXT_MAX, "\n\n…（長いので、ここから先は GitHub で読んでください）");
 
 const REVIEW_STATE: Record<string, NonNullable<GitHubReview["state"]>> = {
   APPROVED: "approved",

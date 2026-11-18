@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { logTail, parseRunDetail, parseRuns, parseWorkflows, runState, viewRun } from "../src/daemon/actions.ts";
+import { listRuns, logTail, LOGS_MAX, parseRunDetail, parseRuns, parseWorkflows, runState, viewRun } from "../src/daemon/actions.ts";
 
 const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}`, import.meta.url), "utf8");
 
@@ -82,8 +82,55 @@ test("a failed job's log is cut to the step that failed, without timestamps, col
   assert.deepEqual(tail, lines.slice(-5));
   // Without the step's times: the end of the whole log.
   assert.match(logTail(fixture("job-log.txt"), undefined, 3).at(-1) ?? "", /^Warning: Node\.js 20 is deprecated/);
-  // Long lines are cut.
+  // Long lines are cut, and never inside an emoji.
   assert.ok((logTail(`2026-01-01T00:00:00.0000000Z ${"x".repeat(900)}`)[0]?.length ?? 0) <= 501);
+  assert.equal(logTail(`2026-01-01T00:00:00.0000000Z ${"x".repeat(499)}👨‍👩‍👧 and more`)[0], `${"x".repeat(499)}…`);
+  assert.equal(logTail(`2026-01-01T00:00:00.0000000Z ${"x".repeat(498)}👍 and more`)[0], `${"x".repeat(498)}👍…`);
+});
+
+test("a step of a composite action that fails: its error ends the log, not the first step inside (real log)", () => {
+  // microsoft/playwright, job 134085053730: step 6 runs ./.github/actions/run-test, whose `npm run itest` fails, and
+  // whose steps after it run anyway. The log is cut down to the lines around those.
+  const step = { startedAt: "2026-11-17T13:49:26Z", completedAt: "2026-11-17T14:07:17Z" };
+  const lines = logTail(fixture("job-log-composite.txt"), step);
+  assert.equal(lines.at(-1), "Error: Process completed with exit code 1.");
+  assert.ok(lines.some((l) => l.includes("10 failed")));
+  assert.ok(!lines.some((l) => l.includes("##[") || l.includes("upload-blob-report")));
+});
+
+test("failed jobs beyond those whose log is read say so", async () => {
+  const one = JSON.parse(fixture("run-failed.json")) as { jobs: Record<string, unknown>[] };
+  const failedJob = one.jobs[0] ?? {};
+  one.jobs = Array.from({ length: LOGS_MAX + 2 }, (_, i) => ({ ...failedJob, databaseId: 1000 + i }));
+  const logs: string[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        if (args[0] === "run") return { stdout: JSON.stringify(one), stderr: "" };
+        logs.push(args.at(-1) ?? "");
+        return { stdout: fixture("job-log.txt"), stderr: "" };
+      },
+    },
+  };
+  const run = await viewRun(ctx as never, "4rtofl/GashoPlugins", 1, { maxAgeSeconds: 10 });
+  assert.equal(logs.length, LOGS_MAX);
+  assert.ok(run.jobs.every((j) => (j.log?.length ?? 0) > 0 || j.logError));
+  assert.match(run.jobs.at(-1)?.logError ?? "", /最初の 3 件/);
+});
+
+test("reading again reads the workflows again too", async () => {
+  const ages: (number | undefined)[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[], o?: { maxAgeSeconds?: number }) => {
+        if (args[0] === "workflow") ages.push(o?.maxAgeSeconds);
+        return { stdout: args[0] === "workflow" ? fixture("workflow-list.json") : fixture("run-list.json"), stderr: "" };
+      },
+    },
+  };
+  await listRuns(ctx as never, "4rtofl/GashoPlugins", { maxAgeSeconds: 10 });
+  await listRuns(ctx as never, "4rtofl/GashoPlugins", { maxAgeSeconds: 0 });
+  assert.deepEqual(ages, [300, 0]);
 });
 
 test("a run is read with the end of its failed jobs' logs; gh without --allow-escape-sequences is asked again without it", async () => {

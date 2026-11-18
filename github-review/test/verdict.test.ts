@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
-import { askInstruction, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_HEADING, reviewInstruction } from "../src/instructions.ts";
+import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING, reviewInstruction } from "../src/instructions.ts";
 import { askOf, latestMark, readMark, reviewProgress, sameHead, withoutMark, working, type ReviewMark } from "../src/verdict.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -114,6 +114,21 @@ test("instructions: the review is posted with the heading and the mark; merge, s
   assert.equal(mergeMethodOf("squash"), "squash");
   assert.equal(mergeMethodOf("octopus"), "merge");
   assert.equal(mergeMethodOf(undefined), "merge");
+});
+
+test("effort: the review at max, merge and send back at medium, mend at the session's own; switched only where gasho-daemon can", () => {
+  assert.equal(REVIEW_EFFORT, "max");
+  assert.equal(askEffort("merge"), "medium");
+  assert.equal(askEffort("sendBack"), "medium");
+  assert.equal(askEffort("fix"), undefined);
+
+  const can = { features: ["model", "effort", "ultracode", "files"] } satisfies Parameters<typeof effortFor>[0];
+  assert.deepEqual(effortFor(can, REVIEW_EFFORT), { effort: "max" });
+  assert.deepEqual(effortFor(can, askEffort("merge")), { effort: "medium" });
+  assert.deepEqual(effortFor(can, askEffort("fix")), {});
+  // A gasho-daemon older than 0.6.0 lists no features, and one may list them without effort.
+  assert.deepEqual(effortFor({}, REVIEW_EFFORT), {});
+  assert.deepEqual(effortFor({ features: ["model", "files"] }, REVIEW_EFFORT), {});
 });
 
 test("gh: the list reads the marks of the latest comments, whether I opened it, its conflict and whether the maintainers may push", () => {
