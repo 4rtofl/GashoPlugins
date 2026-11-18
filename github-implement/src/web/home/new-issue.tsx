@@ -5,12 +5,14 @@ import { useState } from "react";
 import { useRequest, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { RepoMeta } from "../../types.ts";
 import { readOp, useWriteOp } from "../daemon.ts";
-import { Picker } from "../item/picker.tsx";
+import { assignableSearch, labelSearch, Picker, type Choice } from "../item/picker.tsx";
 import { Alert } from "../ui/alert.tsx";
 import { Badge } from "../ui/badge.tsx";
 import { Button } from "../ui/button.tsx";
 import { INPUT } from "../ui/input.ts";
 import { useToast } from "../ui/toast.tsx";
+
+type Label = RepoMeta["labels"][number];
 
 interface Form {
   title: string;
@@ -62,6 +64,21 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
 
   const colors = new Map(meta.data?.labels.map((l) => [l.name, l.color]));
   const me = meta.data?.me;
+  const labelChoice = (l: Label): Choice | undefined =>
+    form.labels.includes(l.name)
+      ? undefined
+      : {
+          key: l.name,
+          name: l.name,
+          text: (
+            <span className="inline-flex items-center gap-1.5">
+              {l.color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: `#${l.color}` }} />}
+              {l.name}
+            </span>
+          ),
+          pick: () => setForm((f) => f && { ...f, labels: [...f.labels, l.name] }),
+        };
+  const assigneeChoice = (a: string): Choice | undefined => (form.assignees.includes(a) ? undefined : { key: a, name: a, text: <span>{a}</span>, pick: () => setForm((f) => f && { ...f, assignees: [...f.assignees, a] }) });
   return (
     <form
       aria-label="Issue を起票する"
@@ -102,19 +119,8 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
           label="ラベルを付ける"
           error={meta.error}
           disabled={busy}
-          choices={meta.data?.labels
-            .filter((l) => !form.labels.includes(l.name))
-            .map((l) => ({
-              key: l.name,
-              name: l.name,
-              text: (
-                <span className="inline-flex items-center gap-1.5">
-                  {l.color && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: `#${l.color}` }} />}
-                  {l.name}
-                </span>
-              ),
-              pick: () => setForm((f) => f && { ...f, labels: [...f.labels, l.name] }),
-            }))}
+          choices={meta.data?.labels.flatMap((l) => labelChoice(l) ?? [])}
+          {...(meta.data?.labelsMore && { search: labelSearch(machine, repo, labelChoice) })}
         />
       </div>
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -134,7 +140,8 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
           label="担当を足す"
           error={meta.error}
           disabled={busy}
-          choices={meta.data?.assignable.filter((a) => !form.assignees.includes(a)).map((a) => ({ key: a, name: a, text: <span>{a}</span>, pick: () => setForm((f) => f && { ...f, assignees: [...f.assignees, a] }) }))}
+          choices={meta.data?.assignable.flatMap((a) => assigneeChoice(a) ?? [])}
+          {...(meta.data?.assignableMore && { search: assignableSearch(machine, repo, assigneeChoice) })}
         />
       </div>
       <label className="flex items-center gap-1.5 text-xs">

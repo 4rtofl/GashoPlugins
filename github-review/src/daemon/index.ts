@@ -1,12 +1,13 @@
 // The daemon part of github-review: on each working server, the repositories that can be watched (from the folders
-// Gasho can start sessions in), the pull requests of the review page with where each is here, and making and removing
-// the review worktrees with git. gh runs through gasho-daemon (ctx.github); git only in the clones of those folders.
+// Gasho can start sessions in), the pull requests of the review page with where each is here, making and removing the
+// review worktrees with git, and what Claude Code would read in one. gh runs through gasho-daemon (ctx.github); git
+// only in the clones of those folders.
 import path from "node:path";
 import { defineDaemonPlugin, PluginError, type DaemonContext } from "@gasho/plugin-sdk/daemon";
 import { CLEANUP_KINDS, type CleanupKind } from "../cleanup.ts";
 import { Cleanups } from "./cleanups.ts";
-import { ghError, headArgs, parseHead } from "./gh.ts";
-import { createWorktree, removeWorktree, ReviewError, type PrHead } from "./git.ts";
+import { commitArgs, ghError, headArgs, parseCommit, parseHead } from "./gh.ts";
+import { createWorktree, projectFiles, removeWorktree, ReviewError, type OnGitHub, type PrHead } from "./git.ts";
 import { Reviewer } from "./reviewer.ts";
 import { finishedNotification, ReviewSessions } from "./review-sessions.ts";
 import { SessionRemovals } from "./session-removals.ts";
@@ -34,6 +35,13 @@ function numberArg(v: unknown): number {
   return v;
 }
 
+/** The clone of `repo` here. */
+async function cloneOf(repo: string, ctx: DaemonContext) {
+  const clone = await current().cloneOf((args, o) => ctx.github.read(args, o), repo);
+  if (!clone) throw new ReviewError(`この working server の、Claude Code が信頼しているフォルダーに、${repo} の clone がありません。`);
+  return clone;
+}
+
 /** A commit's SHA, whole or its start (a verdict's mark may hold either), in lower case; undefined when not given. */
 function shaArg(v: unknown): string | undefined {
   if (v === undefined) return undefined;
@@ -53,10 +61,16 @@ async function target(params: unknown, ctx: DaemonContext) {
     throw new ReviewError(ghError(e));
   }
   if (!pr) throw new ReviewError(`${repo} に Pull request #${number} はありません。`);
-  const clone = await current().cloneOf((args, o) => ctx.github.read(args, o), repo);
-  if (!clone) throw new ReviewError(`この working server の、Claude Code が信頼しているフォルダーに、${repo} の clone がありません。`);
+  const clone = await cloneOf(repo, ctx);
   const head: PrHead = { number, branch: pr.branch, fork: pr.fork === true, ...(pr.head ? { head: pr.head } : {}) };
-  return { clone, head };
+  const onGitHub: OnGitHub = async (oid) => {
+    try {
+      return parseCommit((await ctx.github.read(commitArgs(repo, oid), { repo, timeoutMs: 20_000 })).stdout, oid);
+    } catch (e) {
+      throw new ReviewError(ghError(e));
+    }
+  };
+  return { clone, head, onGitHub };
 }
 
 export default defineDaemonPlugin({
@@ -110,8 +124,16 @@ export default defineDaemonPlugin({
     },
     /** Makes the review worktree of { repo, number }, or finds the one it has (Created). */
     async create(params, ctx) {
-      const { clone, head } = await target(params, ctx);
-      return createWorktree(ctx.exec, clone, head);
+      const { clone, head, onGitHub } = await target(params, ctx);
+      return createWorktree(ctx.exec, clone, head, { onGitHub });
+    },
+    /**
+     * Which of PROJECT_FILES the review worktree of { repo, number } has (ProjectFiles): the page shows them before a
+     * session starts in a fork's code.
+     */
+    async projectFiles(params, ctx) {
+      const p = objArg(params);
+      return projectFiles(await cloneOf(repoArg(p.repo), ctx), numberArg(p.number));
     },
     /**
      * The review worktree of { repo, number } once what was asked of its Agent is done (cleanup.ts), by `action`:
@@ -182,9 +204,9 @@ export default defineDaemonPlugin({
      * a worktree of any other name only when "マージしてもらう" asked for it to be cleaned up.
      */
     async remove(params, ctx) {
-      const { clone, head } = await target(params, ctx);
+      const { clone, head, onGitHub } = await target(params, ctx);
       const asked = await cleanups?.get(repoArg(objArg(params).repo), head.number);
-      return removeWorktree(ctx.exec, clone, head, { anyName: asked?.kind === "merge" });
+      return removeWorktree(ctx.exec, clone, head, { anyName: asked?.kind === "merge", onGitHub });
     },
   },
 });

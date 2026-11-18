@@ -1,11 +1,12 @@
 // What the buttons of a pull request's row do: make its review worktree on a working server, start a session there and
 // send the chosen template, staying on the page (the notice offers to open the session); open the worktree it has (its
-// Gasho session, or one started there), or start a new session there and open it; remove its review worktree; and send
-// the Agent in its worktree what "マージしてもらう", "差し戻す" or "修正してもらう" asks, and remove its review worktree
-// once a merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when). Before
-// sending, it switches the session's effort level (high for the review, medium to merge or send back). The daemon part
-// does the git; the page asks the person before trusting a folder, before removing, and before asking for a merge or a
-// send-back. The session a review was sent to is removed once it has posted the result (review-session.ts).
+// Gasho session, or one started there), or start a new session there and open it; remove its review worktree; send the
+// Agent in its worktree what "マージしてもらう", "差し戻す" or "修正してもらう" asks, and remove its review worktree once a
+// merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when); and do the first for
+// many pull requests at once ("まとめてレビューさせる"). Before sending, it switches the session's effort level (high for
+// the review, medium to merge or send back). The daemon part does the git; the page asks the person before a session
+// starts in a fork's code, before trusting a folder, before removing, and before asking for a merge or a send-back. The
+// session a review was sent to is removed once it has posted the result (review-session.ts).
 import {
   type EffortLevel,
   type MachineInfo,
@@ -19,9 +20,9 @@ import {
 } from "@gasho/plugin-sdk";
 import { cleanable, changesProblem, type CleanupKind } from "../cleanup.ts";
 import type { Item as AnyItem, Spot as AnySpot } from "../items.ts";
-import { effortFor, markInstruction, REVIEW_EFFORT } from "../instructions.ts";
-import { fillTemplate, type Template } from "../template.ts";
-import type { Created, Place, PrRow, Removed } from "../types.ts";
+import { effortFor, REVIEW_EFFORT, reviewInstruction } from "../instructions.ts";
+import type { Template } from "../template.ts";
+import type { Created, Place, ProjectFiles, PrRow, Removed } from "../types.ts";
 import { reviewProgress, working, type ReviewProgress } from "../verdict.ts";
 
 /** Where a pull request is on one working server: the clone of its repository, and its worktree there. */
@@ -39,9 +40,17 @@ export interface Notice {
   action?: { label: string; run: () => void };
 }
 
+/** A pull request from a fork, before a session starts in its worktree: which of PROJECT_FILES the worktree has. */
+export interface ForkQuestion {
+  pr: Pick<PrRow, "number" | "title" | "author">;
+  path: string;
+  files: string[];
+}
+
 /** What the rows ask of the page. */
 export interface Actions {
   notify: (n: Notice | undefined) => void;
+  askFork: (q: ForkQuestion) => Promise<boolean>;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
   askRemove: (q: { item: Item; spot: Spot }) => Promise<boolean>;
   /**
@@ -92,25 +101,73 @@ export function sessionsIn(machine: MachineInfo, dir: string): SessionInfo[] {
 
 const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? p;
 
-/** Starts a session in a folder; its id, or undefined (with the reason shown) when it did not start. */
-async function start(machine: MachineInfo, cwd: string, t: Tools): Promise<string | undefined> {
-  const starting: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
-  t.actions.notify(starting);
+type PrRef = Pick<PrRow, "repo" | "number" | "title" | "author" | "fork">;
+
+/**
+ * Whether a session may start in `cwd`, the worktree of a pull request on a working server. One from a fork holds the
+ * fork's code: Claude Code trusts the worktree as it trusts the primary checkout, so it asks nothing, and reads the
+ * fork's `.claude/` (hooks run commands) and CLAUDE.md. So the person is shown which of them it has, and answers; one
+ * of the same repository goes on unasked. `error`: the worktree could not be read, or the daemon read another one (of
+ * another clone of the repository). The notice is cleared before asking.
+ */
+export async function confirmFork(pr: PrRef, cwd: string, machine: MachineInfo, t: Tools): Promise<{ start: boolean; error?: string }> {
+  if (!pr.fork) return { start: true };
+  const r = await t.call<ProjectFiles>({ machine: machine.id, method: "projectFiles", params: { repo: pr.repo, number: pr.number } });
+  if (!r.ok) return { start: false, error: r.error };
+  if (r.data.path !== cwd) {
+    const error = `セッションは起動していません。同じリポジトリの clone が複数あり、${cwd} ではなく ${r.data.path} の中身を読んだためです。そのうち 1 つだけを対象リポジトリにすると、起動できます。`;
+    return { start: false, error };
+  }
+  t.actions.notify(undefined);
+  return { start: await t.actions.askFork({ pr, path: r.data.path, files: r.data.files }) };
+}
+
+/** What starting a session in a folder gave: its id, or why none started (none when the person said no to trusting). */
+type Started = { ok: true; sessionId: string; trusted: boolean } | { ok: false; error?: string };
+
+/**
+ * Starts a session in a folder, asking the person first when Claude Code does not trust it yet; the notice the caller
+ * shows while it starts (`starting`) is hidden while the person is asked, and back once they say yes. `trustQuietly`: a
+ * folder Claude Code has no warnings about is trusted without asking (the person has said yes once in this run).
+ */
+async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: Tools, trustQuietly = false): Promise<Started> {
   let r = await t.launch({ machine: machine.id, cwd });
+  let trusted = false;
   if (!r.ok && r.needsTrust) {
-    t.actions.notify(undefined);
-    if (!(await t.actions.askTrust({ path: cwd, warnings: r.trustWarnings ?? [] }))) return undefined;
-    t.actions.notify(starting);
+    const warnings = r.trustWarnings ?? [];
+    if (!(trustQuietly && warnings.length === 0)) {
+      t.actions.notify(undefined);
+      if (!(await t.actions.askTrust({ path: cwd, warnings }))) return { ok: false };
+      t.actions.notify(starting);
+    }
+    trusted = true;
     r = await t.launch({ machine: machine.id, cwd, trust: true });
   }
+  return r.ok ? { ok: true, sessionId: r.sessionId, trusted } : { ok: false, error: r.error };
+}
+
+/** Starts a session in a pull request's worktree; its id, or undefined (with the reason shown) when it did not start. */
+async function start(machine: MachineInfo, cwd: string, pr: PrRef, t: Tools): Promise<string | undefined> {
+  const fork = await confirmFork(pr, cwd, machine, t);
+  if (!fork.start) {
+    t.actions.notify(
+      fork.error
+        ? { text: fork.error, tone: "danger" }
+        : { text: `#${pr.number} のセッションは起動していません。worktree（${folderName(cwd)}）はそのまま残しています。` },
+    );
+    return undefined;
+  }
+  const starting: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
+  t.actions.notify(starting);
+  const r = await launchIn(machine, cwd, starting, t);
   if (r.ok) return r.sessionId;
-  t.actions.notify({ text: r.error, tone: "danger" });
+  if (r.error) t.actions.notify({ text: r.error, tone: "danger" });
   return undefined;
 }
 
-/** Opens the Gasho session used last in a folder, or one started there. */
-async function openIn(machine: MachineInfo, dir: string, t: Tools): Promise<void> {
-  const sessionId = sessionsIn(machine, dir)[0]?.sessionId ?? (await start(machine, dir, t));
+/** Opens the Gasho session used last in a pull request's worktree, or one started there. */
+async function openIn(machine: MachineInfo, dir: string, pr: PrRef, t: Tools): Promise<void> {
+  const sessionId = sessionsIn(machine, dir)[0]?.sessionId ?? (await start(machine, dir, pr, t));
   if (!sessionId) return;
   t.actions.notify(undefined);
   t.nav.openSession(machine.id, sessionId);
@@ -122,10 +179,11 @@ function sentNotice(machine: MachineInfo, sessionId: string, text: string, t: To
 }
 
 /**
- * Makes the review worktree of a pull request on a working server, starts a session there and sends the template (none
- * for "何も送らない") at the effort level of a review. When the worktree turns out to be there already, it takes the
- * Gasho session used last there (or starts one) and sends nothing. Either way the page stays, so the person can go on to
- * other pull requests; the notice offers to open the session, and says why when the effort level could not be switched.
+ * Makes the review worktree of a pull request on a working server, starts a session there (in a fork's code, once the
+ * person agrees: confirmFork) and sends the template (none for "何も送らない") at the effort level of a review. When the
+ * worktree turns out to be there already, it takes the Gasho session used last there (or starts one) and sends nothing.
+ * Either way the page stays, so the person can go on to other pull requests; the notice offers to open the session, and
+ * says why when the effort level could not be switched.
  * True when a review was sent.
  */
 export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<boolean> {
@@ -143,11 +201,11 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
     return false;
   }
   if (!r.data.created) {
-    const sessionId = sessionsIn(machine, r.data.path)[0]?.sessionId ?? (await start(machine, r.data.path, t));
+    const sessionId = sessionsIn(machine, r.data.path)[0]?.sessionId ?? (await start(machine, r.data.path, pr, t));
     if (sessionId) sentNotice(machine, sessionId, `#${pr.number} のレビュー用の worktree はもうありました（${folderName(r.data.path)}）。`, t);
     return false;
   }
-  const sessionId = await start(machine, r.data.path, t);
+  const sessionId = await start(machine, r.data.path, pr, t);
   if (!sessionId) return false;
   const sent = template ? await sendTemplate(pr, machine, sessionId, template, t) : undefined;
   if (sent === "failed") return false;
@@ -169,24 +227,11 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
  */
 async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<"sent" | "warned" | "failed"> {
   t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
-  // Before it is sent, so that the result cannot come first. Without it the review goes on, and the session stays.
-  await t.call({
-    machine: machine.id,
-    method: "reviewSession",
-    params: { action: "track", sessionId, repo: pr.repo, number: pr.number, ...(pr.mark ? { before: pr.mark.url } : {}) },
-    summary: `${pr.repo}#${pr.number} のレビューの結果を投稿したら、セッションを削除する`,
-  });
-  // Before it is sent, so that the end of the review cannot come first. Without it the review goes on, with Gasho's own notification.
-  await t.call({
-    machine: machine.id,
-    method: "trackReview",
-    params: { sessionId, repo: pr.repo, number: pr.number },
-    summary: `${pr.repo}#${pr.number} のレビューの終わりを通知する`,
-  });
+  await trackSession(pr, machine, sessionId, t);
   const sent = await t.send({
     machine: machine.id,
     sessionId,
-    text: `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}`,
+    text: reviewInstruction(template, pr),
     ...effortFor(machine, REVIEW_EFFORT),
   });
   const open = { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) };
@@ -200,6 +245,26 @@ async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: str
     return "warned";
   }
   return "sent";
+}
+
+/**
+ * The session is removed once it has posted the review, and its end is notified with the result. Called before the
+ * review is sent, so that neither can come first. Without them the review goes on: the session stays, with Gasho's own
+ * notification.
+ */
+async function trackSession(pr: Item["pr"], machine: MachineInfo, sessionId: string, t: Tools): Promise<void> {
+  await t.call({
+    machine: machine.id,
+    method: "reviewSession",
+    params: { action: "track", sessionId, repo: pr.repo, number: pr.number, ...(pr.mark ? { before: pr.mark.url } : {}) },
+    summary: `${pr.repo}#${pr.number} のレビューの結果を投稿したら、セッションを削除する`,
+  });
+  await t.call({
+    machine: machine.id,
+    method: "trackReview",
+    params: { sessionId, repo: pr.repo, number: pr.number },
+    summary: `${pr.repo}#${pr.number} のレビューの終わりを通知する`,
+  });
 }
 
 /** The session stays: it did not get the review, or it was given other work. */
@@ -236,22 +301,116 @@ export async function removeFinishedSession(pr: Pick<PrRow, "repo" | "number">, 
 export async function reviewIn({ pr }: Item, spot: Spot, template: Template, t: Tools): Promise<boolean> {
   if (!spot.worktree) return false;
   const { machine } = spot;
-  const sessionId = await start(machine, spot.worktree.path, t);
+  const sessionId = await start(machine, spot.worktree.path, pr, t);
   if (!sessionId) return false;
   const sent = await sendTemplate(pr, machine, sessionId, template, t);
   if (sent === "sent") sentNotice(machine, sessionId, `#${pr.number} のレビューのセッションを起動し、「${template.name}」を送りました。`, t);
   return sent !== "failed";
 }
 
+/** Where one pull request of "まとめてレビューさせる" is. */
+export type BatchState = "waiting" | "working" | "done" | "skipped" | "failed";
+
+export interface BatchStep {
+  state: BatchState;
+  /** Why it was skipped or failed; on one done, what did not go as asked in sending (the effort level, say). */
+  text?: string;
+  /** The session started for it. */
+  sessionId?: string;
+}
+
+/** How many pull requests of "まとめてレビューさせる" ended how; `warned` are done ones with a `text`. */
+export interface BatchCount {
+  done: number;
+  failed: number;
+  skipped: number;
+  warned: number;
+}
+
+/**
+ * "まとめてレビューさせる": for each pull request in turn (git in one clone at a time), makes its review worktree on the
+ * working server, starts a session there and sends the template at the effort level of a review, as "worktree を作る"
+ * does, without opening the sessions. A pull request whose worktree turns out to be there already is skipped. Once the
+ * person has said yes to trusting a folder, the next folders Claude Code has no warnings about are trusted without
+ * asking again. The notice says how far it is; `batchSummary` says how it went.
+ */
+export async function reviewAll(
+  targets: { item: Item; spot: Spot }[],
+  template: Template,
+  t: Tools,
+  onStep: (url: string, step: BatchStep) => void,
+): Promise<BatchCount> {
+  const count: BatchCount = { done: 0, failed: 0, skipped: 0, warned: 0 };
+  let trustQuietly = false;
+  for (const [i, { item, spot }] of targets.entries()) {
+    const { pr } = item;
+    const { machine } = spot;
+    const end = (step: BatchStep & { state: "done" | "skipped" | "failed" }) => {
+      count[step.state] += 1;
+      onStep(pr.url, step);
+    };
+    onStep(pr.url, { state: "working" });
+    const preparing: Notice = { text: `${i + 1} / ${targets.length}：#${pr.number} のレビューを用意しています…`, busy: true };
+    t.actions.notify(preparing);
+    const r = await t.call<Created>({
+      machine: machine.id,
+      method: "create",
+      params: { repo: pr.repo, number: pr.number },
+      summary: `${pr.repo}#${pr.number} のレビュー用の worktree を作る`,
+    });
+    // As "worktree を作る" does: its row shows the worktree, not "worktree を作る", once its buttons are back.
+    t.actions.reload(machine.id);
+    if (!r.ok) {
+      end({ state: "failed", text: r.error });
+      continue;
+    }
+    if (!r.data.created) {
+      end({ state: "skipped", text: `worktree（${folderName(r.data.path)}）がもうあるので、作りませんでした。` });
+      continue;
+    }
+    const started = await launchIn(machine, r.data.path, preparing, t, trustQuietly);
+    if (!started.ok) {
+      end({ state: "failed", text: started.error ?? "フォルダーを信頼しなかったので、セッションを起動しませんでした（worktree は作りました）。" });
+      continue;
+    }
+    trustQuietly ||= started.trusted;
+    const { sessionId } = started;
+    await trackSession(pr, machine, sessionId, t);
+    const sent = await t.send({ machine: machine.id, sessionId, text: reviewInstruction(template, pr), ...effortFor(machine, REVIEW_EFFORT) });
+    if (!sent.ok) {
+      await forgetSession(machine, sessionId, t);
+      end({ state: "failed", sessionId, text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}` });
+      continue;
+    }
+    // Sent, but not quite as asked (the effort level could not be switched, say): its result says so.
+    if (sent.data.warning) count.warned += 1;
+    end({ state: "done", sessionId, ...(sent.data.warning ? { text: sent.data.warning } : {}) });
+  }
+  return count;
+}
+
+/** The notice of how "まとめてレビューさせる" went, for `total` pull requests. */
+export function batchSummary(count: BatchCount, total: number): Notice {
+  const rest = [
+    count.warned > 0 ? `${count.warned} 件は送るときに注意が出ました` : "",
+    count.skipped > 0 ? `${count.skipped} 件は飛ばしました` : "",
+    count.failed > 0 ? `${count.failed} 件はできませんでした` : "",
+  ].filter(Boolean);
+  return {
+    text: `${total} 件のうち ${count.done} 件でレビューを始めました${rest.length > 0 ? `（${rest.join("、")}）` : ""}。`,
+    ...(count.failed > 0 || count.warned > 0 ? { tone: "danger" as const } : {}),
+  };
+}
+
 /** Opens the worktree a pull request has on a working server. */
-export async function openWorktree(spot: Spot, t: Tools): Promise<void> {
-  if (spot.worktree) await openIn(spot.machine, spot.worktree.path, t);
+export async function openWorktree({ pr }: Item, spot: Spot, t: Tools): Promise<void> {
+  if (spot.worktree) await openIn(spot.machine, spot.worktree.path, pr, t);
 }
 
 /** Starts a new session in the worktree a pull request has on a working server (not the one used last), and opens it. */
-export async function newSessionIn(spot: Spot, t: Tools): Promise<void> {
+export async function newSessionIn({ pr }: Item, spot: Spot, t: Tools): Promise<void> {
   if (!spot.worktree) return;
-  const sessionId = await start(spot.machine, spot.worktree.path, t);
+  const sessionId = await start(spot.machine, spot.worktree.path, pr, t);
   if (!sessionId) return;
   t.actions.notify(undefined);
   t.nav.openSession(spot.machine.id, sessionId);
@@ -262,12 +421,12 @@ export async function newSessionIn(spot: Spot, t: Tools): Promise<void> {
  * session used last there, or one started there, switching its effort level first (none: it keeps its own). A session
  * at work gets it once it is done (Gasho keeps it till then).
  */
-export async function askAgent(spot: Spot, label: string, text: string, effort: EffortLevel | undefined, t: Tools): Promise<boolean> {
+export async function askAgent({ pr }: Item, spot: Spot, label: string, text: string, effort: EffortLevel | undefined, t: Tools): Promise<boolean> {
   const dir = spot.worktree?.path;
   if (!dir) return false;
   const { machine } = spot;
   const session = sessionsIn(machine, dir)[0];
-  const sessionId = session?.sessionId ?? (await start(machine, dir, t));
+  const sessionId = session?.sessionId ?? (await start(machine, dir, pr, t));
   if (!sessionId) return false;
   // It has more to do than the review: it is not removed when the review is posted.
   if (session) await forgetSession(machine, sessionId, t);

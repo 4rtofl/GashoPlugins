@@ -2,10 +2,10 @@
 // its branch, the ones added by hand), a box that makes the pull request of a branch without one, a box that adds one by
 // its number, its GitHub URL or words of its title (home/), and a form for a new issue.
 import { ExternalLink, RefreshCw, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
-import { useWriteOp } from "./daemon.ts";
+import { useFreshReload, useWriteOp } from "./daemon.ts";
 import { AddBox } from "./home/add.tsx";
 import { NewIssueBox } from "./home/new-issue.tsx";
 import { NewPullBox } from "./home/new-pull.tsx";
@@ -33,10 +33,22 @@ function Home({ machine, worktree }: WorktreeViewProps) {
   const write = useWriteOp();
   const toast = useToast();
   const [busy, setBusy] = useState<string>();
-  const github = worktree.github;
+  // Right after its working server comes back, Gasho sends the worktree without its GitHub repository for a few seconds:
+  // the one known before stays.
+  const lastGithub = useRef(worktree.github);
+  if (worktree.github) lastGithub.current = worktree.github;
+  const github = worktree.github ?? lastGithub.current;
   const repo = github ? `${github.owner}/${github.name}` : undefined;
-  const items = r.data;
+  // While the daemon part is not ready (the working server offline for a while), nothing is read: the list read before
+  // and the forms stay, with what is typed in them. A form shows only once the daemon part was ready on this screen.
+  const last = useRef<{ branch: string | undefined; items: WorktreeItems }>(undefined);
+  if (r.data) last.current = { branch: worktree.branch, items: r.data };
+  const kept = last.current;
+  const items = r.data ?? (kept && kept.branch === worktree.branch ? kept.items : undefined);
+  const wasReady = useRef(false);
+  if (daemon.ready) wasReady.current = true;
   const added = new Set(items?.added.map((i) => i.number));
+  const reload = useFreshReload(machine.id, repo, r.reload);
 
   const run = async (id: string, op: string, params: Record<string, unknown>, summary: string): Promise<string | undefined> => {
     setBusy(id);
@@ -80,7 +92,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
               GitHub <ExternalLink />
             </a>
           )}
-          <Button variant="ghost" size="icon" onClick={r.reload} disabled={!target || r.loading} aria-label="再読み込み" title="再読み込み">
+          <Button variant="ghost" size="icon" onClick={reload} disabled={!target || r.loading} aria-label="再読み込み" title="再読み込み">
             <RefreshCw className={cn(r.loading && "animate-spin")} />
           </Button>
         </div>
@@ -92,7 +104,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
         <Alert
           tone="danger"
           action={
-            <Button size="xs" onClick={r.reload} isLoading={r.loading}>
+            <Button size="xs" onClick={reload} isLoading={r.loading}>
               読み直す
             </Button>
           }
@@ -148,11 +160,11 @@ function Home({ machine, worktree }: WorktreeViewProps) {
       )}
 
       {/* A branch whose pull request is open or merged is done with: a closed one may be made again. */}
-      {repo && daemon.ready && items && worktree.branch && !items.pulls.some((p) => p.state !== "closed") && (
+      {repo && wasReady.current && items && worktree.branch && !items.pulls.some((p) => p.state !== "closed") && (
         <NewPullBox machine={machine.id} worktree={worktree} branch={worktree.branch} repo={repo} {...(items.named?.kind === "issues" ? { title: items.named.title } : {})} onCreated={r.reload} />
       )}
 
-      {repo && daemon.ready && (
+      {repo && wasReady.current && (
         <>
           <AddBox machine={machine.id} repo={repo} has={new Set(items ? itemsInOrder(items).map((i) => i.number) : [])} busy={busy !== undefined} adding={busy === "add"} onAdd={add} />
           <NewIssueBox machine={machine.id} worktree={worktree} repo={repo} onCreated={r.reload} />

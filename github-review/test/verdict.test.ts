@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detailArgs, listArgs, parseDetail, parseList, requestedQuery } from "../src/daemon/gh.ts";
-import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING } from "../src/instructions.ts";
+import { detailArgs, listArgs, parseDetail, parseList, upperSearches } from "../src/daemon/gh.ts";
+import { askEffort, askInstruction, effortFor, markInstruction, mergeInstruction, mergeMethodOf, REVIEW_EFFORT, REVIEW_HEADING, reviewInstruction } from "../src/instructions.ts";
 import { ASK_RECHECK_MS, ASK_SETTLE_MS, askEndUnseen, askOf, askRechecking, askRunning, latestMark, readMark, reviewProgress, sameHead, sentBack, underway, withoutMark, workEndUnseen, working, workRechecking, type Asked, type Recheck, type ReviewMark } from "../src/verdict.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -53,6 +53,8 @@ test("progress: a session works when busy, waiting for an answer, or with inputs
   assert.equal(working([{ cwd: dir, status: "busy" }], dir), true);
   assert.equal(working([{ cwd: `${dir}/sub`, status: "waiting" }], dir), true);
   assert.equal(working([{ cwd: dir, status: "idle", pendingInputs: 1 }], dir), true);
+  assert.equal(working([{ cwd: dir, status: "idle", background: [{ id: "t" }] }], dir), true);
+  assert.equal(working([{ cwd: dir, status: "idle", background: [] }], dir), false);
   assert.equal(working([{ cwd: `${dir}0`, status: "busy" }], dir), false);
 });
 
@@ -79,6 +81,8 @@ test("instructions: the review is posted with the heading and the mark; merge, s
   assert.ok(m.includes("gh pr view 5 --json headRefOid -q .headRefOid --repo o/r"));
   // The mark the instruction shows is one the page reads.
   assert.deepEqual(readMark(m.replace("<SHA>", SHA)), { verdict: "mergeable", sha: SHA });
+  // "worktree を作る" and "まとめてレビューさせる" send the template filled in, then the mark's instruction.
+  assert.equal(reviewInstruction({ body: "#{number} {title} をレビューして" }, PR), `#5 直す をレビューして\n${m}`);
 
   const merge = mergeInstruction(PR, mark, { method: "squash", deleteBranch: true, own: false, fork: false, canPush: true });
   assert.ok(merge.includes("gh pr review 5 --approve"));
@@ -124,6 +128,21 @@ test("severity: the review sorts its findings into High, Medium and Low, and onl
   assert.ok(m.includes("Medium・Low だけのときも、指摘がないときも mergeable"));
 });
 
+test("scope: the review settles the pull request's scope first, and what is outside it never counts", () => {
+  const m = markInstruction(PR);
+  assert.ok(m.indexOf("この Pull request の範囲を確かめて") < m.indexOf("- High: マージすると実害が出るもの"));
+  assert.ok(m.includes("完了の条件は、書かれている以上に広げて解釈しないでください"));
+  assert.ok(m.includes("その変更で新しく起きる問題"));
+  assert.ok(m.includes("前からある不具合でも、完了の条件に書かれていれば範囲内"));
+  assert.ok(m.includes("High・Medium・Low には入れず、`### 範囲外（参考）` の見出しに"));
+  assert.ok(m.includes("範囲外（参考）の指摘は verdict に含めません"));
+
+  const mark: ReviewMark = { verdict: "changes", sha: SHA, url: "https://github.com/o/r/pull/5#issuecomment-1" };
+  const merge = { method: "merge", deleteBranch: true } as const;
+  assert.ok(askInstruction("sendBack", PR, mark, merge).includes("「範囲外（参考）」の指摘は、本文に入れないでください"));
+  assert.ok(askInstruction("fix", PR, mark, merge).includes("「範囲外（参考）」の指摘は、この Pull request では直さないでください"));
+});
+
 test("severity: send back and mend must deal with the High findings, and say what becomes of Medium and Low", () => {
   const mark: ReviewMark = { verdict: "changes", sha: SHA, url: "https://github.com/o/r/pull/5#issuecomment-1" };
   const merge = { method: "merge", deleteBranch: true } as const;
@@ -163,7 +182,7 @@ test("effort: the review at high, merge and send back at medium, mend at the ses
 });
 
 test("gh: the list reads the marks of the latest comments, whether I opened it, its conflict and whether the maintainers may push", () => {
-  const args = listArgs({ requested: requestedQuery(""), watched: [], lookups: [] });
+  const args = listArgs({ ...upperSearches("", []), watched: [], lookups: [] });
   const query = args[args.indexOf("-f") + 1] ?? "";
   assert.match(query, /recent: comments\(last: 10\) \{ nodes \{ viewerDidAuthor body url createdAt \} \}/);
   assert.match(query, /viewerDidAuthor mergeable maintainerCanModify/);

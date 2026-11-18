@@ -3,6 +3,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { laterMarks, type SeenMarks } from "../news.ts";
+import { readKept } from "./store.ts";
 
 interface Kept {
   marks: SeenMarks;
@@ -18,21 +19,20 @@ export class SeenStore {
   private items = new Map<string, Kept>();
   private loaded?: Promise<void>;
   private writing: Promise<void> = Promise.resolve();
+  private readonly log: (...args: unknown[]) => void;
 
-  constructor(file: string) {
+  constructor(file: string, log: (...args: unknown[]) => void) {
     this.file = file;
+    this.log = log;
   }
 
   private load(): Promise<void> {
-    this.loaded ??= fs.readFile(this.file, "utf8").then(
-      (text) => {
-        const data = JSON.parse(text) as { items?: Record<string, Kept> };
-        for (const [key, k] of Object.entries(data.items ?? {})) {
-          if (typeof k?.marks === "object" && k.marks !== null) this.items.set(key, { marks: laterMarks(k.marks, {}), at: Number(k.at) || 0 });
-        }
-      },
-      () => undefined,
-    );
+    this.loaded ??= readKept(this.file, this.log).then((data) => {
+      const items = (data as { items?: Record<string, Kept> } | null)?.items;
+      for (const [key, k] of Object.entries(typeof items === "object" && items !== null ? items : {})) {
+        if (typeof k?.marks === "object" && k.marks !== null) this.items.set(key, { marks: laterMarks(k.marks, {}), at: Number(k.at) || 0 });
+      }
+    });
     return this.loaded;
   }
 
@@ -69,9 +69,9 @@ export class SeenStore {
 let store: SeenStore | undefined;
 
 /** The store of the plugin's folder on this working server. */
-export function seenStore(dataDir: string): SeenStore {
+export function seenStore(dataDir: string, log: (...args: unknown[]) => void): SeenStore {
   const file = path.join(dataDir, "seen.json");
-  if (store?.file !== file) store = new SeenStore(file);
+  if (store?.file !== file) store = new SeenStore(file, log);
   return store;
 }
 

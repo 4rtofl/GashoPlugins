@@ -1,8 +1,9 @@
 // An issue's parent and its sub-issues, which `gh issue view --json` has no fields for: { repo, number, fresh? } →
 // SubIssues. One GraphQL query (1 point), read when the issue's screen shows, not in the background. GitHub lets an
 // issue have 100 sub-issues, so the first 100 are all of them.
+import type { CloseReason } from "../../types.ts";
 import { gh, itemRead } from "../core.ts";
-import { num, numberArg, repoArg, str } from "../gh.ts";
+import { closeReason, num, numberArg, repoArg, str } from "../gh.ts";
 import type { Op } from "../op.ts";
 
 /** An issue that is the parent or a sub-issue of another; a sub-issue may be in another repository. */
@@ -12,7 +13,7 @@ export interface IssueRef {
   number: number;
   title: string;
   state: "open" | "closed";
-  stateReason?: "completed" | "not_planned";
+  stateReason?: CloseReason;
   url: string;
 }
 
@@ -44,7 +45,7 @@ function ref(raw: unknown): IssueRef | undefined {
     number,
     title,
     state: closed ? "closed" : "open",
-    ...(closed && { stateReason: str(r.stateReason)?.toUpperCase() === "NOT_PLANNED" ? ("not_planned" as const) : ("completed" as const) }),
+    ...(closed && { stateReason: closeReason(r.stateReason) ?? "completed" }),
     url,
   };
 }

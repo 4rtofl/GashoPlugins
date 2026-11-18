@@ -1,7 +1,7 @@
 // The page's rows from the lists of every working server: a pull request once, with where it is on each working server
 // that listed it (the clone of its repository there, and its worktree), so that one with a worktree anywhere opens
 // there. One without a clone on any working server cannot get a worktree, and is left out.
-import type { Cleanup, Listing, PrRow, PrWorktree } from "./types.ts";
+import { SEARCH_LIMIT, type Cleanup, type Listing, type PrRow, type PrWorktree } from "./types.ts";
 
 export interface Spot<M> {
   machine: M;
@@ -29,6 +29,33 @@ export interface PageItems<M> {
   groups: Group<M>[];
   requestedMore: number;
   watchedMore: number;
+}
+
+/**
+ * Lists each in order, as one list in that order: of those ranked the same, or without a rank to compare, the earlier
+ * list's comes first.
+ */
+export function mergeOrdered<T>(lists: readonly (readonly T[])[], rank: (x: T) => number | undefined): T[] {
+  const at = lists.map(() => 0);
+  const out: T[] = [];
+  for (;;) {
+    let from = -1;
+    let best: T | undefined;
+    for (const [k, list] of lists.entries()) {
+      const i = at[k] ?? 0;
+      if (i >= list.length) continue;
+      const x = list[i] as T;
+      const r = rank(x);
+      const b = best === undefined ? undefined : rank(best);
+      if (from < 0 || (r !== undefined && b !== undefined && r < b)) {
+        from = k;
+        best = x;
+      }
+    }
+    if (from < 0) return out;
+    out.push(best as T);
+    at[from] = (at[from] ?? 0) + 1;
+  }
 }
 
 export function pageItems<M>(lists: { machine: M; listing: Listing }[]): PageItems<M> {
@@ -60,11 +87,27 @@ export function pageItems<M>(lists: { machine: M; listing: Listing }[]): PageIte
       groups.set(key, g);
     }
   }
+  // Working servers watch different repositories, so each lists some of mine the others do not.
+  const requested = once(mergeOrdered(lists.map((l) => l.listing.requested), (p) => p.order));
   return {
-    requested: once(lists.flatMap((l) => l.listing.requested)),
+    requested: requested.slice(0, SEARCH_LIMIT),
     // The watched repositories first, as their working servers list them.
     groups: [...groups.values()].sort((a, b) => Number(b.watched) - Number(a.watched)).map((g) => ({ repo: g.repo, watched: g.watched, items: once(g.prs) })),
-    requestedMore: Math.max(0, ...lists.map((l) => l.listing.requestedMore ?? 0)),
+    requestedMore: Math.max(0, ...lists.map((l) => l.listing.requestedMore ?? 0)) + Math.max(0, requested.length - SEARCH_LIMIT),
     watchedMore: lists.reduce((n, l) => n + (l.listing.watchedMore ?? 0), 0),
   };
+}
+
+/**
+ * What "まとめてレビューさせる" makes on one working server: the open pull requests with no worktree on any working server
+ * (one with a worktree somewhere is being reviewed already) and a clone on this one, each with its spot here. A search
+ * without `is:open` lists merged and closed ones too: they have nothing left to review. One from a fork is left out: its
+ * code is someone else's, so a session is started for it only from its own row, one at a time.
+ */
+export function batchTargets<M>(items: Item<M>[], machine: M): { item: Item<M>; spot: Spot<M> }[] {
+  return items.flatMap((item) => {
+    if (item.pr.state !== "open" || item.pr.fork || item.spots.some((s) => s.worktree)) return [];
+    const spot = item.spots.find((s) => s.machine === machine);
+    return spot ? [{ item, spot }] : [];
+  });
 }

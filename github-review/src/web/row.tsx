@@ -3,7 +3,8 @@
 // worktrees it has on the working servers, and its buttons: "マージしてもらう", "差し戻す" or "修正してもらう" for the
 // verdict, "worktree を作る" (with the template to send) when it has none, "開く" (or, in the lower part of the page,
 // "新たにセッションを作成する") and "片付ける" when it has one, and "レビューする" (with the template to send) on my own
-// open one with a worktree. Pressing the row opens its side panel (a page on a phone).
+// open one with a worktree. A review worktree whose folder is gone does not open: it is made again or removed.
+// Pressing the row opens its side panel (a page on a phone).
 import {
   Check,
   ChevronDown,
@@ -179,6 +180,7 @@ export function PrItemRow({ item, now, showRepo, fresh }: { item: Item; now: num
             </span>
             {shared?.machines && <span>（{s.machine.name}）</span>}
             <span className="font-mono">{s.worktree?.branch ?? "detached HEAD"}</span>
+            {s.worktree?.missing && <span className="text-amber-700 dark:text-amber-300">フォルダーがありません</span>}
             {s.cleanup && !s.cleanup.problem ? (
               <Badge tone="neutral" dot className="h-5 px-2 text-[11px]" title={CLEANUP_HINT[s.cleanup.kind]}>
                 {s.cleanup.done ? "終わったので片付けます" : "終わったら片付けます"}
@@ -223,39 +225,43 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
   const { tools, run } = shared;
   const { pr, spots } = item;
   const off = shared.busy.has(pr.url);
-  const placed = spots.filter((s) => s.worktree);
+  const placed = spots.filter((s) => s.worktree && !s.worktree.missing);
+  // Those made for the review, and one of any name that a merge asked to clean up.
+  const review = spots.filter((s) => s.worktree?.review || s.cleanup);
+  const removeButton = review.length > 0 && <SpotButton label="片付ける" icon={<Trash2 />} spots={review} disabled={off} onPick={(s) => run(pr.url, () => removeWorktree(item, s, tools))} />;
   if (placed.length > 0) {
-    // Those made for the review, and one of any name that a merge asked to clean up.
-    const review = placed.filter((s) => s.worktree?.review || s.cleanup);
     // A worktree with no Gasho session opens only where Gasho can start one.
     const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
     return (
       <div className="flex flex-wrap justify-end gap-1.5">
         <AgentAsk item={item} />
         {fresh ? (
-          <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(s, tools))} />
+          <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(item, s, tools))} />
         ) : (
-          <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(s, tools))} />
+          <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(item, s, tools))} />
         )}
         <ReviewMenu item={item} />
-        {review.length > 0 && <SpotButton label="片付ける" icon={<Trash2 />} spots={review} disabled={off} onPick={(s) => run(pr.url, () => removeWorktree(item, s, tools))} />}
+        {removeButton}
       </div>
     );
   }
   return (
-    <TemplateMenu
-      label="worktree を作る"
-      icon={<FolderGit2 />}
-      spots={spots}
-      disabled={off || spots.length === 0}
-      heading={(s) => (spots.length > 1 ? `${s.machine.name} に作り、送る指示` : "作ってセッションを起動し、送る指示")}
-      none
-      onPick={(s, t) =>
-        run(pr.url, async () => {
-          if (await createWorktree(item, s, t, tools)) markReview(item);
-        })
-      }
-    />
+    <div className="flex gap-1.5">
+      <TemplateMenu
+        label="worktree を作る"
+        icon={<FolderGit2 />}
+        spots={spots}
+        disabled={off || spots.length === 0}
+        heading={(s) => (spots.length > 1 ? `${s.machine.name} に作り、送る指示` : "作ってセッションを起動し、送る指示")}
+        none
+        onPick={(s, t) =>
+          run(pr.url, async () => {
+            if (await createWorktree(item, s, t, tools)) markReview(item);
+          })
+        }
+      />
+      {removeButton}
+    </div>
   );
 }
 
@@ -263,7 +269,7 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
 const markReview = ({ pr }: Item) => markAsked(pr.url, { kind: "review", sha: pr.mark?.sha ?? pr.head ?? "", at: Date.now() });
 
 /** "レビューする" is there for a pull request: my own open one with a worktree, with a template to send. */
-const canReview = ({ pr, spots }: Item, shared: RowShared | undefined): boolean => Boolean(shared && pr.own && pr.state === "open" && spots.some((s) => s.worktree) && shared.templates.length > 0);
+const canReview = ({ pr, spots }: Item, shared: RowShared | undefined): boolean => Boolean(shared && pr.own && pr.state === "open" && spots.some((s) => s.worktree && !s.worktree.missing) && shared.templates.length > 0);
 
 /**
  * "レビューする" on my own open pull request with a worktree (the one I made it in, so "worktree を作る" is not there):
@@ -273,7 +279,7 @@ export function ReviewMenu({ item, reading }: { item: Item; reading?: OwnReading
   const shared = useContext(RowContext);
   const { shown } = useWork(item, reading);
   const { pr, spots } = item;
-  const placed = spots.filter((s) => s.worktree);
+  const placed = spots.filter((s) => s.worktree && !s.worktree.missing);
   if (!shared || !canReview(item, shared) || shown) return null;
   const { tools, run } = shared;
   return (
@@ -353,7 +359,7 @@ export function AgentAsk({ item, reading }: { item: Item; reading?: OwnReading |
   const shared = useContext(RowContext);
   const { pr, spots } = item;
   const { ask, mark, going, shown, unseen, machines } = useWork(item, reading);
-  const placed = spots.filter((s) => s.worktree);
+  const placed = spots.filter((s) => s.worktree && !s.worktree.missing);
   // When the work ends, or is found to have ended while the page was left, GitHub is read again. Before the screen is
   // painted, so that the button does not show for a moment between that end and the badge that waits for that reading.
   const wasGoing = useRef(going);
@@ -377,7 +383,7 @@ export function AgentAsk({ item, reading }: { item: Item; reading?: OwnReading |
   }
   if (!ask || !mark) return null;
   const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
-  const asking = (s: Spot, kind: AskKind) => askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools);
+  const asking = (s: Spot, kind: AskKind) => askAgent(item, s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools);
   const sent = (kind: AskKind) => markAsked(pr.url, { kind, sha: mark.sha, at: Date.now() });
   return (
     <SpotButton

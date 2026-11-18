@@ -3,6 +3,7 @@
 // loses the verdict), and what "マージしてもらう", "差し戻す" and, on my own pull request, "修正してもらう" ask; and the
 // effort level the session is switched to before each.
 import type { EffortLevel, MachineInfo } from "@gasho/plugin-sdk";
+import { fillTemplate, type Template } from "./template.ts";
 import { canPush } from "./types.ts";
 import type { ReviewMark } from "./verdict.ts";
 
@@ -26,12 +27,26 @@ interface PrRef {
 
 const gh = (pr: PrRef, args: string): string => `gh ${args.replace("{n}", String(pr.number))} --repo ${pr.repo}`;
 
+/**
+ * What a review worktree's new session is sent ("worktree を作る" and "まとめてレビューさせる" alike): the template, then
+ * how to post the review with its mark, whatever the template says.
+ */
+export function reviewInstruction(template: Pick<Template, "body">, pr: PrRef): string {
+  return `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}`;
+}
+
 /** What goes after the template sent when a review worktree is made: how to post the review, with its mark. */
 export function markInstruction(pr: PrRef): string {
   return [
     "",
     "---",
-    "レビューの指摘は、次の基準で High・Medium・Low のどれかに分けてください。",
+    "まず、Pull request の説明と、紐づく Issue の完了の条件を読んで、この Pull request の範囲を確かめてください。完了の条件は、書かれている以上に広げて解釈しないでください。",
+    "次のどちらかに当たるものを、範囲内の指摘とします。",
+    "- この Pull request が変更した内容の問題と、その変更で新しく起きる問題。変更していないコードで起きるものや、いまの main と合わせたときに起きるものも含みます。",
+    "- Pull request の説明や Issue の完了の条件に書かれたことを満たしていないこと。前からある不具合でも、完了の条件に書かれていれば範囲内です。",
+    "どちらにも当たらないものは範囲外です。High・Medium・Low には入れず、`### 範囲外（参考）` の見出しに短く書いてください。この Pull request での修正は求めません。",
+    "",
+    "範囲内の指摘は、次の基準で High・Medium・Low のどれかに分けてください。",
     "- High: マージすると実害が出るもの。バグ、データの消失、セキュリティの問題、既存の機能の破壊、ビルドやテストの失敗などです。",
     "- Medium: 直したほうがよいが、マージを止めるほどではないもの。保守しにくい実装、足りないテスト、影響の小さい特殊な場合の扱い、説明と実装のずれなどです。",
     "- Low: 好みや細かい改善。名前、書き方、コメントの言い回しなどです。",
@@ -39,8 +54,8 @@ export function markInstruction(pr: PrRef): string {
     "",
     `レビューが終わったら、結果を Pull request #${pr.number} のコメントとして投稿してください（\`${gh(pr, "pr comment {n} --body-file <ファイル>")}\`）。`,
     `- コメントは私の GitHub アカウントで投稿されるので、1行目を「${REVIEW_HEADING}」にしてください。`,
-    "- 指摘は `### High`・`### Medium`・`### Low` の3つの見出しに分けて書いてください。指摘がない見出しには「なし」と書きます。",
-    "- 最後の行に、次の印をそのまま1行で入れてください。verdict は、High の指摘が1件以上あれば changes、High の指摘がなければ mergeable にします（Medium・Low だけのときも、指摘がないときも mergeable です）。sha は、レビューした head の commit の SHA（40桁）です。" +
+    "- 指摘は `### High`・`### Medium`・`### Low`・`### 範囲外（参考）` の4つの見出しに分けて書いてください。指摘がない見出しには「なし」と書きます。",
+    "- 最後の行に、次の印をそのまま1行で入れてください。verdict は、High の指摘が1件以上あれば changes、High の指摘がなければ mergeable にします（Medium・Low だけのときも、指摘がないときも mergeable です）。範囲外（参考）の指摘は verdict に含めません。sha は、レビューした head の commit の SHA（40桁）です。" +
       `\`${gh(pr, "pr view {n} --json headRefOid -q .headRefOid")}\` で確かめてください。`,
     "  `<!-- gasho-review verdict=mergeable sha=<SHA> -->`",
     "- approve や request changes のレビューは付けないでください（あとで頼みます）。",
@@ -101,7 +116,8 @@ export function sendBackInstruction(pr: PrRef, mark: ReviewMark): string {
     `${pr.url} の Pull request #${pr.number}「${pr.title}」を差し戻してください。`,
     `${mark.url} のレビュー結果のコメントを元に、\`${gh(pr, "pr review {n} --request-changes --body-file <ファイル>")}\` で request changes のレビューを付けます。` +
       "本文には、必ず直してほしい点として High の指摘を要約して書き、そのコメントへのリンクも入れてください。" +
-      "Medium・Low の指摘があれば、High とは分けて「参考」の見出しの下に、直さなくてもマージを止めないものとして書いてください。",
+      "Medium・Low の指摘があれば、High とは分けて「参考」の見出しの下に、直さなくてもマージを止めないものとして書いてください。" +
+      "「範囲外（参考）」の指摘は、本文に入れないでください。",
     UNGRADED_REVIEW,
     "自分で直したり push したりはしないでください。終わったら、そのことを短く伝えてください。",
   ].join("\n");
@@ -112,7 +128,7 @@ export function fixInstruction(pr: PrRef, mark: ReviewMark): string {
   return [
     `${pr.url} の Pull request #${pr.number}「${pr.title}」は私の Pull request なので、差し戻す代わりに直してください。`,
     `${mark.url} のレビュー結果のコメントにある High の指摘をすべて、この worktree で直して commit し、head のブランチ（${pr.branch}）に push します。`,
-    "Medium・Low の指摘は直さなくてかまいません。",
+    "Medium・Low の指摘は直さなくてかまいません。「範囲外（参考）」の指摘は、この Pull request では直さないでください。",
     UNGRADED_REVIEW,
     "push したあとは、もう一度レビューするまでマージしないでください。終わったら、何を直したかを短く伝えてください。",
   ].join("\n");
