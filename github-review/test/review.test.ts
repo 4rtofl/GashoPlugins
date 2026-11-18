@@ -206,6 +206,18 @@ test("remove: after its author rebased and force-pushed, the commit the worktree
   await git(s.primary, "fetch", "origin");
   assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr, head }, { onGitHub: s.onGitHub }), { path: dest, branch: "feat/6-b" });
 
+  // The reviewer's commit, pushed and then force-pushed away, is on GitHub too; once the reflog lost its older entries,
+  // the first one left is that commit, which does not count as the one the worktree was made at.
+  const again = await createWorktree(exec, await s.clone(), pr);
+  await fs.writeFile(path.join(again.path, "review.txt"), "mine\n");
+  await git(again.path, "add", ".");
+  await git(again.path, "commit", "-m", "mine");
+  await git(again.path, "push", "origin", "HEAD:feat/6-b");
+  const dropped = await rebase("refs/heads/feat/6-b");
+  await git(s.primary, "fetch", "origin");
+  for (const entry of (await git(again.path, "reflog", "--format=%gd")).split("\n").slice(1).reverse()) await git(again.path, "reflog", "delete", entry);
+  await assert.rejects(removeWorktree(exec, await s.clone(), { ...pr, head: dropped }, { onGitHub: s.onGitHub }), (e: unknown) => e instanceof ReviewError && /push していない commit が 2 個/.test(e.message));
+
   // A review worktree made by hand on a commit never pushed: GitHub does not have the one it was made at.
   await git(s.primary, "switch", "-c", "wip");
   await fs.writeFile(path.join(s.primary, "wip.txt"), "wip\n");
@@ -227,6 +239,13 @@ test("worktree: a review worktree whose folder is gone does not open, and is mad
   assert.deepEqual(prWorktree(await s.clone(), pr7), { path: dest, review: true, missing: true });
   assert.deepEqual(await createWorktree(exec, await s.clone(), pr7), { path: dest, created: true });
   assert.equal(await git(dest, "rev-parse", "HEAD"), pr7.head);
+  // Its HEAD and reflog are read in the primary checkout then: after a force-push, the commit it was made at counts.
+  await fs.rm(dest, { recursive: true });
+  const origin = path.join(s.root, "origin.git");
+  const rebased = await git(origin, "commit-tree", await s.sha(`${pr7.head}^{tree}`), "-p", await s.sha("main"), "-m", "rebased");
+  await git(origin, "update-ref", "refs/pull/7/head", rebased);
+  await assert.rejects(removeWorktree(exec, await s.clone(), { ...pr7, head: rebased }), (e: unknown) => e instanceof ReviewError && /push していない commit が 1 個/.test(e.message));
+  assert.deepEqual(await removeWorktree(exec, await s.clone(), { ...pr7, head: rebased }, { onGitHub: s.onGitHub }), { path: dest });
 
   // A commit made in it is only on its HEAD, which git forgets with it.
   const pr8 = await fork(8);
