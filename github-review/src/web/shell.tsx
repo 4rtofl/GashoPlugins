@@ -10,6 +10,7 @@ import { parseTemplates } from "../template.ts";
 import type { Place } from "../types.ts";
 import { working } from "../verdict.ts";
 import { cleanUp, removeFinishedSession, type Actions, type Item, type Notice, type Spot, type Tools } from "./actions";
+import { holdSending, useAsked } from "./asked";
 import { AskDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
 import type { Source } from "./listing";
 import type { RowShared } from "./row";
@@ -42,7 +43,16 @@ export function useRowShell({
   const [trust, setTrust] = useState<Question<{ path: string; warnings: string[] }>>();
   const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot }>>();
   const [asking, setAsking] = useState<Question<{ kind: CleanupKind; item: Item; spot: Spot }, { cleanup: boolean } | undefined>>();
-  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  const { sending } = useAsked();
+  // What this page's buttons hold. A dialog of a page that was left is never answered: its button is not held after that.
+  const held = useRef(new Set<() => void>());
+  useEffect(
+    () => () => {
+      for (const release of held.current) release();
+      held.current.clear();
+    },
+    [],
+  );
 
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
@@ -51,6 +61,7 @@ export function useRowShell({
       askRemove: (q) => new Promise<boolean>((resolve) => setRemoving({ ...q, answer: resolve })),
       askAgentFor: (q) => new Promise<{ cleanup: boolean } | undefined>((resolve) => setAsking({ ...q, answer: resolve })),
       reload: (id) => sources[id]?.reload(),
+      refresh: async (id) => sources[id]?.refresh(),
     };
     return { call, launch, send, remove, removeSession, nav, actions };
   }, [call, launch, send, remove, removeSession, nav, sources]);
@@ -60,22 +71,24 @@ export function useRowShell({
   const shared: RowShared = {
     tools,
     templates,
-    busy,
+    busy: sending,
     machines: ready.length > 1,
     merge,
+    listedAt: (machines) => {
+      const times = machines.map((id) => sources[id]?.at);
+      return times.every((t) => t !== undefined) && times.length > 0 ? Math.min(...(times as number[])) : undefined;
+    },
     ...(select ? { select } : {}),
     ...(selected ? { selected } : {}),
     run: (url, work) => {
-      setBusy((cur) => new Set(cur).add(url));
+      const release = holdSending(url);
+      held.current.add(release);
       void work()
         .catch((e: unknown) => setNotice({ text: e instanceof Error ? e.message : String(e), tone: "danger" }))
-        .finally(() =>
-          setBusy((cur) => {
-            const next = new Set(cur);
-            next.delete(url);
-            return next;
-          }),
-        );
+        .finally(() => {
+          held.current.delete(release);
+          release();
+        });
     },
   };
 
