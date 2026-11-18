@@ -236,6 +236,7 @@ export function KanbanPage(_: PageProps) {
   const actions = useMemo<CardActions>(
     () => ({
       notify: setNotice,
+      dismiss: (n) => setNotice((cur) => (cur === n ? undefined : cur)),
       askTrust: (q) => new Promise<boolean>((resolve) => setTrusts((cur) => [...cur, { ...q, answer: resolve }])),
       begin: () => {
         starting.current++;

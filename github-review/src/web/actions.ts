@@ -43,6 +43,8 @@ export interface Notice {
 /** What the rows ask of the page. */
 export interface Actions {
   notify: (n: Notice | undefined) => void;
+  /** Takes `n` off, unless another notice has come since (another button's session to open, say). */
+  dismiss: (n: Notice) => void;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
   askRemove: (q: { item: Item; spot: Spot }) => Promise<boolean>;
   /**
@@ -98,7 +100,7 @@ type Started = { ok: true; sessionId: string; trusted: boolean } | { ok: false; 
 
 /**
  * Starts a session in a folder, asking the person first when Claude Code does not trust it yet; the notice the caller
- * shows while it starts (`starting`) is hidden while the person is asked, and back once they say yes. `trustQuietly`: a
+ * shows while it starts (`starting`) is taken off while the person is asked, and back once they say yes. `trustQuietly`: a
  * folder Claude Code has no warnings about is trusted without asking (the person has said yes once in this run).
  */
 async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: Tools, trustQuietly = false): Promise<Started> {
@@ -107,7 +109,7 @@ async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: 
   if (!r.ok && r.needsTrust) {
     const warnings = r.trustWarnings ?? [];
     if (!(trustQuietly && warnings.length === 0)) {
-      t.actions.notify(undefined);
+      t.actions.dismiss(starting);
       if (!(await t.actions.askTrust({ path: cwd, warnings }))) return { ok: false };
       t.actions.notify(starting);
     }
@@ -149,7 +151,7 @@ function start(machine: MachineInfo, cwd: string, t: Tools): Promise<string | un
 /** Opens a session a button was pressed to open; while another button is still starting one, the notice opens it. */
 function openStarted(machine: MachineInfo, sessionId: string, dir: string, t: Tools): void {
   if (sessionStarts > 0) {
-    sentNotice(machine, sessionId, `${folderName(dir)} のセッションを開けます。ほかのセッションの起動が終わるまで、このページのままにします。`, t);
+    sentNotice(machine, sessionId, `${folderName(dir)} のセッションを開けます。ほかのセッションの起動中だったので、このページのままにしました。`, t);
     return;
   }
   t.actions.notify(undefined);

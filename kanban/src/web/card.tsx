@@ -33,6 +33,8 @@ export interface Notice {
  */
 export interface CardActions {
   notify: (n: Notice | undefined) => void;
+  /** Takes `n` off, unless another notice has come since (another card's session to open, say). */
+  dismiss: (n: Notice) => void;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
   /** Counts a session being started, its folder's question included, until the function it returns is called. */
   begin: () => () => void;
@@ -40,7 +42,7 @@ export interface CardActions {
   starting: () => number;
 }
 
-export const CardActionsContext = createContext<CardActions>({ notify: () => undefined, askTrust: async () => false, begin: () => () => undefined, starting: () => 0 });
+export const CardActionsContext = createContext<CardActions>({ notify: () => undefined, dismiss: () => undefined, askTrust: async () => false, begin: () => () => undefined, starting: () => 0 });
 
 /** The pull request's state, as an icon in GitHub's colors: none yet, open, draft, merged or closed. */
 function prLook(card: KanbanCard): { Icon: LucideIcon; className: string; label: string } {
@@ -249,7 +251,7 @@ async function startSession({ machine, card }: PlacedCard, launch: ReturnType<ty
     actions.notify(starting);
     let r = await launch({ machine: machine.id, cwd });
     if (!r.ok && r.needsTrust) {
-      actions.notify(undefined);
+      actions.dismiss(starting);
       if (!(await actions.askTrust({ path: cwd, warnings: r.trustWarnings ?? [] }))) return undefined;
       actions.notify(starting);
       r = await launch({ machine: machine.id, cwd, trust: true });
@@ -377,7 +379,7 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
                     // Leaving the board would drop the question of another card still starting one: the board stays,
                     // and the last to start is opened (the others are in the sidebar).
                     if (actions.starting() > 0) {
-                      actions.notify({ text: `${card.label} でセッションを起動しました。ほかのカードの起動が終わるまで、カンバンのままにします。`, session });
+                      actions.notify({ text: `${card.label} でセッションを起動しました。ほかのカードの起動中だったので、カンバンのままにしました。`, session });
                       return;
                     }
                     actions.notify({ text: `${card.label} でセッションを起動しました。`, session });

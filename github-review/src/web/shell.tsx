@@ -73,6 +73,7 @@ export function useRowShell({
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
       notify: setNotice,
+      dismiss: (n) => setNotice((cur) => (cur === n ? undefined : cur)),
       askTrust: (q) =>
         left.current
           ? Promise.resolve(false)

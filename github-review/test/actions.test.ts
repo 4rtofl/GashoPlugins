@@ -49,6 +49,9 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
     nav: { openSession: (machine: string, sessionId: string) => opened.push(`${machine}/${sessionId}`) } as unknown as Tools["nav"],
     actions: {
       notify: (n) => notices.push(n),
+      dismiss: (n) => {
+        if (notices.at(-1) === n) notices.push(undefined);
+      },
       askTrust: async () => true,
       askRemove: async () => true,
       askAgentFor: async () => ({ cleanup: true }),

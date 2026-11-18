@@ -25,7 +25,7 @@ function draw(row: PlacedCard, actions: Partial<CardActions> = {}) {
     starting++;
     return () => void starting--;
   };
-  const given: CardActions = { notify: vi.fn(), askTrust: vi.fn(async () => false), begin, starting: () => starting, ...actions };
+  const given: CardActions = { notify: vi.fn(), dismiss: vi.fn(), askTrust: vi.fn(async () => false), begin, starting: () => starting, ...actions };
   render(
     <CardActionsContext.Provider value={given}>
       <Card row={row} now={Date.now()} where={{ machines: false, repos: false }} />

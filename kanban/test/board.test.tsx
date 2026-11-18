@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import type { LaunchResult } from "@gasho/plugin-sdk";
 import { answerCalls, lastRequest, machine, NOW, respond, sdk, set } from "../../test/sdk.tsx";
 import { KanbanPage } from "../src/web/board.tsx";
 import type { Board } from "../src/types.ts";
@@ -97,6 +98,28 @@ describe("KanbanPage", () => {
     expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/issue-1-x", trust: true });
     // The "starting…" notice may still be leaving while this one comes in, so both can be a status for a moment.
     expect((await screen.findByText("issue-1-x でセッションを起動しました。")).closest('[role="status"]')).not.toBeNull();
+  });
+
+  it("keeps the notice of a card's session started while another card waits to ask about its folder, which opens it once that is answered", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    const two = board();
+    two.repos[0]!.worktrees.push({ branch: "feat/2-y", path: "/work/issue-2-y" });
+    respond({ board: { data: two } });
+    // Claude Code answers for issue-2-y only when the test says.
+    let answer!: (r: LaunchResult) => void;
+    sdk.launchSession.mockImplementation((input) =>
+      input.cwd === "/work/issue-2-y" ? (new Promise<LaunchResult>((resolve) => (answer = resolve)) as unknown as LaunchResult) : { ok: true, sessionId: "s-1" },
+    );
+    render(<KanbanPage params={{}} />);
+    for (const label of ["issue-2-y", "issue-1-x"]) {
+      await userEvent.click(screen.getByRole("button", { name: `${label} のメニュー` }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+    }
+    expect(await screen.findByText("issue-1-x でセッションを起動しました。ほかのカードの起動中だったので、カンバンのままにしました。")).toBeTruthy();
+    await act(async () => answer({ ok: false, error: "trust", needsTrust: true }));
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
+    await userEvent.click(await screen.findByRole("button", { name: "セッションを開く" }));
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-1");
   });
 
   it("starts nothing when the person does not trust the folder", async () => {
