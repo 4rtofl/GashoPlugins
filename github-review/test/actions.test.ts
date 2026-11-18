@@ -73,6 +73,7 @@ function fake(
       askRemove: async () => true,
       askAgentFor: async () => ({ cleanup: true }),
       reload: () => {},
+      refresh: async () => {},
     },
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };
@@ -86,7 +87,7 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.deepEqual(f.launched, [DIR]);
   assert.equal(f.sent.length, 1);
   assert.match(f.sent[0] ?? "", /^s-new: #5 をレビュー\n/);
-  assert.deepEqual(f.efforts, ["xhigh"]);
+  assert.deepEqual(f.efforts, ["high"]);
   assert.deepEqual(f.opened, []);
   // A pull request of the same repository is not asked about.
   assert.deepEqual(f.methods, ["create", "reviewSession"]);
@@ -288,4 +289,31 @@ test("a session that cannot be removed stays, says why, and is not tried again",
   assert.deepEqual(f.steps, ["reviewSession:claim", "reviewSession:forget"]);
   assert.equal(f.last()?.tone, "danger");
   assert.match(f.last()?.text ?? "", /削除できません/);
+});
+
+test("reviewIn: tells whether the review went, also when the effort level could not be switched", async () => {
+  const template = { name: "レビューする", body: "x" };
+  const sent = fake();
+  assert.equal(await reviewIn(sent.item, sent.spot, template, sent.tools), true);
+  const warned = fake({ send: "warn" });
+  assert.equal(await reviewIn(warned.item, warned.spot, template, warned.tools), true);
+  assert.equal(warned.last()?.tone, "danger");
+  const failed = fake({ send: "fail" });
+  assert.equal(await reviewIn(failed.item, failed.spot, template, failed.tools), false);
+  const notStarted = fake({ launch: "fail" });
+  assert.equal(await reviewIn(notStarted.item, notStarted.spot, template, notStarted.tools), false);
+});
+
+test("createWorktree: tells whether a review went", async () => {
+  const template = { name: "レビューする", body: "x" };
+  const sent = fake();
+  assert.equal(await createWorktree(sent.item, sent.spot, template, sent.tools), true);
+  const warned = fake({ send: "warn" });
+  assert.equal(await createWorktree(warned.item, warned.spot, template, warned.tools), true);
+  const failed = fake({ send: "fail" });
+  assert.equal(await createWorktree(failed.item, failed.spot, template, failed.tools), false);
+  const none = fake();
+  assert.equal(await createWorktree(none.item, none.spot, undefined, none.tools), false);
+  const there = fake({ created: false });
+  assert.equal(await createWorktree(there.item, there.spot, template, there.tools), false);
 });
