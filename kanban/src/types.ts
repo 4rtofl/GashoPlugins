@@ -28,7 +28,7 @@ export interface ReviewPr {
 
 /** A watched repository as last read. Paths are real paths, to match the sessions' folders. */
 export interface RepoMaterial extends FetchRepo {
-  /** The review worktrees on a branch, with the pull request each is for. */
+  /** The review worktrees, with the pull request each is for. */
   reviews?: ReviewPr[];
   /** The board plugin chosen for it in "見る repo" (a folder of the board plugins' folder). */
   plugin?: string;

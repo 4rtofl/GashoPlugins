@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
 import { arrangeCards, assignSessions, boardCards, boardHeadings, cardsOf, issueOf, kanbanCards, placeCard, type BoardPlugins, type SessionLike } from "../src/cards.ts";
-import type { Fetch, FetchContext, FetchRepo, StateCard } from "../plugins/types.ts";
-import { ghError, gitCommonDir, parseClosed, parseGitConfig, parseGitHubUrl, parsePrs, parseReviews, parseWorktrees, readRepo, repoOptions, reviewQuery, type Exec, type GitHubRead } from "../src/daemon/git.ts";
+import type { Fetch, FetchContext, FetchRepo, StateCard, Worktree } from "../plugins/types.ts";
+import { ghError, gitCommonDir, nameArgs, parseClosed, parseGitConfig, parseGitHubUrl, parseName, parsePrs, parseReviews, parseWorktrees, readRepo, repoOptions, reviewQuery, type Exec, type GitHubRead } from "../src/daemon/git.ts";
 import { BoardFolder } from "../src/daemon/folder.ts";
 import { FETCH_EVERY_MS, READ_EVERY_MS, Reader } from "../src/daemon/reader.ts";
 import { linkPlugin } from "../src/board-code.ts";
@@ -169,7 +171,13 @@ test("git's worktree list, GitHub remotes and gh's pull requests are read, and a
     // Its folder is gone: no card, so that nothing starts there.
     ...["worktree /r/gone", "HEAD d", "branch refs/heads/feat/2-y", "prunable gitdir file points to non-existent location", ""],
   ].join("\n");
-  assert.deepEqual(parseWorktrees(porcelain), { primary: { path: "/r/main", branch: "main", head: "a" }, worktrees: [{ branch: "feat/1-x", path: "/r/wt", head: "b" }] });
+  assert.deepEqual(parseWorktrees(porcelain), {
+    primary: { path: "/r/main", branch: "main", head: "a" },
+    worktrees: [
+      { branch: "feat/1-x", path: "/r/wt", head: "b" },
+      { path: "/r/d", head: "c", detached: true },
+    ],
+  });
   assert.equal(parseWorktrees("worktree /r/bare.git\nbare\n").primary?.bare, true);
   assert.equal(parseGitHubUrl("git@github.com:4rtofl/Gasho.git\n"), "4rtofl/Gasho");
   assert.equal(parseGitHubUrl("https://user:token@github.com/4rtofl/GashoPlugins"), "4rtofl/GashoPlugins");
@@ -185,6 +193,9 @@ test("git's worktree list, GitHub remotes and gh's pull requests are read, and a
     ]).map((p) => [p.number, p.headRefOid]),
     [[7, "h7"]],
   );
+  assert.ok(nameArgs("4rtoflow/GashoPlugins").includes("o=4rtoflow") && nameArgs("4rtoflow/GashoPlugins").includes("n=GashoPlugins"));
+  assert.equal(parseName(JSON.stringify({ data: { repository: { nameWithOwner: "4rtofl/GashoPlugins" } } })), "4rtofl/GashoPlugins");
+  assert.equal(parseName(JSON.stringify({ data: { repository: null }, errors: [{ type: "NOT_FOUND" }] })), undefined);
   assert.match(ghError({ code: "ENOENT" }), /gh）がありません/);
   assert.match(ghError({ stderr: "To get started with GitHub CLI, please run:  gh auth login" }), /gh auth login を実行/);
 });
@@ -256,11 +267,69 @@ test("a review worktree gets the pull request it is for from one GraphQL query, 
   assert.equal(queries.length, 1);
 });
 
+const run = promisify(execFile);
+
+/** ctx.exec as gasho-daemon gives it: no shell, no prompts. */
+const realExec: Exec = async (command, args, o = {}) => {
+  const { stdout, stderr } = await run(command, args, { timeout: o.timeoutMs ?? 30_000, maxBuffer: o.maxBuffer ?? 8 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...o.env } });
+  return { stdout, stderr };
+};
+
+test("a worktree whose rebase stopped keeps its branch and pull request, and a detached one has a card too, with their sessions", async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanban-git-")));
+  const git = (cwd: string, ...args: string[]) => run("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args]);
+  const [main, wt, review] = ["main", "wt", "review-7"].map((d) => path.join(root, d)) as [string, string, string];
+  await fs.mkdir(main);
+  await git(main, "init", "-q", "-b", "main");
+  await fs.writeFile(path.join(main, "f"), "a\n");
+  await git(main, "add", "f");
+  await git(main, "commit", "-qm", "a");
+  await git(main, "worktree", "add", "-q", "-b", "feat/5-x", wt);
+  await git(main, "worktree", "add", "-q", "--detach", review);
+  await fs.writeFile(path.join(main, "f"), "b\n");
+  await git(main, "commit", "-qam", "b");
+  await fs.writeFile(path.join(wt, "f"), "c\n");
+  await git(wt, "commit", "-qam", "c");
+  // The rebase stops at the conflict, with HEAD detached.
+  await assert.rejects(git(wt, "rebase", "main"));
+
+  const github: GitHubRead = async (args) => ({ stdout: JSON.stringify(args[args.indexOf("--state") + 1] === "open" ? [pr({ number: 6, headRefName: "feat/5-x" })] : []), stderr: "" });
+  const m = await readRepo(realExec, github, { path: main, github: "o/r" });
+  // Each is on a commit; what else it says is what the test is about.
+  const withoutHead = ({ head, ...w }: Worktree) => {
+    assert.match(head ?? "", /^[0-9a-f]{40}$/);
+    return w;
+  };
+  assert.deepEqual(withoutHead(m.primary), { path: main, branch: "main" });
+  assert.deepEqual(
+    [...m.worktrees].map(withoutHead).sort((a, b) => a.path.localeCompare(b.path)),
+    [
+      { path: review, detached: true },
+      { path: wt, branch: "feat/5-x", detached: true, rebasing: true },
+    ],
+  );
+  const byPath = assignSessions([session("waiting", wt), session("busy", path.join(review, "src"))], [m.primary.path, ...m.worktrees.map((w) => w.path)]);
+  assert.deepEqual(
+    cardsOf(m, byPath, NONE)
+      .map((c) => [c.label, c.branch, c.pr?.number, c.detached, c.rebasing, c.sessions.map((x) => x.status)])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    [
+      ["review-7", undefined, undefined, true, undefined, ["busy"]],
+      ["wt", "feat/5-x", 6, true, true, ["waiting"]],
+    ],
+  );
+  await fs.rm(root, { recursive: true, force: true });
+});
+
 /** GitHub's rate limit resets then (seconds since the epoch, as the tests' clock counts). */
 const RESET = 2_000;
 
-/** A working server with one repository (o/r, at /r/main, with a worktree), its git, and gh as gasho-daemon runs it. */
-function fakeServer() {
+/**
+ * A working server with one repository (o/r, or what its origin says, at /r/main, with a worktree), its git, and gh as
+ * gasho-daemon runs it. `names`: by the name an origin says, the name GitHub has now (null: GitHub does not find it);
+ * GitHub's search takes the names it has now only.
+ */
+function fakeServer({ origin = "o/r", names = {} }: { origin?: string; names?: Record<string, string | null> } = {}) {
   const calls: string[] = [];
   /** maxAgeSeconds of each gh call, as `calls` has them. */
   const ages = new Map<number, number | undefined>();
@@ -275,14 +344,25 @@ function fakeServer() {
     if (command !== "git" || !cwd?.startsWith("/r/")) throw Object.assign(new Error("not a git repository"), { code: 128, stdout: "", stderr: "" });
     if (rest[0] === "rev-parse") return { stdout: "/r/main/.git\n", stderr: "" };
     if (rest[0] === "worktree") return { stdout: "worktree /r/main\nbranch refs/heads/main\n\nworktree /r/wt\nbranch refs/heads/feat/5-x\n", stderr: "" };
-    return { stdout: "git@github.com:o/r.git\n", stderr: "" };
+    return { stdout: `git@github.com:${origin}.git\n`, stderr: "" };
   };
   const github: GitHubRead = async (args, o) => {
     ages.set(calls.push(["gh", ...args].join(" ")) - 1, o?.maxAgeSeconds);
     if (args[0] === "api" && args[1] === "rate_limit") return { stdout: JSON.stringify({ resources: { graphql: { limit: 5000, remaining: pointsLeft, reset: RESET } } }), stderr: "" };
     if (ghFails) throw Object.assign(new Error("Command failed"), { code: 1, stdout: "", stderr: "error connecting to api.github.com" });
+    if (args[0] === "api" && args[1] === "graphql") {
+      const asked = `${args.find((a) => a.startsWith("o="))?.slice(2)}/${args.find((a) => a.startsWith("n="))?.slice(2)}`;
+      const name = asked in names ? names[asked] : asked;
+      if (name === null) {
+        const stdout = JSON.stringify({ data: { repository: null }, errors: [{ type: "NOT_FOUND" }] });
+        throw Object.assign(new Error("Command failed"), { code: 1, stdout, stderr: `gh: Could not resolve to a Repository with the name '${asked}'.` });
+      }
+      return { stdout: JSON.stringify({ data: { repository: { nameWithOwner: name } } }), stderr: "" };
+    }
+    const repo = args[args.indexOf("--repo") + 1] ?? "";
     const state = args[args.indexOf("--state") + 1];
-    return { stdout: JSON.stringify(state === "open" ? [pr({ number: 6, headRefName: "feat/5-x" })] : []), stderr: "" };
+    const found = state === "open" && (!(repo in names) || names[repo] === repo);
+    return { stdout: JSON.stringify(found ? [pr({ number: 6, headRefName: "feat/5-x" })] : []), stderr: "" };
   };
   return { exec, github, calls, ages, fail: (v: boolean) => (ghFails = v), points: (n: number) => (pointsLeft = n) };
 }
@@ -646,5 +726,45 @@ test("saving a file of the board plugins' folder reads them again, and says whic
   await new Promise((r) => setTimeout(r, 600));
   assert.equal(changes.length, 1);
   folder.stop();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("a clone whose origin says its owner's old name shows my pull requests by the name GitHub has now, read again once an hour", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kanban-"));
+  let now = 1_000_000;
+  const start = (names: Record<string, string | null>, origin: string) => {
+    const server = fakeServer({ origin, names });
+    const seen: Fetch = async (repo) => repo.repo;
+    const file = path.join(dir, `${origin.replace("/", "-")}.json`);
+    const reader = new Reader({ exec: server.exec, github: server.github, fetcher: (n) => (n === "seen" ? seen : undefined), storeDir: dir, folders: () => ["/r/wt"], file, log: () => undefined, now: () => now });
+    const reading = async (ms: number) => {
+      now += ms;
+      reader.board();
+      await reader.settled();
+      return reader.board();
+    };
+    const asked = () => server.calls.filter((c) => c.startsWith("gh api graphql")).length;
+    return { reader, reading, asked };
+  };
+
+  const old = start({ "old/r": "new/r" }, "old/r");
+  await old.reader.watch(["/r/main"], { "/r/main": "seen" });
+  await old.reader.settled();
+  const board = old.reader.board();
+  // The cards, and what the board plugin's fetch gets, have the name GitHub has now.
+  assert.deepEqual([board.repos[0]?.repo, board.repos[0]?.prs.map((p) => p.number), board.repos[0]?.fetched, board.errors], ["new/r", [6], "new/r", []]);
+  assert.equal(old.asked(), 1);
+  await old.reading(READ_EVERY_MS);
+  assert.equal(old.asked(), 1);
+  await old.reading(60 * 60_000);
+  assert.equal(old.asked(), 2);
+
+  // One GitHub does not find keeps its origin's name, and is not asked about again within the hour.
+  const gone = start({ "gone/r": null }, "gone/r");
+  await gone.reader.watch(["/r/main"]);
+  await gone.reader.settled();
+  assert.equal(gone.reader.board().repos[0]?.repo, "gone/r");
+  await gone.reading(READ_EVERY_MS);
+  assert.equal(gone.asked(), 1);
   await fs.rm(dir, { recursive: true, force: true });
 });

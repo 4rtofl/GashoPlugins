@@ -7,7 +7,7 @@
 // first); without one, every card goes in the first column. No React here, so that the tests run it as it is.
 import type { MachineInfo } from "@gasho/plugin-sdk";
 import { headingsWith, KANBAN_COLUMNS, placeWith } from "../plugins/place.ts";
-import type { BoardHeading, CardAction, CardMark, CardSession, KanbanColumn, StateCard } from "../plugins/types.ts";
+import type { BoardHeading, CardAction, CardMark, CardSession, KanbanColumn, StateCard, Worktree } from "../plugins/types.ts";
 import type { Board, ClosedPr, OpenPr, RepoMaterial, ReviewPr } from "./types.ts";
 
 export { KANBAN_COLUMNS };
@@ -133,10 +133,9 @@ export function stateCardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>
   const open = new Map(m.prs.filter((p) => !p.isCrossRepository).map((p) => [p.headRefName, p]));
   const closedOf = new Map(m.closed.map((p) => [p.headRefName, p]));
   const reviews = new Map((m.reviews ?? []).map((r) => [r.path, r]));
-  const trees: { branch?: string; path: string; head?: string; primary: boolean }[] = m.worktrees.map((w) => ({ ...w, primary: false }));
-  trees.push({ ...m.primary, primary: true });
+  const trees: (Worktree & { primary: boolean })[] = [...m.worktrees.map((w) => ({ ...w, primary: false })), { ...m.primary, primary: true }];
   const cards: StateCard[] = [];
-  const card = (t: { branch?: string; path?: string; primary: boolean }, shown: ShownPr | undefined, sessions: SessionLike[], review = false) => {
+  const card = (t: Partial<Worktree> & { primary: boolean }, shown: ShownPr | undefined, sessions: SessionLike[], review = false) => {
     const issue = issueOf(t.branch);
     cards.push({
       // A pull request without a worktree shows once per clone of its repository, so the clone is part of its id.
@@ -145,6 +144,8 @@ export function stateCardsOf(m: RepoMaterial, byPath: Map<string, SessionLike[]>
       label: t.path ? basename(t.path) : `PR #${shown?.pr.number}`,
       ...(t.path ? { path: t.path } : {}),
       ...(t.branch ? { branch: t.branch } : {}),
+      ...(t.detached ? { detached: true } : {}),
+      ...(t.rebasing ? { rebasing: true } : {}),
       ...(t.primary ? { primary: true } : {}),
       title: shown?.title || t.branch || basename(t.path ?? ""),
       ...(issue !== undefined ? { issue } : {}),
