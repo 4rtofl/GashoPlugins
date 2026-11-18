@@ -1,14 +1,15 @@
 // What the review page and the page of one pull request share around the rows' buttons: the tools they use, the
 // templates and the settings of the merge, which rows are at work, and the dialogs and the notice they show; and the
-// removal of the review worktrees whose merge or send-back is done.
+// removal of the review worktrees whose merge or send-back is done, and of the sessions that have posted their review.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useCall, useLaunchSession, useNavigation, useRemoveWorktree, removeWorktreeProblem, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
+import { useCall, useLaunchSession, useNavigation, useRemoveSession, useRemoveWorktree, removeWorktreeProblem, useSendInput, useSetting, type MachineInfo } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../cleanup.ts";
 import { mergeMethodOf } from "../instructions.ts";
+import { atRest } from "../review-session.ts";
 import { parseTemplates } from "../template.ts";
 import type { Place } from "../types.ts";
 import { working } from "../verdict.ts";
-import { cleanUp, type Actions, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "./actions";
+import { cleanUp, removeFinishedSession, type Actions, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "./actions";
 import { AskDialog, ForkDialog, RemoveDialog, Toast, TrustDialog } from "./dialogs";
 import type { Source } from "./listing";
 import type { RowShared } from "./row";
@@ -31,6 +32,7 @@ export function useRowShell({
   const launch = useLaunchSession();
   const send = useSendInput();
   const remove = useRemoveWorktree();
+  const removeSession = useRemoveSession();
   const [rawTemplates] = useSetting<string>("templates");
   const templates = useMemo(() => parseTemplates(rawTemplates), [rawTemplates]);
   const [rawMethod] = useSetting<string>("mergeMethod");
@@ -52,9 +54,10 @@ export function useRowShell({
       askAgentFor: (q) => new Promise<{ cleanup: boolean } | undefined>((resolve) => setAsking({ ...q, answer: resolve })),
       reload: (id) => sources[id]?.reload(),
     };
-    return { call, launch, send, remove, nav, actions };
-  }, [call, launch, send, remove, nav, sources]);
+    return { call, launch, send, remove, removeSession, nav, actions };
+  }, [call, launch, send, remove, removeSession, nav, sources]);
   useAutoCleanup(sources, ready, tools);
+  useFinishedSessions(sources, ready, tools);
 
   const shared: RowShared = {
     tools,
@@ -114,6 +117,32 @@ function useAutoCleanup(sources: Record<string, Source>, ready: MachineInfo[], t
         if (tried.current.has(key)) continue;
         tried.current.add(key);
         void cleanUp(pr, machine, place, tools).catch((e: unknown) => tools.actions.notify({ text: e instanceof Error ? e.message : String(e), tone: "danger" }));
+      }
+    }
+  }, [sources, ready, tools]);
+}
+
+/**
+ * Removes the sessions that have posted the review sent to them, once they are at rest, on every working server the page
+ * lists. One that is gone already is forgotten. Each is tried once by this page.
+ */
+function useFinishedSessions(sources: Record<string, Source>, ready: MachineInfo[], tools: Tools): void {
+  const tried = useRef(new Set<string>());
+  useEffect(() => {
+    for (const machine of ready) {
+      const listing = sources[machine.id]?.listing;
+      if (!listing) continue;
+      for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => r.prs)]) {
+        for (const sessionId of pr.place?.finishedSessions ?? []) {
+          const session = machine.sessions.find((s) => s.sessionId === sessionId);
+          const key = `${machine.id} ${sessionId}`;
+          if ((session && !atRest(session)) || tried.current.has(key)) continue;
+          tried.current.add(key);
+          const work = session
+            ? removeFinishedSession(pr, machine, sessionId, tools)
+            : tools.call({ machine: machine.id, method: "reviewSession", params: { action: "forget", sessionId }, summary: "無くなったレビューのセッションを忘れる" });
+          void work.catch((e: unknown) => tools.actions.notify({ text: e instanceof Error ? e.message : String(e), tone: "danger" }));
+        }
       }
     }
   }, [sources, ready, tools]);

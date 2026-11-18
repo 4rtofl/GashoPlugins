@@ -1,6 +1,6 @@
 # GitHub Review（github-review）
 
-サイドバーの「レビュー」で、レビューする Pull request を探し、その行からレビュー用の worktree とセッションを用意する。github-implement は worktree を作った実装者がその Issue と Pull request を開くためのもので、こちらは手元にその Pull request の worktree が無いレビューする人のためのもの。working server の git と gh を使う。プラグインの API 1.12（ページのパネルと、送るときの Effort の切り替え）に対応した Gasho サーバーと gasho-daemon が要る。
+サイドバーの「レビュー」で、レビューする Pull request を探し、その行からレビュー用の worktree とセッションを用意する。github-implement は worktree を作った実装者がその Issue と Pull request を開くためのもので、こちらは手元にその Pull request の worktree が無いレビューする人のためのもの。working server の git と gh を使う。プラグインの API 1.14（ページのパネル、送るときの Effort の切り替え、セッションの削除）に対応した Gasho サーバーと gasho-daemon が要る。
 
 - ページの上の段に、自分にレビューを頼まれた開いている Pull request（GitHub 全体。`review-requested:@me`）を、下の段に、対象リポジトリの Pull request を出す。対象リポジトリは、ヘッダーの「対象リポジトリ」から working server ごとに選ぶ（1台に30まで）。選べるのは、Gasho がセッションを起動できるフォルダー（Claude Code が信頼しているフォルダー）にある GitHub のリポジトリで、選んだものは working server のこのプラグイン専用のフォルダー（`~/.local/share/gasho/plugin-data/github-review/watched.json`）に覚える
 - 検索欄は1つで、GitHub の Pull request の一覧と同じ書き方（`is:`・`author:`・`label:` など）で上下の段を絞り込む。最初は `is:open`。`sort:` を書かなければ新しく開いた順に並べる。行には、GitHub の一覧と同じく、状態のアイコン（Draft を含む）・題・ラベル・チェックの結果・番号と作者と開いた時刻・レビューの状態・コメントの数を出す。段ごとに50件まで出し、それより多いときは件数を出す。clone が Claude Code の信頼しているフォルダーに無いリポジトリの Pull request は、worktree を作れないので出さない（段の件数も、出す行の数）
@@ -14,6 +14,11 @@
   - テンプレートを送るときは、そのセッションの Effort を xHigh に切り替えてから送る（Gasho の入力欄の Effort のピッカーと同じく、そのセッションだけ）。切り替えられなかったとき（このモデルでは選べないなど）は、テンプレートはそのまま送り、ページの下に理由と「セッションを開く」を出す。Effort を切り替えられない gasho-daemon（0.6.0 より前）では、切り替えずに送る
 - 自分の開いている Pull request で worktree があるもの（ふつうは、それを作った worktree）には、「worktree を作る」が出ない代わりに「レビューする」を出す。テンプレートを選ぶと、その worktree で新しいセッションを起動し（作ったときのセッションとは別にする）、「worktree を作る」と同じ指示を同じ Effort で送る。このページに留まり、通知の「セッションを開く」で開く。その worktree のセッションが作業しているあいだ（「レビュー中」）は押せない。サイドパネルにも出す
 - worktree を作ってテンプレートを送るときは、テンプレートの終わりに、レビューの結果を Pull request のコメントとして投稿する指示を足す（設定でテンプレートを直しても、判定が取れなくならないように）。コメントは自分の GitHub アカウントで投稿されるので、1行目を「## 🤖 Agent によるレビュー」にし、最後の行に画面に出ない印 `<!-- gasho-review verdict=mergeable sha=<レビューした head の SHA> -->`（`verdict` は `mergeable` か `changes`）を入れてもらう
+- テンプレートを送ったセッション（「worktree を作る」と「レビューする」）は、レビューの結果を投稿して応答が終わると、ページが自動で削除する（Gasho の `useRemoveSession`。セッションのメニューの「削除」と同じで、会話の記録は working server に残り、過去の会話から開き直せる）。消したら下に知らせを出す
+  - 消すのは、テンプレートを送ったセッションだけ。worktree は残し、自分の Pull request で変更を作ったセッションも残す。「マージしてもらう」などは、worktree に残っているセッションか、新しく起動したセッションに送る
+  - 投稿したとみなすのは、送ったあとに、送る前とは別の印付きのコメントが付いたとき。Agent が質問して止まったときなど、投稿していないあいだは消さない。作業中・応答待ち・入力待ちのあいだも消さない
+  - 投稿の前に「マージしてもらう」などを同じセッションに頼むと、そのセッションは消さない。送れなかったときと、7日たっても投稿されないときも消さない
+  - 消すのは、ページを開いているブラウザー。開いていないあいだに終わったものは、次にページを開いて一覧を読んだときに消す。いくつかのブラウザーで開いていても、gasho-daemon が1つにだけ任せる。覚えておく場所は、working server のこのプラグイン専用のフォルダー（`session-removals.json`）
 - `list` は、Pull request ごとに最新の10件のコメントを読み、自分が書いた印のうち最新のものを行に付ける（問い合わせは2点ほどになる）。また、自分が request changes を付けたかを見るため、request changes のレビューを最新の5件読む。行には、次のどれかを出す
   - レビュー中: worktree のセッションが作業中か応答待ち（送った指示が入力を待っているときも）で、今の head についての印が無い
   - マージ可能: 印が `mergeable` で、`sha` が今の head と同じ
@@ -46,6 +51,7 @@
 | `create` | write | `{ repo, number }` のレビュー用の worktree を作る。もうあれば、その場所を返す（`Created`） |
 | `projectFiles` | read | `{ repo, number }` のレビュー用の worktree の一番上にある `.claude/`・`CLAUDE.md`・`CLAUDE.local.md`・`.mcp.json`（`ProjectFiles`）。fork の Pull request でセッションを起動する前に、ページが確かめるダイアログに出す |
 | `remove` | write | `{ repo, number }` のレビュー用の worktree とローカルのブランチを消す（`Removed`） |
+| `reviewSession` | write | `{ sessionId, action }` のレビューを送ったセッション。`track`（`repo`・`number`・`before`）で覚え、`forget` で忘れ、`claim` でページが消す役を取る（`{ claimed }`）。`list` は、結果を投稿したセッションを `place.finishedSessions` に入れる |
 | `cleanup` | write | `{ repo, number, action }` の「終わったら worktree を片付ける」。`follow`（`kind` は `merge` か `sendBack`）で覚え、`forget` で忘れ、`claim` でページが消す役を取り（`{ claimed }`）、`fail`（`problem`）で消せなかった理由を残す。`list` は、覚えている Pull request の `place.cleanup` に、終わったか（`done`）を付ける |
 
 `create` と `remove` は、ブランチ名や fork かどうかを画面から受け取らず、gh で Pull request を読み直して決める。マージ・差し戻し・修正は daemon の部分ではなく、セッションの Agent が gh でする（プラグインは `session.input` で指示を送るだけで、GitHub を変えない）。git を動かすのは、`ctx.folders()` のフォルダーにある clone の中だけにする。「終わったら worktree を片付ける」で消すのは daemon の部分ではなく、ページ（Gasho の `useRemoveWorktree`、権限 `worktree.remove`）で、中のセッションも終わらせる。

@@ -5,7 +5,8 @@
 // once a merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when). Before
 // sending, it switches the session's effort level (xhigh for the review, medium to merge or send back). The daemon part
 // does the git; the page asks the person before a session starts in a fork's code, before trusting a folder, before
-// removing, and before asking for a merge or a send-back.
+// removing, and before asking for a merge or a send-back. The session a review was sent to is removed once it has
+// posted the result (review-session.ts).
 import {
   type EffortLevel,
   type MachineInfo,
@@ -13,6 +14,7 @@ import {
   type SessionInfo,
   type useCall,
   type useLaunchSession,
+  type useRemoveSession,
   type useRemoveWorktree,
   type useSendInput,
 } from "@gasho/plugin-sdk";
@@ -65,6 +67,7 @@ export interface Tools {
   launch: ReturnType<typeof useLaunchSession>;
   send: ReturnType<typeof useSendInput>;
   remove: ReturnType<typeof useRemoveWorktree>;
+  removeSession: ReturnType<typeof useRemoveSession>;
   nav: Navigation;
   actions: Actions;
 }
@@ -183,6 +186,13 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
  */
 async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<boolean> {
   t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
+  // Before it is sent, so that the result cannot come first. Without it the review goes on, and the session stays.
+  await t.call({
+    machine: machine.id,
+    method: "reviewSession",
+    params: { action: "track", sessionId, repo: pr.repo, number: pr.number, ...(pr.mark ? { before: pr.mark.url } : {}) },
+    summary: `${pr.repo}#${pr.number} のレビューの結果を投稿したら、セッションを削除する`,
+  });
   const sent = await t.send({
     machine: machine.id,
     sessionId,
@@ -191,6 +201,7 @@ async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: str
   });
   const open = { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) };
   if (!sent.ok) {
+    await forgetSession(machine, sessionId, t);
     t.actions.notify({ text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`, tone: "danger", action: open });
     return false;
   }
@@ -199,6 +210,32 @@ async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: str
     return false;
   }
   return true;
+}
+
+/** The session stays: it did not get the review, or it was given other work. */
+async function forgetSession(machine: MachineInfo, sessionId: string, t: Tools): Promise<void> {
+  await t.call({ machine: machine.id, method: "reviewSession", params: { action: "forget", sessionId }, summary: "レビューのセッションを自動では削除しない" });
+}
+
+/**
+ * Removes the session a review was sent to, now that it has posted the result and is at rest (review-session.ts); first
+ * claimed from the daemon part, so that one page does it. It is tried once: a session that cannot be removed stays.
+ */
+export async function removeFinishedSession(pr: Pick<PrRow, "repo" | "number">, machine: MachineInfo, sessionId: string, t: Tools): Promise<void> {
+  const claim = await t.call<{ claimed: boolean }>({
+    machine: machine.id,
+    method: "reviewSession",
+    params: { action: "claim", sessionId },
+    summary: `${pr.repo}#${pr.number} のレビューのセッションを削除し始める`,
+  });
+  if (!claim.ok || !claim.data.claimed) return;
+  const r = await t.removeSession({ machine: machine.id, sessionId });
+  await forgetSession(machine, sessionId, t);
+  t.actions.notify(
+    r.ok
+      ? { text: `#${pr.number} のレビューの結果を投稿したので、セッションを削除しました。` }
+      : { text: `#${pr.number} のレビューのセッションを削除できませんでした：${r.error}`, tone: "danger" },
+  );
 }
 
 /**
@@ -239,6 +276,8 @@ export async function askAgent({ pr }: Item, spot: Spot, label: string, text: st
   const session = sessionsIn(machine, dir)[0];
   const sessionId = session?.sessionId ?? (await start(machine, dir, pr, t));
   if (!sessionId) return false;
+  // It has more to do than the review: it is not removed when the review is posted.
+  if (session) await forgetSession(machine, sessionId, t);
   t.actions.notify({ text: `「${label}」を送っています…`, busy: true });
   const sent = await t.send({ machine: machine.id, sessionId, text, ...effortFor(machine, effort) });
   if (!sent.ok) {

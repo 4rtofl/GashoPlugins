@@ -9,9 +9,11 @@ import { Cleanups } from "./cleanups.ts";
 import { ghError, headArgs, parseHead } from "./gh.ts";
 import { createWorktree, projectFiles, removeWorktree, ReviewError, type PrHead } from "./git.ts";
 import { Reviewer } from "./reviewer.ts";
+import { SessionRemovals } from "./session-removals.ts";
 
 let reviewer: Reviewer | undefined;
 let cleanups: Cleanups | undefined;
+let removals: SessionRemovals | undefined;
 
 function current(): Reviewer {
   if (!reviewer) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
@@ -58,13 +60,16 @@ async function target(params: unknown, ctx: DaemonContext) {
 export default defineDaemonPlugin({
   start(ctx) {
     cleanups = new Cleanups({ file: path.join(ctx.dataDir, "cleanups.json"), log: ctx.log });
-    reviewer = new Reviewer({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log, cleanups });
+    removals = new SessionRemovals({ file: path.join(ctx.dataDir, "session-removals.json"), log: ctx.log });
+    reviewer = new Reviewer({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log, cleanups, removals });
     void reviewer.load();
     void cleanups.load();
+    void removals.load();
   },
   stop() {
     reviewer = undefined;
     cleanups = undefined;
+    removals = undefined;
   },
   methods: {
     /** The repositories that can be watched: RepoOption[]. */
@@ -127,6 +132,30 @@ export default defineDaemonPlugin({
         }
         default:
           throw new PluginError("片付けの指定が正しくありません。");
+      }
+    },
+    /**
+     * The session { sessionId } a review is sent to (review-session.ts), by `action`: "track" { repo, number, before? } —
+     * remove it once the review is posted; "forget" — not to be removed; "claim" — a page is about to remove it
+     * ({ claimed }: false when another page is at it).
+     */
+    async reviewSession(params) {
+      if (!removals) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
+      const p = objArg(params);
+      if (typeof p.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(p.sessionId)) throw new PluginError("セッションの指定が正しくありません。");
+      switch (p.action) {
+        case "track": {
+          if (p.before !== undefined && (typeof p.before !== "string" || p.before.length > 500)) throw new PluginError("レビューの結果のコメントの指定が正しくありません。");
+          await removals.track(p.sessionId, repoArg(p.repo), numberArg(p.number), p.before);
+          return { ok: true };
+        }
+        case "forget":
+          await removals.forget(p.sessionId);
+          return { ok: true };
+        case "claim":
+          return { claimed: await removals.claim(p.sessionId) };
+        default:
+          throw new PluginError("セッションの削除の指定が正しくありません。");
       }
     },
     /** Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed). */

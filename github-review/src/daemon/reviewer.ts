@@ -5,9 +5,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { cleanupDone } from "../cleanup.ts";
+import { reviewPosted } from "../review-session.ts";
 import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
 import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
 import type { Cleanups } from "./cleanups.ts";
+import type { SessionRemovals } from "./session-removals.ts";
 import { prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, type Clone, type Exec } from "./git.ts";
 
 export type GitHubRead = (args: string[], o?: { maxAgeSeconds?: number; timeoutMs?: number; maxBuffer?: number }) => Promise<{ stdout: string }>;
@@ -31,6 +33,8 @@ export interface ReviewerDeps {
   now?: () => number;
   /** The review worktrees to remove once what was asked is done. */
   cleanups?: Cleanups;
+  /** The sessions to remove once the review sent to them is posted. */
+  removals?: SessionRemovals;
 }
 
 /** A pull request as the page gets it, with where it is here. */
@@ -248,13 +252,15 @@ export class Reviewer {
         .catch((e: unknown) => this.deps.log("github-review: could not forget the worktrees cleaned up", e));
     }
     const toClean = (await cleanups?.all().catch(() => [])) ?? [];
+    const sent = (await this.deps.removals?.all().catch(() => [])) ?? [];
     const placeOf = (pr: ParsedPr): Place | undefined => {
       const c = this.pick(clones, pr.repo);
       if (!c) return undefined;
       const worktree = prWorktree(c, pr);
       const e = worktree?.review ? toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number) : undefined;
       const cleanup = e && { kind: e.kind, done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
-      return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}) };
+      const finishedSessions = sent.filter((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && reviewPosted(pr.mark, x)).map((x) => x.sessionId);
+      return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}), ...(finishedSessions.length > 0 ? { finishedSessions } : {}) };
     };
     const requested = answer.requested.prs;
     const watchedPrs = answer.watched.flatMap((w) => w.prs);
