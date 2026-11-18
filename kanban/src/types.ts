@@ -13,8 +13,23 @@ export interface RepoOption {
   github?: string;
 }
 
+/** The pull request a review worktree (review-<REPO>-<number> or review-<number>, made by github-review) is for, whoever opened it. */
+export interface ReviewPr {
+  /** The review worktree. */
+  path: string;
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "merged" | "closed";
+  isDraft?: boolean;
+  /** ISO 8601 */
+  updatedAt?: string;
+}
+
 /** A watched repository as last read. Paths are real paths, to match the sessions' folders. */
 export interface RepoMaterial extends FetchRepo {
+  /** The review worktrees, with the pull request each is for. */
+  reviews?: ReviewPr[];
   /** The board plugin chosen for it in "見る repo" (a folder of the board plugins' folder). */
   plugin?: string;
   /** What that board plugin's `fetch` gave for it last (JSON); its `state` gets it. */

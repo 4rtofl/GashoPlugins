@@ -3,6 +3,7 @@
 // loses the verdict), and what "マージしてもらう", "差し戻す" and, on my own pull request, "修正してもらう" ask; and the
 // effort level the session is switched to before each.
 import type { EffortLevel, MachineInfo } from "@gasho/plugin-sdk";
+import { fillTemplate, type Template } from "./template.ts";
 import { canPush } from "./types.ts";
 import type { ReviewMark } from "./verdict.ts";
 
@@ -26,14 +27,29 @@ interface PrRef {
 
 const gh = (pr: PrRef, args: string): string => `gh ${args.replace("{n}", String(pr.number))} --repo ${pr.repo}`;
 
+/**
+ * What a review worktree's new session is sent ("worktree を作る" and "まとめてレビューさせる" alike): the template, then
+ * how to post the review with its mark, whatever the template says.
+ */
+export function reviewInstruction(template: Pick<Template, "body">, pr: PrRef): string {
+  return `${fillTemplate(template.body, pr)}\n${markInstruction(pr)}`;
+}
+
 /** What goes after the template sent when a review worktree is made: how to post the review, with its mark. */
 export function markInstruction(pr: PrRef): string {
   return [
     "",
     "---",
+    "レビューの指摘は、次の基準で High・Medium・Low のどれかに分けてください。",
+    "- High: マージすると実害が出るもの。バグ、データの消失、セキュリティの問題、既存の機能の破壊、ビルドやテストの失敗などです。",
+    "- Medium: 直したほうがよいが、マージを止めるほどではないもの。保守しにくい実装、足りないテスト、影響の小さい特殊な場合の扱い、説明と実装のずれなどです。",
+    "- Low: 好みや細かい改善。名前、書き方、コメントの言い回しなどです。",
+    "- High か Medium かで迷ったら、どんな条件で何が起きるかを具体的に書けるかで決めます。書ければ High、書けなければ Medium です。",
+    "",
     `レビューが終わったら、結果を Pull request #${pr.number} のコメントとして投稿してください（\`${gh(pr, "pr comment {n} --body-file <ファイル>")}\`）。`,
     `- コメントは私の GitHub アカウントで投稿されるので、1行目を「${REVIEW_HEADING}」にしてください。`,
-    "- 最後の行に、次の印をそのまま1行で入れてください。verdict は、マージしてよければ mergeable、直すところがあれば changes にします。sha は、レビューした head の commit の SHA（40桁）です。" +
+    "- 指摘は `### High`・`### Medium`・`### Low` の3つの見出しに分けて書いてください。指摘がない見出しには「なし」と書きます。",
+    "- 最後の行に、次の印をそのまま1行で入れてください。verdict は、High の指摘が1件以上あれば changes、High の指摘がなければ mergeable にします（Medium・Low だけのときも、指摘がないときも mergeable です）。sha は、レビューした head の commit の SHA（40桁）です。" +
       `\`${gh(pr, "pr view {n} --json headRefOid -q .headRefOid")}\` で確かめてください。`,
     "  `<!-- gasho-review verdict=mergeable sha=<SHA> -->`",
     "- approve や request changes のレビューは付けないでください（あとで頼みます）。",
@@ -85,12 +101,17 @@ export function mergeInstruction(pr: PrRef, mark: ReviewMark, o: MergeOptions): 
   return lines.join("\n");
 }
 
+/** A review posted before the severities holds none: what it asked to mend is what must be mended. */
+const UNGRADED_REVIEW = "コメントの指摘が High・Medium・Low に分かれていないとき（この分け方を始める前のレビュー）は、直すとされた点をすべて High の指摘として扱ってください。";
+
 /** "差し戻す": request changes, from the review's comment. */
 export function sendBackInstruction(pr: PrRef, mark: ReviewMark): string {
   return [
     `${pr.url} の Pull request #${pr.number}「${pr.title}」を差し戻してください。`,
     `${mark.url} のレビュー結果のコメントを元に、\`${gh(pr, "pr review {n} --request-changes --body-file <ファイル>")}\` で request changes のレビューを付けます。` +
-      "本文には、直してほしい点をそのコメントから要約して書き、そのコメントへのリンクも入れてください。",
+      "本文には、必ず直してほしい点として High の指摘を要約して書き、そのコメントへのリンクも入れてください。" +
+      "Medium・Low の指摘があれば、High とは分けて「参考」の見出しの下に、直さなくてもマージを止めないものとして書いてください。",
+    UNGRADED_REVIEW,
     "自分で直したり push したりはしないでください。終わったら、そのことを短く伝えてください。",
   ].join("\n");
 }
@@ -99,17 +120,19 @@ export function sendBackInstruction(pr: PrRef, mark: ReviewMark): string {
 export function fixInstruction(pr: PrRef, mark: ReviewMark): string {
   return [
     `${pr.url} の Pull request #${pr.number}「${pr.title}」は私の Pull request なので、差し戻す代わりに直してください。`,
-    `${mark.url} のレビュー結果のコメントで直すとされた点を、この worktree で直して commit し、head のブランチ（${pr.branch}）に push します。`,
+    `${mark.url} のレビュー結果のコメントにある High の指摘をすべて、この worktree で直して commit し、head のブランチ（${pr.branch}）に push します。`,
+    "Medium・Low の指摘は直さなくてかまいません。",
+    UNGRADED_REVIEW,
     "push したあとは、もう一度レビューするまでマージしないでください。終わったら、何を直したかを短く伝えてください。",
   ].join("\n");
 }
 
-/** The review itself (the template sent when the worktree is made) is done at xhigh. */
-export const REVIEW_EFFORT: EffortLevel = "xhigh";
+/** The review itself (the template sent when the worktree is made) is done at high. */
+export const REVIEW_EFFORT: EffortLevel = "high";
 
 /**
  * The effort level for a row's button: "マージしてもらう" and "差し戻す" only follow steps, so they need no more than
- * medium; "修正してもらう" mends the code, and keeps the session's (the review's xhigh, unless changed since).
+ * medium; "修正してもらう" mends the code, and keeps the session's (the review's high, unless changed since).
  */
 export const askEffort = (kind: "merge" | "sendBack" | "fix"): EffortLevel | undefined => (kind === "fix" ? undefined : "medium");
 

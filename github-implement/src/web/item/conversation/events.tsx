@@ -40,9 +40,9 @@ function look(e: GitHubEvent, kind: GitHubKind): Pick<TimelineEntry, "icon" | "t
       return { icon: UserMinus, title: e.assignee === e.actor ? <>{who(e.actor)} が自分を担当から外しました</> : <>{who(e.actor)} が {who(e.assignee)} を担当から外しました</> };
     case "closed":
       if (kind === "pulls") return { icon: GitPullRequestClosed, tone: "danger", title: <>{who(e.actor)} が閉じました</> };
-      return e.stateReason === "not_planned"
-        ? { icon: CircleSlash, title: <>{who(e.actor)} が閉じました（対応しない）</> }
-        : { icon: CircleCheck, tone: "merged", title: <>{who(e.actor)} が閉じました（完了）</> };
+      if (e.stateReason === "not_planned") return { icon: CircleSlash, title: <>{who(e.actor)} が閉じました（対応しない）</> };
+      if (e.stateReason === "duplicate") return { icon: CircleSlash, title: <>{who(e.actor)} が閉じました（重複）</> };
+      return { icon: CircleCheck, tone: "merged", title: <>{who(e.actor)} が閉じました（完了）</> };
     case "reopened":
       return { icon: CircleDot, tone: "success", title: <>{who(e.actor)} が開き直しました</> };
     case "merged":

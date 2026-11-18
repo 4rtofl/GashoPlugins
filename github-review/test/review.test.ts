@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
-import { pageItems } from "../src/items.ts";
+import { batchTargets, pageItems } from "../src/items.ts";
 import { listArgs, namesArgs, parseList, parseNames, requestedQuery, watchedQueries } from "../src/daemon/gh.ts";
 import { createWorktree, prWorktree, readClone, removeWorktree, repoName, ReviewError, reviewName, reviewNumbers, type Clone, type Exec } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
@@ -426,4 +426,71 @@ test("page: a pull request listed by several working servers shows once, with wh
   );
   assert.equal("place" in (page.requested[0]?.pr ?? {}), false);
   assert.equal(page.requestedMore, 4);
+});
+
+test("まとめてレビューさせる: the pull requests with no worktree on any working server and a clone on the one chosen", () => {
+  const row = (number: number, place?: PrRow["place"]): PrRow => ({
+    repo: "o/r",
+    number,
+    title: `t${number}`,
+    url: `https://github.com/o/r/pull/${number}`,
+    state: "open",
+    labels: [],
+    comments: 0,
+    branch: `feat/${number}`,
+    ...(place ? { place } : {}),
+  });
+  const a: Listing = {
+    watched: [],
+    // 1: on A only. 2: on both, a worktree on B. 3: on both, none anywhere.
+    requested: [row(1, { primary: "/a/r" }), row(2, { primary: "/a/r" }), row(3, { primary: "/a/r" })],
+    repos: [],
+    errors: [],
+  };
+  const b: Listing = {
+    watched: [],
+    requested: [row(2, { primary: "/b/r", worktree: { path: "/b/review-2", review: true } }), row(3, { primary: "/b/r" })],
+    repos: [],
+    errors: [],
+  };
+  const { requested } = pageItems([
+    { machine: "A", listing: a },
+    { machine: "B", listing: b },
+  ]);
+  assert.deepEqual(
+    batchTargets(requested, "A").map((x) => [x.item.pr.number, x.spot.primary]),
+    [
+      [1, "/a/r"],
+      [3, "/a/r"],
+    ],
+  );
+  assert.deepEqual(
+    batchTargets(requested, "B").map((x) => [x.item.pr.number, x.spot.primary]),
+    [[3, "/b/r"]],
+  );
+  assert.deepEqual(batchTargets(requested, "C"), []);
+
+  // One from a fork is left out, even with no worktree anywhere: it is started from its own row.
+  const { requested: withFork } = pageItems([
+    { machine: "A", listing: { ...a, requested: [row(1, { primary: "/a/r" }), { ...row(4, { primary: "/a/r" }), fork: true }] } },
+  ]);
+  assert.deepEqual(
+    batchTargets(withFork, "A").map((x) => x.item.pr.number),
+    [1],
+  );
+
+  // A search without is:open lists merged and closed ones too: only the open one is done.
+  const { requested: withEnded } = pageItems([
+    {
+      machine: "A",
+      listing: {
+        ...a,
+        requested: [row(1, { primary: "/a/r" }), { ...row(5, { primary: "/a/r" }), state: "merged" }, { ...row(6, { primary: "/a/r" }), state: "closed" }],
+      },
+    },
+  ]);
+  assert.deepEqual(
+    batchTargets(withEnded, "A").map((x) => x.item.pr.number),
+    [1],
+  );
 });
