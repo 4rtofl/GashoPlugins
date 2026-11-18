@@ -38,7 +38,7 @@ export interface PrWorktree {
  */
 export interface Cleanup {
   kind: CleanupKind;
-  /** The head whose verdict it was asked of (the mark's sha); absent for one asked before github-review 1.8.0. */
+  /** The head whose verdict it was asked of (the mark's sha); absent for one asked before github-review 1.17.0. */
   sha?: string;
   /** The pull request was merged, or I requested changes on it, after it was asked. */
   done: boolean;
@@ -53,6 +53,8 @@ export interface Place {
   worktree?: PrWorktree;
   /** Its review worktree is to be removed once what was asked is done. */
   cleanup?: Cleanup;
+  /** The sessions sent its review that have posted the result: the page removes them once they are at rest. */
+  finishedSessions?: string[];
 }
 
 export interface PrRow {
