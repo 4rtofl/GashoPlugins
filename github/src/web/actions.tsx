@@ -175,7 +175,7 @@ function RunSummary({ run, now }: { run: Run; now: number }) {
 
 /** What a run without jobs says: why there are none. */
 function noJobs(run: RunDetail): string {
-  if (run.startupFailure) return "ワークフローのファイルに誤りがあり、実行を始められませんでした。理由は GitHub で見られます。";
+  if (run.startupFailure) return "実行を始められませんでした。理由は GitHub で見られます。";
   if (run.state === "action_required") return "GitHub で承認されると、ジョブが始まります。";
   if (run.state === "cancelled") return "ジョブが始まる前に取り消されました。";
   return isRunning(run.state) ? "ジョブはまだありません。" : "ジョブはありません。";

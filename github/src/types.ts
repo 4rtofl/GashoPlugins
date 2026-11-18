@@ -40,7 +40,7 @@ export interface Run {
   branch?: string;
   event: string;
   state: RunState;
-  /** The workflow's file is wrong, so the run never started (GitHub's startup_failure). */
+  /** GitHub could not start the run (its startup_failure): a wrong workflow file, among other causes. */
   startupFailure?: boolean;
   attempt?: number;
   /** ISO 8601 */
