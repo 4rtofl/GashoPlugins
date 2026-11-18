@@ -236,9 +236,9 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
       <div className="flex flex-wrap justify-end gap-1.5">
         <AgentAsk item={item} />
         {fresh ? (
-          <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(s, tools))} />
+          <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(item, s, tools))} />
         ) : (
-          <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(s, tools))} />
+          <SpotButton label="開く" icon={<FolderOpen />} spots={placed} disabled={off} usable={canOpen} onPick={(s) => run(pr.url, () => openWorktree(item, s, tools))} />
         )}
         <ReviewMenu item={item} />
         {removeButton}
@@ -383,7 +383,7 @@ export function AgentAsk({ item, reading }: { item: Item; reading?: OwnReading |
   }
   if (!ask || !mark) return null;
   const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
-  const asking = (s: Spot, kind: AskKind) => askAgent(s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools);
+  const asking = (s: Spot, kind: AskKind) => askAgent(item, s, ask.label, askInstruction(kind, pr, mark, shared.merge), askEffort(kind), tools);
   const sent = (kind: AskKind) => markAsked(pr.url, { kind, sha: mark.sha, at: Date.now() });
   return (
     <SpotButton

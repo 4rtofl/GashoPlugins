@@ -60,6 +60,7 @@ function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[
     nav: {} as Tools["nav"],
     actions: {
       notify: (n) => notices.push(n),
+      askFork: async () => false,
       askTrust: async (q) => {
         asked.push(q);
         return answers.shift() ?? true;

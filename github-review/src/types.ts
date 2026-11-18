@@ -129,6 +129,18 @@ export interface Created {
   branch?: string;
 }
 
+/**
+ * What Claude Code reads from the top of a session's folder as it starts: the project's settings (hooks, commands,
+ * agents, skills…), its instructions, and its MCP servers.
+ */
+export const PROJECT_FILES = [".claude/", "CLAUDE.md", "CLAUDE.local.md", ".mcp.json"] as const;
+
+/** Which of PROJECT_FILES a review worktree has (the daemon's `projectFiles`). */
+export interface ProjectFiles {
+  path: string;
+  files: string[];
+}
+
 /** What "片付ける" removed. */
 export interface Removed {
   path: string;
