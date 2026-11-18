@@ -4,6 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DaemonStartContext } from "@gasho/plugin-sdk/daemon";
+import type { Worktree } from "../../plugins/types.ts";
 import type { ClosedPr, OpenPr, RepoMaterial, RepoOption } from "../types.ts";
 
 export type Exec = DaemonStartContext["exec"];
@@ -18,24 +19,59 @@ export class KanbanError extends Error {}
 
 // ---- what git and gh give ----
 
-/** `git worktree list --porcelain`: the primary checkout first, then the worktrees on a branch (detached ones are left out). */
-export function parseWorktrees(porcelain: string): { primary?: { path: string; branch?: string; bare?: boolean }; worktrees: { branch: string; path: string }[] } {
-  let primary: { path: string; branch?: string; bare?: boolean } | undefined;
-  const worktrees: { branch: string; path: string }[] = [];
-  let current: string | undefined;
+/** A worktree as `git worktree list --porcelain` gives it. */
+export interface ListedWorktree {
+  path: string;
+  /** Absent when HEAD is detached. */
+  branch?: string;
+  detached?: true;
+  bare?: true;
+}
+
+/** `git worktree list --porcelain`: the primary checkout first, then the other worktrees, detached ones too. */
+export function parseWorktrees(porcelain: string): { primary?: ListedWorktree; worktrees: ListedWorktree[] } {
+  const all: ListedWorktree[] = [];
   for (const line of porcelain.split("\n")) {
-    if (line.startsWith("worktree ")) {
-      current = line.slice("worktree ".length);
-      primary ??= { path: current };
-    } else if (line === "bare" && primary && current === primary.path) {
-      primary.bare = true;
-    } else if (line.startsWith("branch refs/heads/") && current) {
-      const branch = line.slice("branch refs/heads/".length);
-      if (current === primary?.path) primary.branch = branch;
-      else worktrees.push({ branch, path: current });
-    }
+    const last = all.at(-1);
+    if (line.startsWith("worktree ")) all.push({ path: line.slice("worktree ".length) });
+    else if (!last) continue;
+    else if (line === "bare") last.bare = true;
+    else if (line === "detached") last.detached = true;
+    else if (line.startsWith("branch refs/heads/")) last.branch = line.slice("branch refs/heads/".length);
   }
+  const [primary, ...worktrees] = all;
   return { primary, worktrees };
+}
+
+/**
+ * The branch a rebase that stopped in the worktree `dir` puts back. Its HEAD stays detached until the rebase ends, and
+ * `git worktree list` does not say the branch.
+ */
+async function rebasing(exec: Exec, dir: string): Promise<string | undefined> {
+  const gitDir = await git(exec, dir, ["rev-parse", "--absolute-git-dir"]).then((s) => s.trim(), () => undefined);
+  if (!gitDir) return undefined;
+  for (const kind of ["rebase-merge", "rebase-apply"]) {
+    const head = await fs.readFile(path.join(gitDir, kind, "head-name"), "utf8").catch(() => undefined);
+    const branch = /^refs\/heads\/(\S+)$/.exec(head?.trim() ?? "")?.[1];
+    if (branch) return branch;
+  }
+  return undefined;
+}
+
+/**
+ * gh's arguments that read the name GitHub has now for `repo`, as a clone's origin says it. GitHub's search, which `gh
+ * pr list --author` reads, finds nothing by a name from before the repository or its owner was renamed (4rtoflow →
+ * 4rtofl); `repository(owner:, name:)` still answers to it.
+ */
+export function nameArgs(repo: string): string[] {
+  const [owner = "", name = ""] = repo.split("/");
+  return ["api", "graphql", "-f", "query=query($o: String!, $n: String!) { repository(owner: $o, name: $n) { nameWithOwner } }", "-f", `o=${owner}`, "-f", `n=${name}`];
+}
+
+/** The name in the answer to nameArgs; undefined when GitHub did not find the repository. */
+export function parseName(json: string): string | undefined {
+  const name = (JSON.parse(json) as { data?: { repository?: { nameWithOwner?: unknown } | null } | null } | null)?.data?.repository?.nameWithOwner;
+  return typeof name === "string" && /^[^/\s]+\/[^/\s]+$/.test(name) ? name : undefined;
 }
 
 /** OWNER/REPO of a GitHub remote (https, optionally with credentials, or ssh). Never returns the raw URL. */
@@ -172,10 +208,16 @@ export async function readRepo(exec: Exec, gh: GitHubRead, option: RepoOption): 
   const [open, closed] = await Promise.all([list("open", PR_FIELDS), list("closed", CLOSED_FIELDS)]).catch((e: unknown) => {
     throw new KanbanError(ghError(e));
   });
+  // A worktree whose rebase stopped keeps its branch, and so its pull request.
+  const tree = async (w: ListedWorktree): Promise<Worktree> => {
+    const rebased = w.detached ? await rebasing(exec, w.path) : undefined;
+    const branch = w.branch ?? rebased;
+    return { path: await realPath(w.path), ...(branch ? { branch } : {}), ...(w.detached ? { detached: true } : {}), ...(rebased ? { rebasing: true } : {}) };
+  };
   return {
     repo,
-    primary: { path: await realPath(primary.path), ...(primary.branch ? { branch: primary.branch } : {}) },
-    worktrees: await Promise.all(worktrees.map(async (w) => ({ branch: w.branch, path: await realPath(w.path) }))),
+    primary: await tree(primary),
+    worktrees: await Promise.all(worktrees.map(tree)),
     prs: parsePrs(open),
     closed: parseClosed(closed),
   };

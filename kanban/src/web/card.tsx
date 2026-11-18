@@ -54,6 +54,13 @@ function PrIcon({ card, className }: { card: KanbanCard; className?: string }) {
   );
 }
 
+/** How the worktree's HEAD is detached, in a few words, and why. */
+function detachedLook(card: KanbanCard): { text: string; detail: string } | undefined {
+  if (!card.detached) return undefined;
+  if (card.rebasing) return { text: "rebase 中", detail: `${card.branch ?? "ブランチ"} の rebase が止まっている（HEAD が detached）` };
+  return { text: "detached", detail: "HEAD が detached（ブランチに乗っていない）" };
+}
+
 /** What a Claude Code session started outside Gasho is doing; Gasho's own show with their names instead. */
 const AGENT: Record<"busy" | "waiting" | "idle", { Icon: LucideIcon; text: string }> = {
   busy: { Icon: Zap, text: "Claude Code 作業中" },
@@ -65,7 +72,7 @@ const AGENT: Record<"busy" | "waiting" | "idle", { Icon: LucideIcon; text: strin
 export function CompactCard({ row, now, where }: { row: PlacedCard; now: number; where: Where }) {
   const { machine, card } = row;
   const updated = card.updatedAt ? Date.parse(card.updatedAt) : undefined;
-  const tip = [where.machines && machine.name, where.repos && card.repo, card.title, card.reason?.text, ...(card.marks ?? []).map((m) => m.detail ?? m.text)].filter(Boolean).join("\n");
+  const tip = [where.machines && machine.name, where.repos && card.repo, card.title, card.reason?.text, detachedLook(card)?.detail, ...(card.marks ?? []).map((m) => m.detail ?? m.text)].filter(Boolean).join("\n");
   return (
     <CardMenu row={row}>
       <button
@@ -161,7 +168,8 @@ function Chips({ machine, card, where, children }: { machine: MachineInfo; card:
   const pr = card.pr && card.label !== `PR #${card.pr.number}` ? card.pr : undefined;
   // Sessions Gasho did not start, once per state.
   const others = [...new Set(card.sessions.filter((s) => !s.managed && s.status !== "unknown").map((s) => s.status as keyof typeof AGENT))];
-  const any = where.machines || where.repos || pr || card.issue !== undefined || !card.path || (card.marks?.length ?? 0) > 0 || others.length > 0 || card.sessions.some((s) => s.managed);
+  const detached = detachedLook(card);
+  const any = where.machines || where.repos || pr || card.issue !== undefined || !card.path || detached || (card.marks?.length ?? 0) > 0 || others.length > 0 || card.sessions.some((s) => s.managed);
   if (!any) return null;
   return (
     <div className="flex flex-wrap items-center gap-1">
@@ -180,6 +188,9 @@ function Chips({ machine, card, where, children }: { machine: MachineInfo; card:
       {pr && <span className={CHIP}>PR #{pr.number}</span>}
       {card.issue !== undefined && <span className={CHIP}>Issue #{card.issue}</span>}
       {!card.path && <span className={cn(CHIP, "bg-transparent ring-1 ring-black/[0.1] ring-inset dark:bg-transparent dark:ring-white/[0.1]")}>worktree なし</span>}
+      {detached && (
+        <span className={cn(CHIP, "bg-transparent ring-1 ring-black/[0.1] ring-inset dark:bg-transparent dark:ring-white/[0.1]")}>{detached.text}</span>
+      )}
       {card.marks?.map((m, i) => (
         <span key={`mark-${i}`} className={cn(MARK, m.active && MARK_ACTIVE)} title={m.detail}>
           <span className="truncate">{m.text}</span>
@@ -313,6 +324,7 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
                 {card.reason.error && <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">{card.reason.error}</span>}
               </p>
             )}
+            {card.detached && <p className="max-w-64 px-2.5 pb-1.5 text-xs break-words text-muted-foreground">{detachedLook(card)?.detail}</p>}
             {card.marks && (
               <ul className="max-w-64 space-y-0.5 px-2.5 pb-1.5 text-xs break-words text-muted-foreground">
                 {card.marks.map((m, i) => (

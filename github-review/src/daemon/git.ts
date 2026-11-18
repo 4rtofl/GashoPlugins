@@ -1,7 +1,8 @@
 // git for github-review, run with ctx.exec (no shell, no terminal, no prompts), and only in the clones found in the
-// folders Gasho can start sessions in: a path from a browser never reaches git. A review worktree is review-<number>
-// beside the primary checkout. A pull request of the same repository gets a local branch of its name that tracks
-// origin's, so the reviewer can push to it; one from a fork is checked out at its head, detached, to read and test.
+// folders Gasho can start sessions in: a path from a browser never reaches git. A review worktree is
+// review-<repository>-<number> beside the primary checkout (review-<number> before, still taken as one). A pull
+// request of the same repository gets a local branch of its name that tracks origin's, so the reviewer can push to
+// it; one from a fork is checked out at its head, detached, to read and test.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PluginError, type DaemonStartContext } from "@gasho/plugin-sdk/daemon";
@@ -52,16 +53,35 @@ export interface Clone {
   worktrees: WorktreeEntry[];
 }
 
-/** The review worktree of a pull request: review-<number> in the folder that holds the primary checkout. */
-export const reviewPath = (primary: string, number: number): string => path.join(path.dirname(primary), `review-${number}`);
+/**
+ * The repository's name in a review worktree's name: REPO of OWNER/REPO, keeping only what GitHub allows in one
+ * (letters, digits, ".", "-", "_"), so the folder name is safe whatever the clone's folder is called.
+ */
+export const repoName = (github: string): string => (github.split("/").pop() ?? "").replace(/[^A-Za-z0-9._-]/g, "").replace(/^\.+/, "");
 
-/** The pull requests that have a review worktree in a clone. */
+/** The folder name of a pull request's review worktree: review-<repository>-<number>. */
+export const reviewName = (github: string, number: number): string => {
+  const repo = repoName(github);
+  return repo ? `review-${repo}-${number}` : `review-${number}`;
+};
+
+/** The review worktree a pull request gets now: review-<repository>-<number> in the folder that holds the primary checkout. */
+export const reviewPath = (clone: Pick<Clone, "path" | "github">, number: number): string => path.join(path.dirname(clone.path), reviewName(clone.github, number));
+
+/** The review worktree of a pull request made before the name held the repository's: review-<number>. */
+export const legacyReviewPath = (primary: string, number: number): string => path.join(path.dirname(primary), `review-${number}`);
+
+/** Where a pull request's review worktree may be: the name it gets now first, then the one from before. */
+export const reviewPaths = (clone: Pick<Clone, "path" | "github">, number: number): string[] => [reviewPath(clone, number), legacyReviewPath(clone.path, number)];
+
+/** The pull requests that have a review worktree in a clone, under either name. */
 export function reviewNumbers(clone: Clone): number[] {
-  return clone.worktrees.flatMap((w) => {
-    const m = /^review-(\d{1,9})$/.exec(path.basename(w.path));
+  const numbers = clone.worktrees.flatMap((w) => {
+    const m = /^review-(?:.+-)?(\d{1,9})$/.exec(path.basename(w.path));
     const n = Number(m?.[1]);
-    return m && n >= 1 && w.path === reviewPath(clone.path, n) ? [n] : [];
+    return m && n >= 1 && reviewPaths(clone, n).includes(w.path) ? [n] : [];
   });
+  return [...new Set(numbers)];
 }
 
 /**
@@ -69,8 +89,7 @@ export function reviewNumbers(clone: Clone): number[] {
  * worktree on its branch, which may be the primary checkout. A fork's branch name says nothing about a local branch.
  */
 export function prWorktree(clone: Clone, pr: { number: number; branch: string; fork?: boolean }): PrWorktree | undefined {
-  const review = reviewPath(clone.path, pr.number);
-  const at = clone.worktrees.find((w) => w.path === review);
+  const at = reviewPaths(clone, pr.number).flatMap((p) => clone.worktrees.filter((w) => w.path === p))[0];
   if (at) return { path: at.path, ...(at.branch ? { branch: at.branch } : {}), review: true };
   if (pr.fork) return undefined;
   const on = clone.worktrees.find((w) => w.branch === pr.branch);
@@ -190,7 +209,7 @@ function branchName(b: string): string {
 export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Created> {
   const found = prWorktree(clone, pr);
   if (found) return { path: found.path, created: false, ...(found.branch ? { branch: found.branch } : {}) };
-  const dest = reviewPath(clone.path, pr.number);
+  const dest = reviewPath(clone, pr.number);
   if (await succeeds(fs.lstat(dest))) {
     throw new ReviewError(`${dest} がもうあります。この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
   }
@@ -224,7 +243,7 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
  */
 export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Removed> {
   const wt = prWorktree(clone, pr);
-  if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（review-${pr.number}）はありません。`);
+  if (!wt?.review) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
   const changes = (await git(exec, wt.path, ["status", "--porcelain"])).split("\n").filter(Boolean).length;
   if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
   // The pull request's head counts as pushed: its branch may be gone from origin once merged. A head pushed after the

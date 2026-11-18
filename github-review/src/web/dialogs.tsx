@@ -133,7 +133,7 @@ export function AskDialog({
   const kind = question?.kind ?? "merge";
   const text = ASK_TEXT[kind];
   const wt = question?.spot.worktree;
-  const cannot = !question || !wt ? undefined : !wt.review ? "レビュー用の worktree（review-<番号>）ではないので、片付けません。" : removeWorktreeProblem(question.spot.machine, { path: wt.path, repo: question.spot.primary });
+  const cannot = !question || !wt ? undefined : !wt.review ? "レビュー用の worktree（review-<リポジトリ名>-<番号>）ではないので、片付けません。" : removeWorktreeProblem(question.spot.machine, { path: wt.path, repo: question.spot.primary });
   const [cleanup, setCleanup] = useState(true);
   // Every question starts checked.
   useEffect(() => setCleanup(true), [question]);

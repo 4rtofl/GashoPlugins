@@ -11,7 +11,7 @@ import path from "node:path";
 import { PluginError } from "@gasho/plugin-sdk/daemon";
 import type { Fetch, FetchContext, FetchStore } from "../../plugins/types.ts";
 import { MAX_REPOS, type Board, type RepoMaterial, type RepoOption } from "../types.ts";
-import { ghError, KanbanError, readRepo, repoOptions, type Exec, type GitHubRead } from "./git.ts";
+import { ghError, KanbanError, nameArgs, parseName, readRepo, repoOptions, type Exec, type GitHubRead } from "./git.ts";
 
 /** A request finds a reading due when the last one started this long ago (the web part asks every 60 seconds). */
 export const READ_EVERY_MS = 50_000;
@@ -21,6 +21,8 @@ const REFRESH_MIN_MS = 10_000;
 const PARALLEL = 4;
 /** The repositories that can be watched are listed again when the folders change, or when the list is this old. */
 const OPTIONS_MAX_AGE_MS = 5 * 60_000;
+/** The name GitHub has for a watched repository is read again when this old. */
+const NAMES_MAX_AGE_MS = 60 * 60_000;
 /**
  * A board plugin's `fetch` runs in a reading when it last ran this long ago: every other reading, as they are a minute
  * apart. Reading a repository costs 2 of GitHub's GraphQL points (5000 an hour), so 120 an hour while the board shows;
@@ -134,6 +136,8 @@ export class Reader {
   private fetched = new Map<string, Fetched>();
   /** Repositories whose board plugin's code changed: their `fetch` runs in the next reading. */
   private refetch = new Set<string>();
+  /** By the name an origin says (in lower case), the name GitHub has now, and when it was read. */
+  private names = new Map<string, { name: string; at: number }>();
   /** `fetch` waits until then: few GraphQL points were left. */
   private fetchPausedUntil = 0;
   private updatedAt: number | undefined;
@@ -275,7 +279,29 @@ export class Reader {
   }
 
   private label(p: string): string {
-    return this.options?.list.find((o) => o.path === p)?.github ?? path.basename(p);
+    return this.material.get(p)?.repo ?? this.options?.list.find((o) => o.path === p)?.github ?? path.basename(p);
+  }
+
+  /**
+   * `repo` (as a clone's origin says it) by the name GitHub has now, which its search takes. One GitHub does not find
+   * keeps its own name until it is read again; when GitHub cannot be read, it is read again in the next reading.
+   */
+  private async named(repo: string): Promise<string> {
+    const known = this.names.get(repo.toLowerCase());
+    if (known && this.now() - known.at < NAMES_MAX_AGE_MS) return known.name;
+    let json: string | undefined;
+    try {
+      json = (await this.deps.github(nameArgs(repo), { timeoutMs: 15_000 })).stdout;
+    } catch (e) {
+      // gh fails for a repository GitHub does not find, with GitHub's answer on its output.
+      const out = (e as { stdout?: unknown } | null)?.stdout;
+      if (typeof out === "string" && out.includes('"data"')) json = out;
+      else this.deps.log(`kanban: could not read the name GitHub has for ${repo}`, e);
+    }
+    if (json === undefined) return known?.name ?? repo;
+    const name = parseName(json) ?? repo;
+    this.names.set(repo.toLowerCase(), { name, at: this.now() });
+    return name;
   }
 
   private fetcher(name: string | undefined): Fetch | undefined {
@@ -364,7 +390,7 @@ export class Reader {
         let material: RepoMaterial;
         try {
           if (!option) throw new KanbanError("Claude Code が信頼しているフォルダーの repo ではないので、見られません。");
-          material = await readRepo(this.deps.exec, gh, option);
+          material = await readRepo(this.deps.exec, gh, { ...option, github: option.github && (await this.named(option.github)) });
           if (!this.watched.includes(p)) continue;
           this.material.set(p, material);
           this.errors.delete(p);
