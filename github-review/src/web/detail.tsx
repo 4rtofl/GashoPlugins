@@ -180,7 +180,7 @@ function Progress({ item, now, reading }: { item: Item; now: number; reading: Ow
   const { pr } = item;
   const progress = progressOf(item);
   const ask = askOf(pr, progress);
-  const placed = item.spots.some((s) => s.worktree);
+  const placed = item.spots.some((s) => s.worktree && !s.worktree.missing);
   return (
     <div className="space-y-2 rounded-xl border border-border bg-surface px-3 py-2.5">
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

@@ -5,8 +5,8 @@ import path from "node:path";
 import { defineDaemonPlugin, PluginError, type DaemonContext } from "@gasho/plugin-sdk/daemon";
 import { CLEANUP_KINDS, type CleanupKind } from "../cleanup.ts";
 import { Cleanups } from "./cleanups.ts";
-import { ghError, headArgs, parseHead } from "./gh.ts";
-import { createWorktree, removeWorktree, ReviewError, type PrHead } from "./git.ts";
+import { commitArgs, ghError, headArgs, parseCommit, parseHead } from "./gh.ts";
+import { createWorktree, removeWorktree, ReviewError, type OnGitHub, type PrHead } from "./git.ts";
 import { Reviewer } from "./reviewer.ts";
 import { SessionRemovals } from "./session-removals.ts";
 
@@ -54,7 +54,14 @@ async function target(params: unknown, ctx: DaemonContext) {
   const head: PrHead = { number, branch: pr.branch, fork: pr.fork === true, ...(pr.head ? { head: pr.head } : {}) };
   const clone = await current().cloneOf((args, o) => ctx.github.read(args, o), repo, { pr: head, wait: true });
   if (!clone) throw new ReviewError(`この working server の、Claude Code が信頼しているフォルダーに、${repo} の clone がありません。`);
-  return { clone, head, p };
+  const onGitHub: OnGitHub = async (oid) => {
+    try {
+      return parseCommit((await ctx.github.read(commitArgs(repo, oid), { repo, timeoutMs: 20_000 })).stdout, oid);
+    } catch (e) {
+      throw new ReviewError(ghError(e));
+    }
+  };
+  return { clone, head, p, onGitHub };
 }
 
 export default defineDaemonPlugin({
@@ -98,8 +105,8 @@ export default defineDaemonPlugin({
     },
     /** Makes the review worktree of { repo, number }, or finds the one it has (Created). */
     async create(params, ctx) {
-      const { clone, head } = await target(params, ctx);
-      return createWorktree(ctx.exec, clone, head);
+      const { clone, head, onGitHub } = await target(params, ctx);
+      return createWorktree(ctx.exec, clone, head, { onGitHub });
     },
     /**
      * The review worktree of { repo, number } once what was asked of its Agent is done (cleanup.ts), by `action`:
@@ -163,10 +170,11 @@ export default defineDaemonPlugin({
      * only with { agreed } (the `token` of an answer that listed them); { check: true } only says what would go.
      */
     async remove(params, ctx) {
-      const { clone, head, p } = await target(params, ctx);
+      const { clone, head, p, onGitHub } = await target(params, ctx);
       const asked = await cleanups?.get(repoArg(p.repo), head.number);
       return removeWorktree(ctx.exec, clone, head, {
         anyName: asked?.kind === "merge",
+        onGitHub,
         ...(typeof p.agreed === "string" ? { agreed: p.agreed } : {}),
         ...(p.check === true ? { check: true } : {}),
       });

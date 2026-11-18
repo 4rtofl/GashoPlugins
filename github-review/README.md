@@ -14,10 +14,11 @@
 - 行の「worktree を作る」で、送る指示のテンプレートを選ぶ（いちばん上は「何も送らない」）。primary checkout と同じ親フォルダーに `review-<リポジトリ名>-<PR 番号>`（`4rtofl/GashoPlugins` の #158 なら `review-GashoPlugins-158`。リポジトリ名は GitHub の `OWNER/REPO` の `REPO` で、clone のフォルダー名ではない。1.7.0 より前に作った `review-<PR 番号>` も、レビュー用の worktree として扱い、片付けられる）を作り、その中でセッションを起動して、選んだテンプレートの指示を送る。セッションの画面には移らずにこのページに留まり、続けてほかの Pull request もレビューに回せる。起動したことを下の通知に出すので、そこの「セッションを開く」で開く。一覧が古くて worktree がもうあったときは、作らずに、そこで最後に使った Gasho のセッション（なければ起動したもの）を通知に出す（指示は送らない）。Claude Code がフォルダーを信頼していないときは、起動する前に確かめる
   - 同じ repo の Pull request は、`git fetch` してから、同じ名前のローカルのブランチを作って origin のブランチを追う（レビューする人が修正を push できる）。追う設定は `branch.<名前>.remote` と `.merge` に書くので、1ブランチだけの clone（`--single-branch`・`--depth`）でも作れる。その名前のローカルのブランチがもうあれば、origin に無い commit が無いときだけ、origin に合わせて使う
   - そのローカルのブランチに origin に無い commit があるとき（作者が force-push した、レビューする人の作業がある、など）は、そのブランチには触らずに、origin のブランチを detached HEAD で取ってきて、通知にそう出す（push するときは `git push origin HEAD:<ブランチ>`）
-  - origin に head のブランチが無いとき（マージして消した、など）は、`refs/pull/<番号>/head` を detached HEAD で取ってきて、通知にそう出す
-  - fork の Pull request は、`refs/pull/<番号>/head` を取ってきて、detached HEAD にする
+  - origin に head のブランチが無いとき（マージして消した、など）は、次の fork の Pull request と同じく `refs/pull/<番号>/head` を取ってきて detached HEAD にし、通知にそう出す
+  - fork の Pull request は、`refs/pull/<番号>/head` を取ってきて、GitHub が返した head の commit で detached HEAD にする。同じ clone で別の fetch が重なっても、その Pull request の head で作る。取ってきてもその commit が無ければ（読んだあとに作者が push した）、作らずに、もう一度作るよう出す
   - その Pull request の worktree（`review-<リポジトリ名>-<番号>`、同じ repo の Pull request ならそのブランチの worktree）がもうあれば、作らずに、上の段では「開く」を、下の段では「新たにセッションを作成する」を出す。「開く」は、その worktree で最後に使った Gasho のセッションを開く（なければ起動して開く）。「新たにセッションを作成する」は、その worktree で新しいセッションを起動して開く（worktree は増やさない）。worktree が複数の working server にあるときは、どちらもメニューで選ぶ
   - 同じ名前のフォルダーが、この repo の worktree でないものとしてあれば、作らずに理由を出す
+  - `review-<リポジトリ名>-<番号>` のフォルダーを手で消したときは、「開く」を出さず、行に「フォルダーがありません」と出して、「worktree を作る」と「片付ける」を出す。作るときは、先に Pull request の head を取ってきて、「片付ける」と同じ確かめをして git に残っている登録（同じ repo の Pull request はローカルのブランチも）を消してから、作り直す。head を取ってこられないときは、何も消さずに理由を出す
   - 同じ repo の clone が信頼しているフォルダーに2つ以上あるときは、その Pull request の worktree がある clone、無ければ対象リポジトリに選んだ clone、無ければパスの順で最初の clone を使う。一覧で照らし合わせる clone と、worktree を作る・片付ける clone は、いつも同じ
   - テンプレートを送るときは、そのセッションの Effort を High に切り替えてから送る（Gasho の入力欄の Effort のピッカーと同じく、そのセッションだけ）。切り替えられなかったとき（このモデルでは選べないなど）は、テンプレートはそのまま送り、ページの下に理由と「セッションを開く」を出す。Effort を切り替えられない gasho-daemon（0.6.0 より前）では、切り替えずに送る
 - 自分の開いている Pull request で worktree があるもの（ふつうは、それを作った worktree）には、「worktree を作る」が出ない代わりに「レビューする」を出す。テンプレートを選ぶと、その worktree で新しいセッションを起動し（作ったときのセッションとは別にする）、「worktree を作る」と同じ指示を同じ Effort で送る。このページに留まり、通知の「セッションを開く」で開く。サイドパネルにも出す
@@ -55,7 +56,7 @@
 - テンプレートは、設定の「worktree を作ったセッションに送る指示のテンプレート」に、すべての repo で共通に持つ（すべてのブラウザーで共通）。設定画面の欄で、名前と本文を足す・直す・消す（名前の前後の空白は除いて保存する）。本文の `{number}`・`{title}`・`{branch}`・`{url}` は、Pull request の番号・題・head のブランチ・URL に置き換えて送る。fork の Pull request の `{branch}` は、GitHub の表示と同じく `<fork の owner>:<ブランチ>` にする（fork のブランチ名だけだと、`main` などがこの repo のブランチに見えるため）
   - 設定の JSON が読めないとき、一覧でないとき、テンプレートとして使えないもの（名前か本文が無い、長すぎる、21個目より後）があるときは、設定画面の欄と「worktree を作る」のメニューにそう出す。欄で保存すると、JSON を欄のとおりに書き直す
 - `review-<リポジトリ名>-<番号>` の worktree と、「マージしてもらう」で片付けると選んだ worktree（名前は問わない）がある行には「片付ける」を出す。押すと、daemon の部分が消えるものを確かめてから、ダイアログで確かめ、worktree とローカルのブランチを消す
-  - git が追跡しているファイルの未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも無い commit）があれば、消さずに理由を出す
+  - git が追跡しているファイルの未コミットの変更か、push していない commit（どの remote のブランチにも、Pull request の head にも、worktree を作ったときの commit にも無い commit）があれば、消さずに理由を出す。worktree を作ったときの commit は、その worktree の HEAD の reflog の最初の行から読むので、作者がそのあと rebase や force-push をしても、レビューした人が commit していなければ片付けられる。その commit は、GitHub にあるとき（GraphQL の問い合わせ1回で確かめる）だけ数える。push していない commit の上に手で作った `review-<番号>` を、その commit ごと消さないため。GitHub を読めないときは数えず、理由を出して消さない
   - git が追跡していないファイル（追跡していないものと、`.gitignore` で無視されたもの。`status.showUntrackedFiles=no` の設定でも数える）があれば、ダイアログに並べ（中のものがすべてそうなら、フォルダーを1行で）、「ファイルも消して片付ける」で消す。並べたあとにファイルが増えたか減ったときは、消さずに、新しい一覧でもう一度確かめる
 - Pull request がマージか閉じられたら、`review-<リポジトリ名>-<番号>` の worktree の行に「片付けてよい」と出す。`review-<リポジトリ名>-<番号>` の worktree か、「マージしてもらう」で片付けると選んだ worktree があるのに上下の段から外れた Pull request も、下の段のその repo の所に出す。マージか閉じられたものは、対象リポジトリでなくても出し、検索の語では絞り込まない。開いているものは、検索の語に合うときだけ出す（対象リポジトリなら下の段の検索で、そうでなければ、そのリポジトリの開いている Pull request を検索の語で探して確かめる）
 

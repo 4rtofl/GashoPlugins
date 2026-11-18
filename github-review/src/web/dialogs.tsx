@@ -76,7 +76,7 @@ export function RemoveDialog({ question, onAnswer }: { question: { item: Item; s
           <div className="space-y-1.5">
             <Dialog.Title className="text-base font-semibold tracking-tight">worktree を片付けますか</Dialog.Title>
             <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-              worktree のフォルダー{wt?.branch ? "とローカルのブランチ" : ""}を消します。git が追跡しているファイルの変更と、push していない commit は無いことを確かめました。
+              {wt?.missing ? "フォルダーはもうありません。git に残っている worktree の登録" : "worktree のフォルダー"}{wt?.branch ? "とローカルのブランチ" : ""}を消します。{wt?.missing ? "" : "git が追跡しているファイルの変更と、"}push していない commit は無いことを確かめました。
             </Dialog.Description>
           </div>
           {removal && removal.fileCount > 0 && (

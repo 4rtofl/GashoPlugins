@@ -23,6 +23,8 @@ export interface WorktreeEntry {
   /** Absent when HEAD is detached. */
   branch?: string;
   bare?: boolean;
+  /** git still has it, but its folder is gone. */
+  prunable?: boolean;
 }
 
 /** `git worktree list --porcelain`: the primary checkout first. */
@@ -37,6 +39,7 @@ export function parseWorktrees(porcelain: string): WorktreeEntry[] {
     else if (line.startsWith("HEAD ")) cur.head = line.slice("HEAD ".length);
     else if (line.startsWith("branch refs/heads/")) cur.branch = line.slice("branch refs/heads/".length);
     else if (line === "bare") cur.bare = true;
+    else if (line === "prunable" || line.startsWith("prunable ")) cur.prunable = true;
   }
   return out;
 }
@@ -86,12 +89,13 @@ export function reviewNumbers(clone: Clone): number[] {
 }
 
 /**
- * The worktree of a pull request in a clone: its review worktree, or else (for one of the same repository) the
- * worktree on its branch, which may be the primary checkout. A fork's branch name says nothing about a local branch.
+ * The worktree of a pull request in a clone: its review worktree (even one whose folder is gone, to be made again or
+ * removed), or else (for one of the same repository) the worktree on its branch, which may be the primary checkout. A
+ * fork's branch name says nothing about a local branch.
  */
 export function prWorktree(clone: Clone, pr: { number: number; branch: string; fork?: boolean }): PrWorktree | undefined {
   const at = reviewPaths(clone, pr.number).flatMap((p) => clone.worktrees.filter((w) => w.path === p))[0];
-  if (at) return { path: at.path, ...(at.branch ? { branch: at.branch } : {}), review: true };
+  if (at) return { path: at.path, ...(at.branch ? { branch: at.branch } : {}), review: true, ...(at.prunable ? { missing: true } : {}) };
   if (pr.fork) return undefined;
   const on = clone.worktrees.find((w) => w.branch === pr.branch);
   return on && { path: on.path, branch: pr.branch, review: false };
@@ -210,6 +214,12 @@ export interface PrHead {
   head?: string;
 }
 
+/** Whether GitHub has a commit, in the pull request's repository; it rejects with why when GitHub cannot be read. */
+export type OnGitHub = (oid: string) => Promise<boolean>;
+
+/** A commit id as git and GitHub write it (SHA-1, or SHA-256), and never an option. */
+const commitId = (s: string | undefined): string | undefined => (s && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(s) ? s : undefined);
+
 /** A branch name from GitHub that git takes as a branch, and never as an option. */
 function branchName(b: string): string {
   if (!b || b.length > 250 || b.startsWith("-") || /[\s~^:?*[\\\0]|\.\.|@\{|\/\/|\.lock$|^\/|\/$/.test(b)) {
@@ -223,11 +233,21 @@ function branchName(b: string): string {
  * on a local branch of its name, tracking origin's (made now, or one there already that has nothing origin lacks). One
  * from a fork is at its head, detached; so is one whose branch is gone from origin (merged and deleted), and one whose
  * local branch has commits origin lacks (the author rewrote the branch, or they are someone's work), which stays as it
- * is.
+ * is. A review worktree whose folder is gone is removed first, as "片付ける" removes it, and made again.
  */
-export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Promise<Created> {
+export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { onGitHub?: OnGitHub } = {}): Promise<Created> {
   const found = prWorktree(clone, pr);
-  if (found) return { path: found.path, created: false, ...(found.branch ? { branch: found.branch } : {}) };
+  if (found && !found.missing) return { path: found.path, created: false, ...(found.branch ? { branch: found.branch } : {}) };
+  // Only once what it is made at has been fetched: one whose branch went from origin, and whose head cannot be fetched
+  // either, would otherwise lose its local branch, and still get no worktree.
+  const removeGone = async () => {
+    if (!found) return;
+    try {
+      await removeWorktree(exec, clone, pr, o);
+    } catch (e) {
+      throw e instanceof ReviewError ? new ReviewError(`${found.path} のフォルダーは消えていますが、git に残っているものを片付けられないので、作り直しません。${e.message}`) : e;
+    }
+  };
   const dest = reviewPath(clone, pr.number);
   if (await succeeds(fs.lstat(dest))) {
     throw new ReviewError(`${dest} がもうあります。この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
@@ -236,10 +256,23 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
   const made = async (note: string, branch?: string): Promise<Created> => {
     return { path: await realPath(dest), created: true, ...(branch ? { branch } : {}), ...(note ? { note } : {}) };
   };
-  /** At the pull request's head, detached. */
-  const detached = async (note: string): Promise<Created> => {
-    await step("Pull request の head を取ってくることが", git(exec, clone.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], w));
-    await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--detach", dest, "FETCH_HEAD"], w));
+  /**
+   * At the pull request's head, detached: at the commit GitHub says is its head, not FETCH_HEAD, which any other fetch in
+   * the clone meanwhile (another pull request's worktree being made, an editor's) writes too. `failed`: why origin's
+   * branch could not be fetched, when this is made instead.
+   */
+  const detached = async (note: string, failed?: string): Promise<Created> => {
+    const cannot = (why: string) => new ReviewError(failed ? `origin の ${pr.branch} を取ってくることができませんでした：${failed}（${why}）` : why);
+    const head = commitId(pr.head);
+    if (!head) throw cannot(`Pull request #${pr.number} の head の commit が分からないので、worktree を作りません。`);
+    await git(exec, clone.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], w).catch((e: unknown) => {
+      throw cannot(`Pull request の head を取ってくることができませんでした：${gitWords(e)}`);
+    });
+    if (!(await succeeds(git(exec, clone.path, ["cat-file", "-e", `${head}^{commit}`])))) {
+      throw cannot(`Pull request #${pr.number} の head が、GitHub から読んだあとに変わりました。もう一度作ってください。`);
+    }
+    await removeGone();
+    await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", "--detach", dest, head], w));
     return made(note);
   };
   if (pr.fork) return detached("");
@@ -249,12 +282,9 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
     () => undefined,
     (e: unknown) => gitWords(e),
   );
-  if (fetchFailed) {
-    // GitHub keeps refs/pull/<number>/head after the branch is gone.
-    return detached(`origin の ${branch} を取ってこられなかったので（${fetchFailed}）、Pull request の head を detached HEAD で取ってきました。`).catch((e: unknown) => {
-      throw new ReviewError(`origin の ${branch} を取ってくることができませんでした：${fetchFailed}（Pull request の head も取ってこられませんでした：${e instanceof Error ? e.message : String(e)}）`);
-    });
-  }
+  // GitHub keeps refs/pull/<number>/head after the branch is gone.
+  if (fetchFailed) return detached(`origin の ${branch} を取ってこられなかったので（${fetchFailed}）、Pull request の head を detached HEAD で取ってきました。`, fetchFailed);
+  await removeGone();
   // The upstream is set by hand: --track takes only a branch the clone fetches (not so in a clone of one branch).
   const track = () =>
     step(`ローカルの ${branch} に origin の ${branch} を追わせることが`, (async () => {
@@ -281,42 +311,80 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead): Prom
   return made("", branch);
 }
 
+/**
+ * The commit a worktree was made at, which was then the pull request's head: the first entry of the reflog of its HEAD
+ * (`ref`, read in `cwd`), which `git worktree add` writes without a message. None once git has let that entry expire,
+ * as the first one left may be a commit made in the worktree; nor when the newest entry is not `tip` (when given).
+ */
+async function madeAt(exec: Exec, cwd: string, ref: string, tip?: string): Promise<string | undefined> {
+  const entries = await git(exec, cwd, ["log", "--walk-reflogs", "--format=%H %gs", ref, "--"]).then(
+    (s) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean),
+    () => [],
+  );
+  if (tip && entries[0]?.split(" ")[0] !== tip) return undefined;
+  return commitId(/^[0-9a-f]+$/.test(entries.at(-1) ?? "") ? entries.at(-1) : undefined);
+}
+
 /** Files shown with "片付ける", at most: the rest are counted. */
 export const SHOWN_FILES = 50;
 
 /**
  * Removes the review worktree of a pull request and its local branch: never with uncommitted changes to the files git
- * tracks, or with a commit that is neither on a branch of a remote nor the pull request's head. Files git does not
- * track (untracked or ignored, such as .env.local) go only once the person agreed to lose them: `agreed` is the
- * `token` of an answer that listed them, and still holds while they are the same. `check`: only says what would go.
- * `anyName`: the worktree on its branch counts too, whatever its name (a merge asked to clean it up). Never the
- * primary checkout.
+ * tracks, or with a commit that is neither on a branch of a remote, nor the pull request's head, nor the commit the
+ * worktree was made at (its author may have rebased or force-pushed since) when GitHub has it (`onGitHub`; without it,
+ * that commit does not count). Files git does not track (untracked or ignored, such as .env.local) go only once the
+ * person agreed to lose them: `agreed` is the `token` of an answer that listed them, and still holds while they are the
+ * same. One whose folder is gone has neither to lose, and git forgets it. `check`: only says what would go. `anyName`:
+ * the worktree on its branch counts too, whatever its name (a merge asked to clean it up). Never the primary checkout.
  */
-export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { agreed?: string; check?: boolean; anyName?: boolean } = {}): Promise<Removed> {
+export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { agreed?: string; check?: boolean; anyName?: boolean; onGitHub?: OnGitHub } = {}): Promise<Removed> {
   const wt = prWorktree(clone, pr);
   if (!wt || wt.path === clone.path || !(wt.review || o.anyName)) throw new ReviewError(`Pull request #${pr.number} のレビュー用の worktree（${reviewName(clone.github, pr.number)}）はありません。`);
-  const changes = (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean).length;
-  if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
-  // The pull request's head counts as pushed: its branch may be gone from origin once merged. A head pushed after the
-  // worktree was made is fetched, or the commits before it would be taken for the reviewer's.
-  const oid = pr.head && /^[0-9a-f]{40}$/.test(pr.head) ? pr.head : undefined;
-  const have = (o: string) => succeeds(git(exec, wt.path, ["cat-file", "-e", `${o}^{commit}`]));
+  // One whose folder is gone is read in the primary checkout, which has its HEAD as worktrees/<id>/HEAD; git names a
+  // worktree after its folder when it makes it.
+  const at = wt.missing
+    ? { cwd: clone.path, tip: commitId(clone.worktrees.find((w) => w.path === wt.path)?.head), reflog: `worktrees/${path.basename(wt.path)}/HEAD` }
+    : { cwd: wt.path, tip: "HEAD", reflog: "HEAD" };
+  const tip = at.tip;
+  if (!tip) throw new ReviewError(`${wt.path} の HEAD が読めないので、片付けません。`);
+  if (!wt.missing) {
+    const changes = (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean).length;
+    if (changes > 0) throw new ReviewError(`${wt.path} に未コミットの変更が ${changes} 件あるので、片付けません。`);
+  }
+  // The pull request's head counts as pushed: its branch may be gone from origin once merged. One not here is fetched
+  // first: the worktree may be on a later head than the one it was made at, whose commits would be taken for the
+  // reviewer's.
+  const oid = commitId(pr.head);
+  const have = (o: string) => succeeds(git(exec, at.cwd, ["cat-file", "-e", `${o}^{commit}`]));
   const unfetched = oid && !(await have(oid))
-    ? await git(exec, wt.path, ["fetch", "origin", `refs/pull/${pr.number}/head`], { write: true, timeoutMs: 30_000 }).then(() => undefined, gitWords)
+    ? await git(exec, at.cwd, ["fetch", "origin", `refs/pull/${pr.number}/head`], { write: true, timeoutMs: 30_000 }).then(() => undefined, gitWords)
     : undefined;
   const head = oid && (await have(oid)) ? [oid] : [];
-  const ahead = Number((await git(exec, wt.path, ["rev-list", "--count", "HEAD", "--not", "--remotes", ...head])).trim());
+  const count = async (pushed: string[]) => Number((await git(exec, at.cwd, ["rev-list", "--count", tip, "--not", "--remotes", ...head, ...pushed])).trim());
+  let ahead = await count([]);
+  // The commit the worktree was made at counts as pushed only once GitHub is found to have it: a review worktree made
+  // by hand on a commit never pushed would otherwise go, with its branch.
+  let unread = "";
+  if (ahead > 0 && o.onGitHub) {
+    const made = await madeAt(exec, at.cwd, at.reflog, wt.missing ? tip : undefined);
+    const known = made ? await o.onGitHub(made).catch((e: unknown) => (e instanceof Error ? e.message : "GitHub を読めませんでした。")) : false;
+    if (made && known === true) ahead = await count([made]);
+    else if (typeof known === "string") unread = known;
+  }
   if (ahead > 0 && unfetched) {
     throw new ReviewError(`Pull request #${pr.number} の head を取ってこられなかったので、${wt.path} の ${ahead} 個の commit が push 済みかを確かめられません。片付けません：${unfetched}`);
   }
+  if (ahead > 0 && unread) throw new ReviewError(`GitHub を読めなかったので、${wt.path} の ${ahead} 個の commit が push 済みかを確かめられません。片付けません：${unread}`);
   if (ahead > 0) throw new ReviewError(`${wt.path} に、push していない commit が ${ahead} 個あるので、片付けません。`);
   // The options say what to list whatever the settings (status.showUntrackedFiles=no hides untracked files): a folder
   // that holds only such files is one line (node_modules/).
-  const loose = (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=normal", "--ignored=traditional"]))
-    .split("\n")
-    .filter((l) => l.startsWith("?? ") || l.startsWith("!! "))
-    .map((l) => l.slice(3))
-    .sort();
+  const loose = wt.missing
+    ? []
+    : (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=normal", "--ignored=traditional"]))
+        .split("\n")
+        .filter((l) => l.startsWith("?? ") || l.startsWith("!! "))
+        .map((l) => l.slice(3))
+        .sort();
   const token = loose.length > 0 ? createHash("sha256").update(loose.join("\n")).digest("hex").slice(0, 32) : undefined;
   const what = { path: wt.path, ...(wt.branch ? { branch: wt.branch } : {}), files: loose.slice(0, SHOWN_FILES), fileCount: loose.length, ...(token ? { token } : {}) };
   if (o.check || (token && o.agreed !== token)) return { ...what, removed: false };
