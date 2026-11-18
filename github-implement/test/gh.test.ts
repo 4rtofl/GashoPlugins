@@ -13,7 +13,8 @@ import { worktreeHeads } from "../src/daemon/head.ts";
 import { parseLocked } from "../src/daemon/ops/locked.ts";
 import type { GitHubItemDetail, WorktreeItems } from "../src/types.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
-import { editArgs } from "../src/daemon/ops/edit.ts";
+import edit, { editArgs } from "../src/daemon/ops/edit.ts";
+import { bodyEditParams } from "../src/edit-was.ts";
 import { stateArgs } from "../src/daemon/ops/state.ts";
 import { numberFrom } from "../src/web/number.ts";
 
@@ -145,6 +146,44 @@ test("a body comes whole, as the edit box starts from it and saves it back", () 
   const item = parseDetail(json, "issues", [comments]);
   assert.equal(item?.body, body);
   assert.ok((item?.comments?.[0]?.body.length ?? 0) < 70_000);
+});
+
+test("an edit that started from another title or body than GitHub's now is refused before anything is written", async () => {
+  const github = { number: 3, url: "https://github.com/o/r/pull/3", state: "OPEN", title: "t", body: "b\r\n- [x] done" };
+  const calls: { args: string[]; options?: GitHubReadOptions }[] = [];
+  const writes: string[][] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[], options?: GitHubReadOptions) => (calls.push({ args, ...(options ? { options } : {}) }), { stdout: JSON.stringify(github), stderr: "" }),
+      write: async (args: string[]) => (writes.push(args), { stdout: "", stderr: "" }),
+    },
+    log() {},
+  } as unknown as DaemonContext;
+  await edit.run({ repo: "o/r", kind: "pulls", number: 3, ...bodyEditParams("new", "b\r\n- [x] done") }, ctx);
+  // GitHub's body is read anew, with the args of the screen's read: what gasho-daemon keeps for that read is renewed.
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.args, detailArgs("o/r", "pulls", 3, []));
+  assert.equal(calls[0]?.options?.maxAgeSeconds, 0);
+  await assert.rejects(edit.run({ repo: "o/r", kind: "pulls", number: 3, ...bodyEditParams("new", "b\r\n- [ ] done") }, ctx), /本文が変わりました/);
+  await assert.rejects(edit.run({ repo: "o/r", kind: "issues", number: 3, title: "u", was: { title: "s" } }, ctx), /題が変わりました/);
+  // GitHub's title may be longer than a new one may be (an emoji is two UTF-16 units): it is compared, not refused.
+  await assert.rejects(edit.run({ repo: "o/r", kind: "issues", number: 3, title: "u", was: { title: "😀".repeat(200) } }, ctx), /題が変わりました/);
+  // Assignees and labels start from nothing typed: they are written without a read.
+  await edit.run({ repo: "o/r", kind: "issues", number: 3, addLabels: ["bug"] }, ctx);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(
+    writes.map((w) => w.map((a) => (a.startsWith("--body-file=") ? "--body-file=…" : a))),
+    [
+      ["pr", "edit", "3", "--repo", "o/r", "--body-file=…"],
+      ["issue", "edit", "3", "--repo", "o/r", "--add-label=bug"],
+    ],
+  );
+});
+
+test("the screen's edit of a body of 60,000 characters fits in the params of a call (the Gasho server takes 64 KB of JSON)", () => {
+  const body = Array.from({ length: 1600 }, (_, i) => `${"本文".repeat(19)}${i % 10}`).join("\n").slice(0, 60_000);
+  const params = { op: "edit", repo: "4rtofl/GashoPlugins", kind: "pulls", number: 144, ...bodyEditParams(`${body}足す`, body) };
+  assert.ok(JSON.stringify(params).length <= 64 * 1024);
 });
 
 test("the parts of detail/ add their fields only for the kinds they name", () => {
