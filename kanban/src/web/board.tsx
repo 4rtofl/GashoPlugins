@@ -494,6 +494,7 @@ export function KanbanPage(_: PageProps) {
           <TrustDialog key={trusts[0]?.path} question={trusts[0]} onAnswer={answerTrust} />
           <Toast
             notice={notice}
+            asking={trusts.length > 0}
             onClose={() => setNotice(undefined)}
             onOpen={(s) => {
               setNotice(undefined);
@@ -964,13 +965,27 @@ function TrustDialog({ question, onAnswer }: { question: { path: string; warning
 }
 
 /** A notice at the bottom of the page (after EasyUI's VelocityToast); it goes after a few seconds once nothing is going on. */
-function Toast({ notice, onClose, onOpen }: { notice: Notice | undefined; onClose: () => void; onOpen: (s: { machine: string; sessionId: string }) => void }) {
+function Toast({
+  notice,
+  asking,
+  onClose,
+  onOpen,
+}: {
+  notice: Notice | undefined;
+  /**
+   * A folder's question shows: the notice cannot be pressed (the page under a modal dialog is not), and a press there
+   * would say no to the question. Its buttons wait, and so does its going, until no question is left.
+   */
+  asking: boolean;
+  onClose: () => void;
+  onOpen: (s: { machine: string; sessionId: string }) => void;
+}) {
   useEffect(() => {
-    if (!notice || notice.busy) return;
+    if (!notice || notice.busy || asking) return;
     const t = setTimeout(onClose, 6000);
     return () => clearTimeout(t);
-    // Restarts only for a new notice.
-  }, [notice]);
+    // Restarts only for a new notice, or once no question is left.
+  }, [notice, asking]);
   return (
     <AnimatePresence>
       {notice && (
@@ -988,7 +1003,7 @@ function Toast({ notice, onClose, onOpen }: { notice: Notice | undefined; onClos
         >
           {notice.busy && <LoaderCircle className="size-4 shrink-0 text-muted-foreground motion-safe:animate-spin" />}
           <span className="min-w-0">{notice.text}</span>
-          {notice.session && !notice.busy && (
+          {notice.session && !notice.busy && !asking && (
             <button
               type="button"
               onClick={() => notice.session && onOpen(notice.session)}
@@ -997,7 +1012,7 @@ function Toast({ notice, onClose, onOpen }: { notice: Notice | undefined; onClos
               セッションを開く
             </button>
           )}
-          {!notice.busy && (
+          {!notice.busy && !asking && (
             <button type="button" onClick={onClose} aria-label="閉じる" className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground">
               <X className="size-3.5" />
             </button>

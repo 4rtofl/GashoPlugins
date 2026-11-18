@@ -252,12 +252,15 @@ const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? 
 
 /** A notice at the bottom of the page (after EasyUI's VelocityToast); it goes after a few seconds once nothing is going on. */
 export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose: () => void }) {
+  // While a folder's question shows, the notice cannot be pressed (the page under a modal dialog is not), and a press
+  // there would say no to the question: its buttons wait, and so does its going, until no question shows.
+  const asking = useSyncExternalStore(onShownTrusts, () => shownTrusts.length > 0);
   useEffect(() => {
-    if (!notice || notice.busy) return;
+    if (!notice || notice.busy || asking) return;
     const t = setTimeout(onClose, notice.action ? 10_000 : 6000);
     return () => clearTimeout(t);
-    // Restarts only for a new notice.
-  }, [notice]);
+    // Restarts only for a new notice, or once no question shows.
+  }, [notice, asking]);
   return (
     <AnimatePresence>
       {notice && (
@@ -275,7 +278,7 @@ export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose
         >
           {notice.busy && <LoaderCircle className="size-4 shrink-0 text-muted-foreground motion-safe:animate-spin" />}
           <span className="min-w-0">{notice.text}</span>
-          {notice.action && (
+          {notice.action && !asking && (
             <button
               type="button"
               onClick={() => {
@@ -287,7 +290,7 @@ export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose
               {notice.action.label}
             </button>
           )}
-          {!notice.busy && (
+          {!notice.busy && !asking && (
             <button type="button" onClick={onClose} aria-label="閉じる" className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground">
               <X className="size-3.5" />
             </button>
