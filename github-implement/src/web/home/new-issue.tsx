@@ -26,12 +26,14 @@ interface Form {
 const EMPTY: Form = { title: "", body: "", labels: [], assignees: [], add: true };
 
 export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: string; worktree: WorktreeInfo; repo: string; onCreated: () => void }) {
-  const [form, setForm] = usePluginState<Form | undefined>(`new-issue:${machine}:${worktree.path}`, undefined);
+  const kept = `new-issue:${machine}:${worktree.path}`;
+  const [form, setForm] = usePluginState<Form | undefined>(kept, undefined);
   const bodyBox = useRef<HTMLTextAreaElement>(null);
   const meta = useRequest<RepoMeta>(form ? readOp(machine, "meta", { repo }) : undefined, { staleSeconds: 300 });
   const write = useWriteOp();
   const toast = useToast();
-  const [busy, setBusy] = useState(false);
+  // Kept like the form: made anew while the issue is being made, the form still shows it so and makes no second one.
+  const [busy, setBusy] = usePluginState(`${kept}:busy`, false);
   const [error, setError] = useState<string>();
 
   if (!form) {
@@ -49,6 +51,7 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
   }
 
   const create = async () => {
+    if (busy) return;
     const sent = form;
     setBusy(true);
     setError(undefined);

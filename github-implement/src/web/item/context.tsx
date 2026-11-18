@@ -115,7 +115,9 @@ export function useDraftsOf(machine: string, worktree: WorktreeInfo, where: Wher
 export function useChanges(machine: string, where: Where | undefined, after: () => void) {
   const write = useWriteOp();
   const toast = useToast();
-  const [busy, setBusy] = useState<string>();
+  // Kept like the drafts: the screen made anew (another tab chosen and this one again) shows the change still running,
+  // and what was sent, still in its box, cannot be sent again meanwhile.
+  const [busy, setBusy] = usePluginState<string | undefined>(`busy:${machine}:${where ? `${where.repo}:${draftsAt(where)}` : ""}`, undefined);
   const [revision, setRevision] = useState(0);
   const changed = () => {
     after();

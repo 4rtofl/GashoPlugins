@@ -32,7 +32,8 @@ export function NewPullBox({ machine, worktree, branch, repo, title, onCreated }
   const toast = useToast();
   const [form, setForm] = usePluginState<Form | undefined>(kept, undefined);
   const bodyBox = useRef<HTMLTextAreaElement>(null);
-  const [busy, setBusy] = useState(false);
+  // Kept like the form: made anew while the pull request is being made, the form still shows it so and stays read-only.
+  const [busy, setBusy] = usePluginState(`${kept}:busy`, false);
   const [error, setError] = useState<string>();
   // What was read before stays while another base is read, so that the form does not go away meanwhile.
   const last = useRef<NewPull>(undefined);
@@ -54,7 +55,7 @@ export function NewPullBox({ machine, worktree, branch, repo, title, onCreated }
   };
 
   const create = async () => {
-    if (!form || !chosen) return;
+    if (!form || !chosen || busy) return;
     setBusy(true);
     setError(undefined);
     const res = await write(machine, "create-pull", { repo, branch, base: chosen, title: form.title, body: form.body, draft: form.draft }, `${repo} に ${branch} から ${chosen} への Pull request を作る`);

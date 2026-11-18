@@ -2,7 +2,7 @@ import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { answerCalls, callsOf, lastRequest, respond, sdk, session } from "../../test/sdk.tsx";
-import type { WorktreeInfo } from "@gasho/plugin-sdk";
+import type { CallResult, WorktreeInfo } from "@gasho/plugin-sdk";
 import { NewPullBox } from "../src/web/home/new-pull.tsx";
 import type { NewPull } from "../src/types.ts";
 import { github, renderWithToasts } from "./render.tsx";
@@ -104,6 +104,23 @@ describe("NewPullBox", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("A pull request already exists");
     expect(screen.getByRole("textbox", { name: "Pull request の題" })).toHaveProperty("value", "題");
     expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("makes no second one when the box is drawn anew (another tab chosen and this one again) while it is being made", async () => {
+    let made: (r: CallResult<unknown>) => void = () => {};
+    answerCalls({ write: new Promise<CallResult<unknown>>((r) => (made = r)) });
+    newPull({ "": pushed() });
+    const first = show({ title: "題" });
+    await userEvent.click(screen.getByRole("button", { name: "Pull request を作る" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft の Pull request を作る" }));
+    first.unmount();
+
+    show({ title: "題" });
+    expect(screen.getByRole("button", { name: "作っています…" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("textbox", { name: "Pull request の題" })).toHaveProperty("readOnly", true);
+    await act(async () => made({ ok: true, data: { number: 12 } }));
+    expect(callsOf("write")).toHaveLength(1);
+    expect(screen.queryByRole("textbox", { name: "Pull request の題" })).toBeNull();
   });
 
   it("creates with ⌘Enter in the body", async () => {
