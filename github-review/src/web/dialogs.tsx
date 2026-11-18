@@ -4,7 +4,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { LoaderCircle, X } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
 import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
@@ -19,16 +19,43 @@ import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
  */
 const TRUST_ANSWER_AFTER_MS = 500;
 
-/** Whether `question` has shown for TRUST_ANSWER_AFTER_MS, so its buttons may answer it. */
+/**
+ * The folders' questions on screen, the one that opened last at the end: Radix draws it over the others. The review
+ * page, the panel of a pull request and "まとめてレビューさせる" each ask their own, so more than one can show at once.
+ */
+const shownTrusts: object[] = [];
+const trustListeners = new Set<() => void>();
+const onShownTrusts = (listener: () => void) => {
+  trustListeners.add(listener);
+  return () => {
+    trustListeners.delete(listener);
+  };
+};
+const frontTrust = () => shownTrusts[shownTrusts.length - 1];
+
+/** Whether `question` has been the one in front for TRUST_ANSWER_AFTER_MS, so it may be answered. */
 function useAnswerable(question: object | undefined): boolean {
-  // The question it is for, not a flag: one that takes another's place without closing waits on its own.
-  const [ready, setReady] = useState<object>();
   useEffect(() => {
     if (!question) return;
-    const t = setTimeout(() => setReady(question), TRUST_ANSWER_AFTER_MS);
-    return () => clearTimeout(t);
+    shownTrusts.push(question);
+    for (const listener of trustListeners) listener();
+    return () => {
+      const i = shownTrusts.indexOf(question);
+      if (i >= 0) shownTrusts.splice(i, 1);
+      for (const listener of trustListeners) listener();
+    };
   }, [question]);
-  return question !== undefined && ready === question;
+  const front = useSyncExternalStore(onShownTrusts, frontTrust);
+  const inFront = question !== undefined && front === question;
+  // Counted again whenever it comes to the front: the one over it, answered by the first click, leaves it there.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    setReady(false);
+    if (!inFront) return;
+    const t = setTimeout(() => setReady(true), TRUST_ANSWER_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [inFront, question]);
+  return inFront && ready;
 }
 
 /**
