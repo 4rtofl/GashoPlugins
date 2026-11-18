@@ -114,14 +114,14 @@ test("instructions: the review is posted with the heading and the mark; merge, s
   assert.equal(mergeMethodOf(undefined), "merge");
 });
 
-test("effort: the review at xhigh, merge and send back at medium, mend at the session's own; switched only where gasho-daemon can", () => {
-  assert.equal(REVIEW_EFFORT, "xhigh");
+test("effort: the review at high, merge and send back at medium, mend at the session's own; switched only where gasho-daemon can", () => {
+  assert.equal(REVIEW_EFFORT, "high");
   assert.equal(askEffort("merge"), "medium");
   assert.equal(askEffort("sendBack"), "medium");
   assert.equal(askEffort("fix"), undefined);
 
   const can = { features: ["model", "effort", "ultracode", "files"] } satisfies Parameters<typeof effortFor>[0];
-  assert.deepEqual(effortFor(can, REVIEW_EFFORT), { effort: "xhigh" });
+  assert.deepEqual(effortFor(can, REVIEW_EFFORT), { effort: "high" });
   assert.deepEqual(effortFor(can, askEffort("merge")), { effort: "medium" });
   assert.deepEqual(effortFor(can, askEffort("fix")), {});
   // A gasho-daemon older than 0.6.0 lists no features, and one may list them without effort.

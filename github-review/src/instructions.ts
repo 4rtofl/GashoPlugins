@@ -104,12 +104,12 @@ export function fixInstruction(pr: PrRef, mark: ReviewMark): string {
   ].join("\n");
 }
 
-/** The review itself (the template sent when the worktree is made) is done at xhigh. */
-export const REVIEW_EFFORT: EffortLevel = "xhigh";
+/** The review itself (the template sent when the worktree is made) is done at high. */
+export const REVIEW_EFFORT: EffortLevel = "high";
 
 /**
  * The effort level for a row's button: "マージしてもらう" and "差し戻す" only follow steps, so they need no more than
- * medium; "修正してもらう" mends the code, and keeps the session's (the review's xhigh, unless changed since).
+ * medium; "修正してもらう" mends the code, and keeps the session's (the review's high, unless changed since).
  */
 export const askEffort = (kind: "merge" | "sendBack" | "fix"): EffortLevel | undefined => (kind === "fix" ? undefined : "medium");
 
