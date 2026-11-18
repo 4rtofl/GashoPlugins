@@ -4,10 +4,12 @@
 // when the same query was read within 30 seconds, so however many browsers look, GitHub is read about once a minute.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { cleanupDone } from "../cleanup.ts";
+import { cleanable, cleanupDone } from "../cleanup.ts";
+import { reviewPosted } from "../review-session.ts";
 import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
-import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
+import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, upperSearches, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
 import type { Cleanups } from "./cleanups.ts";
+import type { SessionRemovals } from "./session-removals.ts";
 import { prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, type Clone, type Exec } from "./git.ts";
 
 export type GitHubRead = (args: string[], o?: { maxAgeSeconds?: number; timeoutMs?: number; maxBuffer?: number }) => Promise<{ stdout: string }>;
@@ -31,6 +33,8 @@ export interface ReviewerDeps {
   now?: () => number;
   /** The review worktrees to remove once what was asked is done. */
   cleanups?: Cleanups;
+  /** The sessions to remove once the review sent to them is posted. */
+  removals?: SessionRemovals;
 }
 
 /** A pull request as the page gets it, with where it is here. */
@@ -186,14 +190,17 @@ export class Reviewer {
     });
     if (clone) {
       const worktree = prWorktree(clone, d.pr);
-      d.pr.place = { primary: clone.path, ...(worktree ? { worktree } : {}) };
+      const sent = (await this.deps.removals?.all().catch(() => [])) ?? [];
+      const reviewSessions = sent.filter((x) => sameRepo(x.repo, d.pr.repo) && x.number === d.pr.number).map((x) => x.sessionId);
+      d.pr.place = { primary: clone.path, ...(worktree ? { worktree } : {}), ...(reviewSessions.length > 0 ? { reviewSessions } : {}) };
     }
     return d;
   }
 
   /**
-   * The page: the pull requests I am asked to review, the watched repositories' (both narrowed by `words`, GitHub's
-   * search words), and those with a review worktree here that neither lists (closed ones, say), so they can be removed.
+   * The page: the pull requests I am asked to review, those I opened in the watched repositories, the watched
+   * repositories' (all narrowed by `words`, GitHub's search words), and those with a review worktree here that none
+   * lists (closed ones, say), so they can be removed.
    * `fresh`: without what gasho-daemon kept of gh.
    */
   async list(github: GitHubRead, words: unknown, fresh: boolean): Promise<Listing> {
@@ -216,15 +223,19 @@ export class Reviewer {
       else if (!o.github) errors.push(`${p}：origin が GitHub の repo ではないので、見られません。`);
       else if (!watchedRepos.some((r) => sameRepo(r, o.github ?? ""))) watchedRepos.push(o.github);
     }
+    // A merged pull request leaves the lists: those asked to be cleaned up are read too, whatever their worktree's name.
+    const cleanups = this.deps.cleanups;
+    const followed = (await cleanups?.all().catch(() => [])) ?? [];
     const lookups: Lookup[] = [];
     for (const c of clones) {
-      const numbers = reviewNumbers(c);
+      const numbers = [...reviewNumbers(c), ...followed.filter((e) => sameRepo(e.repo, c.github)).map((e) => e.number)];
       if (numbers.length === 0) continue;
       const l = lookups.find((x) => sameRepo(x.repo, c.github));
       if (l) l.numbers.push(...numbers);
       else lookups.push({ repo: c.github, numbers });
     }
-    const asked = { requested: requestedQuery(q), watched: watchedQueries(watchedRepos, q), lookups };
+    const upper = upperSearches(q, watchedRepos);
+    const asked = { ...upper, watched: watchedQueries(watchedRepos, q), lookups };
     let json: string;
     try {
       json = (await github(listArgs(asked), { timeoutMs: 30_000, maxBuffer: 16 * 1024 * 1024, ...(fresh ? { maxAgeSeconds: 0 } : {}) })).stdout;
@@ -234,27 +245,42 @@ export class Reviewer {
       if (typeof out !== "string" || !out.includes('"data"')) throw new ReviewError(ghError(e));
       json = out;
     }
-    const answer = parseList(json, { watched: asked.watched.length, lookups });
+    const answer = parseList(json, { watched: asked.watched.length, lookups, words: q, upper });
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));
 
-    // Those whose review worktree is gone from every clone of their repository here are forgotten.
-    const cleanups = this.deps.cleanups;
+    // Those whose worktree is gone from every clone of their repository here are forgotten. A worktree of another name
+    // is found by the pull request's branch: one GitHub did not answer for is kept until it does.
     if (cleanups) {
+      const read = [...answer.requested.prs, ...answer.watched.flatMap((w) => w.prs), ...answer.lookups.flat()];
       await cleanups
         .prune((e) => {
           const of = clones.filter((c) => sameRepo(c.github, e.repo));
-          return of.length > 0 && !of.some((c) => reviewNumbers(c).includes(e.number));
+          if (of.length === 0 || of.some((c) => reviewNumbers(c).includes(e.number))) return false;
+          const pr = read.find((p) => sameRepo(p.repo, e.repo) && p.number === e.number);
+          return pr !== undefined && !of.some((c) => {
+            const w = prWorktree(c, pr);
+            return w !== undefined && cleanable(e.kind, w, c.path);
+          });
         })
         .catch((e: unknown) => this.deps.log("github-review: could not forget the worktrees cleaned up", e));
     }
     const toClean = (await cleanups?.all().catch(() => [])) ?? [];
+    const sent = (await this.deps.removals?.all().catch(() => [])) ?? [];
     const placeOf = (pr: ParsedPr): Place | undefined => {
       const c = this.pick(clones, pr.repo);
       if (!c) return undefined;
       const worktree = prWorktree(c, pr);
-      const e = worktree?.review ? toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number) : undefined;
-      const cleanup = e && { kind: e.kind, done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
-      return { primary: c.path, ...(worktree ? { worktree } : {}), ...(cleanup ? { cleanup } : {}) };
+      const e = worktree && toClean.find((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number && cleanable(x.kind, worktree, c.path));
+      const cleanup = e && { kind: e.kind, ...(e.sha ? { sha: e.sha } : {}), done: cleanupDone(e.kind, pr, e.at), ...(e.problem ? { problem: e.problem } : {}) };
+      const reviews = sent.filter((x) => sameRepo(x.repo, pr.repo) && x.number === pr.number);
+      const finishedSessions = reviews.filter((x) => reviewPosted(pr.mark, x)).map((x) => x.sessionId);
+      return {
+        primary: c.path,
+        ...(worktree ? { worktree } : {}),
+        ...(cleanup ? { cleanup } : {}),
+        ...(finishedSessions.length > 0 ? { finishedSessions } : {}),
+        ...(reviews.length > 0 ? { reviewSessions: reviews.map((x) => x.sessionId) } : {}),
+      };
     };
     const requested = answer.requested.prs;
     const watchedPrs = answer.watched.flatMap((w) => w.prs);
@@ -266,7 +292,8 @@ export class Reviewer {
       prs: watchedPrs.filter((p) => sameRepo(p.repo, repo)).map((p) => row(p, placeOf(p))),
     }));
     for (const pr of answer.lookups.flat()) {
-      if (shown.has(pr.url) || !placeOf(pr)?.worktree?.review) continue;
+      const place = placeOf(pr);
+      if (shown.has(pr.url) || !(place?.worktree?.review || place?.cleanup)) continue;
       shown.add(pr.url);
       const group = repos.find((r) => sameRepo(r.repo, pr.repo));
       if (group) group.prs.push(row(pr, placeOf(pr)));

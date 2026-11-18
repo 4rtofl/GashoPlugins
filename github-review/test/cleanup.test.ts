@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
-import { changesProblem, cleanupDone, CLOCK_SLACK_MS } from "../src/cleanup.ts";
+import { changesProblem, cleanable, cleanupDone, CLOCK_SLACK_MS } from "../src/cleanup.ts";
 import { CLAIM_MS, Cleanups } from "../src/daemon/cleanups.ts";
-import { listArgs, parsePr, requestedQuery } from "../src/daemon/gh.ts";
+import { listArgs, parsePr, upperSearches } from "../src/daemon/gh.ts";
 import type { Exec } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
 import { pageItems } from "../src/items.ts";
@@ -47,8 +47,59 @@ test("done: a merge once the pull request is merged; a send-back once I requeste
   assert.equal(changesProblem({ uncommitted: 1, unpushed: 3 }), "未コミットの変更（1 件）と push していない commit（3 個）があるので、自動では片付けませんでした。");
 });
 
+test("cleanable: a merge takes a worktree of any name, a send-back only a review worktree, neither the primary checkout", () => {
+  const named = { path: "/r/my-work", review: false };
+  const review = { path: "/r/review-r-5", review: true };
+  assert.equal(cleanable("merge", named, "/r/main"), true);
+  assert.equal(cleanable("merge", review, "/r/main"), true);
+  assert.equal(cleanable("sendBack", named, "/r/main"), false);
+  assert.equal(cleanable("sendBack", review, "/r/main"), true);
+  assert.equal(cleanable("merge", { path: "/r/main", review: false }, "/r/main"), false);
+});
+
+test("list: a merge asked from a worktree of any name is followed after the pull request leaves the lists", async () => {
+  const root = await tmp();
+  const primary = path.join(root, "r", "main");
+  await fs.mkdir(primary, { recursive: true });
+  await run("git", ["init", "-b", "main", primary]);
+  await git(primary, "commit", "--allow-empty", "-m", "base");
+  await git(primary, "remote", "add", "origin", "https://github.com/o/r.git");
+  await git(primary, "worktree", "add", "-b", "feat/5", path.join(root, "r", "my-work"), "HEAD");
+  await git(primary, "worktree", "add", "-b", "feat/6", path.join(root, "r", "other-work"), "HEAD");
+  await git(primary, "branch", "feat/7");
+  const file = path.join(root, "watched.json");
+  await fs.writeFile(file, JSON.stringify({ paths: [primary] }));
+
+  const cleanups = new Cleanups({ file: path.join(root, "cleanups.json"), log: () => {} });
+  await cleanups.follow("o/r", 5, "merge");
+  await cleanups.follow("o/r", 6, "sendBack");
+  await cleanups.follow("o/r", 7, "merge");
+  await cleanups.follow("o/r", 9, "merge");
+
+  const pr = (number: number, state: string) => ({
+    number,
+    title: `t${number}`,
+    url: `https://github.com/o/r/pull/${number}`,
+    state,
+    headRefName: `feat/${number}`,
+    repository: { nameWithOwner: "o/r" },
+  });
+  const github: GitHubRead = async (args) => {
+    const query = args[args.indexOf("-f") + 1] ?? "";
+    if (!query.includes("search(")) return { stdout: JSON.stringify({ data: { r0: { nameWithOwner: "o/r" } } }) };
+    // #9 is not answered: GitHub may fail for one, and that says nothing of its worktree.
+    return { stdout: JSON.stringify({ data: { req: { issueCount: 0, nodes: [] }, w0: { issueCount: 0, nodes: [] }, l0: { p5: pr(5, "MERGED"), p6: pr(6, "OPEN"), p7: pr(7, "MERGED") } } }) };
+  };
+  const reviewer = new Reviewer({ exec, folders: () => [primary], file, log: () => {}, cleanups });
+  const listing = await reviewer.list(github, "", false);
+  const rows = listing.repos.flatMap((r) => r.prs);
+  assert.deepEqual(rows.map((p) => [p.number, p.place?.worktree?.path, p.place?.cleanup]), [[5, path.join(root, "r", "my-work"), { kind: "merge", done: true }]]);
+  // #6 was a send-back from a worktree not made for the review, #7 has no worktree: forgotten. #9 waits for an answer.
+  assert.deepEqual((await cleanups.all()).map((e) => e.number), [5, 9]);
+});
+
 test("gh: the query reads the reviews that request changes; only mine count, the latest", () => {
-  const args = listArgs({ requested: requestedQuery(""), watched: [], lookups: [] });
+  const args = listArgs({ ...upperSearches("", []), watched: [], lookups: [] });
   assert.match(args[args.indexOf("-f") + 1] ?? "", /changes: reviews\(last: 5, states: \[CHANGES_REQUESTED\]\) \{ nodes \{ viewerDidAuthor submittedAt \} \}/);
   const pr = (changes: unknown) =>
     parsePr({ number: 3, title: "t", url: "https://github.com/o/r/pull/3", state: "OPEN", headRefName: "feat/3", repository: { nameWithOwner: "o/r" }, changes });
@@ -73,12 +124,13 @@ test("cleanups: kept in the file; one page claims at a time; a failure stays wit
   let now = 1000;
   const a = new Cleanups({ file, log: () => {}, now: () => now });
   await a.follow("O/r", 5, "merge");
-  await a.follow("o/r", 6, "sendBack");
+  await a.follow("o/r", 6, "sendBack", "abc1234");
   assert.deepEqual(await a.get("o/R", 5), { repo: "O/r", number: 5, kind: "merge", at: 1000 });
+  assert.deepEqual(await a.get("o/r", 6), { repo: "o/r", number: 6, kind: "sendBack", sha: "abc1234", at: 1000 });
 
   // Another process (gasho-daemon started again) reads them back.
   const b = new Cleanups({ file, log: () => {}, now: () => now });
-  assert.deepEqual((await b.all()).map((e) => [e.number, e.kind]), [[5, "merge"], [6, "sendBack"]]);
+  assert.deepEqual((await b.all()).map((e) => [e.number, e.kind, e.sha]), [[5, "merge", undefined], [6, "sendBack", "abc1234"]]);
 
   assert.equal(await b.claim("o/r", 5), true);
   assert.equal(await b.claim("o/r", 5), false);
@@ -109,14 +161,15 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
   await run("git", ["init", "-b", "main", primary]);
   await git(primary, "commit", "--allow-empty", "-m", "base");
   await git(primary, "remote", "add", "origin", "https://github.com/o/r.git");
-  for (const n of [5, 6, 7]) await git(primary, "worktree", "add", "--detach", path.join(root, "r", `review-${n}`), "HEAD");
+  // review-6 by the name from before the repository's name was in it.
+  for (const name of ["review-r-5", "review-6", "review-r-7"]) await git(primary, "worktree", "add", "--detach", path.join(root, "r", name), "HEAD");
   const file = path.join(root, "watched.json");
   await fs.writeFile(file, JSON.stringify({ paths: [primary] }));
 
   const asked = Date.parse("2026-11-17T10:00:00Z");
   const cleanups = new Cleanups({ file: path.join(root, "cleanups.json"), log: () => {}, now: () => asked });
   await cleanups.follow("o/r", 5, "merge");
-  await cleanups.follow("o/r", 6, "sendBack");
+  await cleanups.follow("o/r", 6, "sendBack", "abc1234");
   await cleanups.follow("o/r", 8, "merge");
 
   const pr = (number: number, over: Record<string, unknown> = {}) => ({
@@ -141,6 +194,7 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
             p5: pr(5, { state: "MERGED" }),
             p6: pr(6, { changes: { nodes: [{ viewerDidAuthor: true, submittedAt: "2026-11-17T09:00:00Z" }] } }),
             p7: pr(7),
+            p8: pr(8),
           },
         },
       }),
@@ -150,7 +204,7 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
   const listing = await reviewer.list(github, "", false);
   assert.deepEqual(listing.errors, []);
   const byNumber = Object.fromEntries(listing.repos.flatMap((r) => r.prs).map((p) => [p.number, p.place?.cleanup]));
-  assert.deepEqual(byNumber, { 5: { kind: "merge", done: true }, 6: { kind: "sendBack", done: false }, 7: undefined });
+  assert.deepEqual(byNumber, { 5: { kind: "merge", done: true }, 6: { kind: "sendBack", sha: "abc1234", done: false }, 7: undefined });
   // The page's spots carry it.
   assert.deepEqual(pageItems([{ machine: "m", listing }]).groups[0]?.items.find((i) => i.pr.number === 5)?.spots[0]?.cleanup, { kind: "merge", done: true });
   // #8 has no review worktree here (removed by hand): forgotten.

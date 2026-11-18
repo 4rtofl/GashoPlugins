@@ -137,16 +137,19 @@ export class BoardFolder {
     }
     const set = await this.reload();
     if (this.stopped) return set;
+    // Compared with what onChange last got: a reading that starts while another goes on would see the plugins before
+    // that one, and tell its change again.
+    let told = set;
     try {
       this.watcher = fs.watch(this.deps.dir, { recursive: true }, (_, file) => {
         const top = String(file ?? "").split(path.sep)[0] ?? "";
         if (SKIP.has(top) || top.startsWith(".")) return;
         clearTimeout(this.timer);
         this.timer = setTimeout(() => {
-          const before = new Map(this.set.plugins.map((p) => [p.name, p.hash]));
-          const version = this.set.version;
           void this.reload().then((next) => {
-            if (this.stopped || next.version === version) return;
+            if (this.stopped || next.version === told.version) return;
+            const before = new Map(told.plugins.map((p) => [p.name, p.hash]));
+            told = next;
             const changed = new Set([...before.keys(), ...next.plugins.map((p) => p.name)].filter((n) => before.get(n) !== next.plugins.find((p) => p.name === n)?.hash));
             onChange(next, changed);
           });

@@ -13,6 +13,9 @@ export interface KeptWorktree {
   seenAt: number;
 }
 
+/** GitHub takes the names of owners and repositories in any case. */
+const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+
 /** Shown worktrees are written down at most this often, so that every look at a tab does not write the file. */
 const SEEN_WRITE_MS = 10 * 60_000;
 /** Worktrees kept, at most: the ones shown longest ago go first. */
@@ -24,23 +27,23 @@ export class Store {
   private writing: Promise<void> = Promise.resolve();
   private written = new Map<string, number>();
   private readonly file: string;
+  private readonly log: (...args: unknown[]) => void;
 
-  constructor(file: string) {
+  constructor(file: string, log: (...args: unknown[]) => void) {
     this.file = file;
+    this.log = log;
   }
 
+  /** A file that is not what this writes starts it empty, and the next write replaces it. */
   load(): Promise<void> {
-    this.loaded ??= fs.readFile(this.file, "utf8").then(
-      (text) => {
-        const data = JSON.parse(text) as { worktrees?: Record<string, KeptWorktree> };
-        for (const [key, w] of Object.entries(data.worktrees ?? {})) {
-          if (typeof w?.repo !== "string" || !Array.isArray(w.added)) continue;
-          this.worktrees.set(key, { repo: w.repo, ...(typeof w.branch === "string" ? { branch: w.branch } : {}), added: w.added.filter((n) => Number.isInteger(n)), seenAt: Number(w.seenAt) || 0 });
-          this.written.set(key, Number(w.seenAt) || 0);
-        }
-      },
-      () => undefined,
-    );
+    this.loaded ??= readKept(this.file, this.log).then((data) => {
+      const worktrees = (data as { worktrees?: Record<string, KeptWorktree> } | null)?.worktrees;
+      for (const [key, w] of Object.entries(typeof worktrees === "object" && worktrees !== null ? worktrees : {})) {
+        if (typeof w?.repo !== "string" || !Array.isArray(w.added)) continue;
+        this.worktrees.set(key, { repo: w.repo, ...(typeof w.branch === "string" ? { branch: w.branch } : {}), added: w.added.filter((n) => Number.isInteger(n)), seenAt: Number(w.seenAt) || 0 });
+        this.written.set(key, Number(w.seenAt) || 0);
+      }
+    });
     return this.loaded;
   }
 
@@ -53,11 +56,16 @@ export class Store {
     return [...this.worktrees].filter(([, w]) => w.seenAt >= since).sort((a, b) => b[1].seenAt - a[1].seenAt);
   }
 
-  /** Gasho shows the worktree's tabs now: what it is, as the screen says. */
-  async seen(worktree: string, repo: string, branch: string | undefined, now: number): Promise<KeptWorktree> {
+  /**
+   * Gasho shows the worktree's tabs now: what it is, as the screen says. The numbers added to it stay when its repository
+   * has the same name, or another name that `renamed` says is of the same repository on GitHub (the origin was set to the
+   * repository's new name after a rename).
+   */
+  async seen(worktree: string, repo: string, branch: string | undefined, now: number, renamed: (was: string) => Promise<boolean>): Promise<KeptWorktree> {
     await this.load();
     const old = this.worktrees.get(worktree);
-    const w: KeptWorktree = { repo, ...(branch ? { branch } : {}), added: old && old.repo === repo ? old.added : [], seenAt: now };
+    const keep = old !== undefined && (sameName(old.repo, repo) || (old.added.length > 0 && (await renamed(old.repo))));
+    const w: KeptWorktree = { repo, ...(branch ? { branch } : {}), added: keep ? old.added : [], seenAt: now };
     this.worktrees.set(worktree, w);
     const changed = !old || old.repo !== repo || old.branch !== branch;
     if (changed || now - (this.written.get(worktree) ?? 0) >= SEEN_WRITE_MS) await this.save();
@@ -67,7 +75,7 @@ export class Store {
   async add(worktree: string, repo: string, number: number, now: number): Promise<void> {
     await this.load();
     const old = this.worktrees.get(worktree);
-    const added = old && old.repo === repo ? old.added : [];
+    const added = old && sameName(old.repo, repo) ? old.added : [];
     this.worktrees.set(worktree, { repo, ...(old?.branch ? { branch: old.branch } : {}), added: added.includes(number) ? added : [...added, number], seenAt: now });
     await this.save();
   }
@@ -93,5 +101,25 @@ export class Store {
     });
     this.writing = next.catch(() => undefined);
     return next;
+  }
+}
+
+/**
+ * The JSON of a file of what github-implement keeps; undefined when there is none yet, or when it cannot be read or is
+ * not JSON (said in the log): a load that failed would fail every call until the file was removed by hand.
+ */
+export async function readKept(file: string, log: (...args: unknown[]) => void): Promise<unknown> {
+  let text: string;
+  try {
+    text = await fs.readFile(file, "utf8");
+  } catch (e) {
+    if ((e as { code?: unknown })?.code !== "ENOENT") log(`could not read ${file}; starting without it`, e);
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (e) {
+    log(`${file} is not JSON; starting without it, and the next write replaces it`, e);
+    return undefined;
   }
 }
