@@ -232,10 +232,21 @@ export function KanbanPage(_: PageProps) {
     return () => clearTimeout(t);
   }, [asked]);
 
+  const starting = useRef(0);
   const actions = useMemo<CardActions>(
     () => ({
       notify: setNotice,
       askTrust: (q) => new Promise<boolean>((resolve) => setTrusts((cur) => [...cur, { ...q, answer: resolve }])),
+      begin: () => {
+        starting.current++;
+        let ended = false;
+        return () => {
+          if (ended) return;
+          ended = true;
+          starting.current--;
+        };
+      },
+      starting: () => starting.current,
     }),
     [],
   );

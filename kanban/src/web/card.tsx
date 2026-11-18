@@ -27,13 +27,20 @@ export interface Notice {
   session?: { machine: string; sessionId: string };
 }
 
-/** What the cards ask of the page: to show a notice, and to ask the person whether Claude Code may trust a folder. */
+/**
+ * What the cards ask of the page: to show a notice, to ask the person whether Claude Code may trust a folder, and to
+ * count the sessions being started.
+ */
 export interface CardActions {
   notify: (n: Notice | undefined) => void;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
+  /** Counts a session being started, its folder's question included, until the function it returns is called. */
+  begin: () => () => void;
+  /** How many sessions the cards are starting now. */
+  starting: () => number;
 }
 
-export const CardActionsContext = createContext<CardActions>({ notify: () => undefined, askTrust: async () => false });
+export const CardActionsContext = createContext<CardActions>({ notify: () => undefined, askTrust: async () => false, begin: () => () => undefined, starting: () => 0 });
 
 /** The pull request's state, as an icon in GitHub's colors: none yet, open, draft, merged or closed. */
 function prLook(card: KanbanCard): { Icon: LucideIcon; className: string; label: string } {
@@ -236,18 +243,23 @@ function gashoSessions({ machine, card }: PlacedCard): SessionInfo[] {
 async function startSession({ machine, card }: PlacedCard, launch: ReturnType<typeof useLaunchSession>, actions: CardActions): Promise<string | undefined> {
   const cwd = card.path;
   if (!cwd) return undefined;
-  const starting: Notice = { text: `${card.label} でセッションを起動しています…`, busy: true };
-  actions.notify(starting);
-  let r = await launch({ machine: machine.id, cwd });
-  if (!r.ok && r.needsTrust) {
-    actions.notify(undefined);
-    if (!(await actions.askTrust({ path: cwd, warnings: r.trustWarnings ?? [] }))) return undefined;
+  const end = actions.begin();
+  try {
+    const starting: Notice = { text: `${card.label} でセッションを起動しています…`, busy: true };
     actions.notify(starting);
-    r = await launch({ machine: machine.id, cwd, trust: true });
+    let r = await launch({ machine: machine.id, cwd });
+    if (!r.ok && r.needsTrust) {
+      actions.notify(undefined);
+      if (!(await actions.askTrust({ path: cwd, warnings: r.trustWarnings ?? [] }))) return undefined;
+      actions.notify(starting);
+      r = await launch({ machine: machine.id, cwd, trust: true });
+    }
+    if (r.ok) return r.sessionId;
+    actions.notify({ text: r.error, tone: "danger" });
+    return undefined;
+  } finally {
+    end();
   }
-  if (r.ok) return r.sessionId;
-  actions.notify({ text: r.error, tone: "danger" });
-  return undefined;
 }
 
 /**
@@ -362,7 +374,9 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
                   void startSession(row, launch, actions).then((sessionId) => {
                     if (!sessionId) return;
                     actions.notify({ text: `${card.label} でセッションを起動しました。`, session: { machine: machine.id, sessionId } });
-                    nav.openSession(machine.id, sessionId);
+                    // Leaving the board would drop the question of another card still starting one: the notice opens
+                    // this session, and the last to start is opened.
+                    if (actions.starting() === 0) nav.openSession(machine.id, sessionId);
                   })
                 }
                 className={MENU_ITEM}
