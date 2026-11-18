@@ -6,7 +6,9 @@
 // to the home screen, as this screen's worktree is no more. Where it is the place of the open pull request's merge.
 import { FolderX, GitBranch, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { removeWorktreeProblem, useRemoveWorktree } from "@gasho/plugin-sdk";
+import { removeWorktreeProblem, useRemoveWorktree, useRequest } from "@gasho/plugin-sdk";
+import type { WorktreeItems } from "../../../types.ts";
+import { itemsTarget, useRefreshOptions } from "../../tabs.ts";
 import { Alert } from "../../ui/alert.tsx";
 import { Button } from "../../ui/button.tsx";
 import { changesText, isMergedHeadWorktree, pushedOf, sessionName, sessionsIn, type Changes } from "../cleanup.ts";
@@ -143,8 +145,10 @@ function RemoveDialog({ onClose }: { onClose: () => void }) {
 }
 
 function MergedSection() {
-  const { item, worktree } = useItem();
-  return isMergedHeadWorktree(item, worktree) ? <MergedCleanup /> : null;
+  const { machine, item, worktree } = useItem();
+  // The same read as the worktree's tabs (useRequest shares it): it says whether the pull request is the worktree's.
+  const items = useRequest<WorktreeItems>(itemsTarget(machine, worktree, true), useRefreshOptions());
+  return isMergedHeadWorktree(item, worktree, items.data) ? <MergedCleanup /> : null;
 }
 
 export default { order: 50, kinds: ["pulls"], View: MergedSection } satisfies ItemSection;

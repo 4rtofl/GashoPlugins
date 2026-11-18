@@ -3,7 +3,7 @@
 // Gasho session, or one started there), or start a new session there and open it; remove its review worktree; and send
 // the Agent in its worktree what "マージしてもらう", "差し戻す" or "修正してもらう" asks, and remove its review worktree
 // once a merge or a send-back asked with "終わったら片付ける" is done (cleanup.ts; shell.tsx decides when). Before
-// sending, it switches the session's effort level (max for the review, medium to merge or send back). The daemon part
+// sending, it switches the session's effort level (xhigh for the review, medium to merge or send back). The daemon part
 // does the git; the page asks the person before trusting a folder, before removing, and before asking for a merge or a
 // send-back.
 import {
@@ -225,7 +225,8 @@ export async function askAgent(spot: Spot, label: string, text: string, effort: 
 
 /**
  * After a merge or a send-back was sent: the daemon part keeps whether to remove the review worktree once it is done
- * (`cleanup`), or forgets what an earlier ask said. Only a review worktree (review-<number>) is ever removed.
+ * (`cleanup`), or forgets what an earlier ask said. Only a review worktree
+ * (review-<repository>-<number>, or review-<number> from before) is ever removed.
  */
 export async function followCleanup({ pr }: Item, spot: Spot, kind: CleanupKind, cleanup: boolean, t: Tools): Promise<void> {
   if (!spot.worktree?.review) return;
