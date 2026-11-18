@@ -2,7 +2,7 @@
 // whether the screen is open in the worktree of the merged pull request's head branch, the sessions that end with it,
 // and how to say why gasho-daemon would not remove it yet. Kept free of the SDK's functions, so the tests can run it.
 import type { MachineInfo, SessionInfo, WorktreeInfo } from "@gasho/plugin-sdk";
-import type { GitHubItemDetail } from "../../types.ts";
+import type { GitHubItemDetail, WorktreeItems } from "../../types.ts";
 
 /** Why gasho-daemon did not remove a worktree (the SDK's WorktreeChanges). */
 export interface Changes {
@@ -16,12 +16,14 @@ const trimSlash = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
 
 /**
  * Whether the merged section shows for this worktree: a merged pull request, opened in a worktree that has its head
- * branch checked out and is not its repository's main worktree (which cannot be removed). Another branch's worktree,
- * the main one, or a folder outside a repository shows nothing.
+ * branch checked out and is not its repository's main worktree (which cannot be removed), and that the worktree's items
+ * (`items`, ops/items.ts) count among its branch's pull requests: one merged before from a branch of the same name, or
+ * from a fork's, is not. Another branch's worktree, the main one, or a folder outside a repository shows nothing.
  */
-export function isMergedHeadWorktree(item: GitHubItemDetail, worktree: Pick<WorktreeInfo, "path" | "branch" | "repo">): boolean {
+export function isMergedHeadWorktree(item: GitHubItemDetail, worktree: Pick<WorktreeInfo, "path" | "branch" | "repo">, items: WorktreeItems | undefined): boolean {
   if (item.kind !== "pulls" || item.state !== "merged" || !item.head) return false;
   if (worktree.branch !== item.head || !worktree.repo) return false;
+  if (!items?.pulls.some((p) => p.number === item.number)) return false;
   return trimSlash(worktree.path) !== trimSlash(worktree.repo);
 }
 
