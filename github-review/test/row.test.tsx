@@ -202,6 +202,15 @@ describe("a pull request with a worktree", () => {
     expect(callsOf("remove")).toEqual([{ repo: "4rtofl/app", number: 7, check: true }]);
   });
 
+  it("removes the session that posted its review, in a row kept for its worktree too", async () => {
+    set({ machines: [machine({ canLaunch: true, sessions: [session({ sessionId: "s1", cwd: "/work/review-7" })] })] });
+    const kept = pr({ state: "merged", place: { primary: "/work/app", worktree: review, finishedSessions: ["s1"] } });
+    respond({ list: listed({ repos: [{ repo: "4rtofl/app", watched: true, prs: [], total: 0, kept: [kept] }] }) });
+    answerCalls({ reviewSession: { ok: true, data: { claimed: true } } });
+    render(<ReviewPage params={{}} />);
+    await waitFor(() => expect(sdk.removeSession).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1" }));
+  });
+
   it("offers no removal for a worktree that was not made for the review", () => {
     respond({ list: listed({ requested: [pr({ state: "merged", place: { primary: "/work/app", worktree: { path: "/work/app-fix", branch: "fix/7-login", review: false } } })] }) });
     render(<ReviewPage params={{}} />);

@@ -8,7 +8,7 @@ import type { CleanupKind } from "../cleanup.ts";
 import { mergeMethodOf } from "../instructions.ts";
 import { atRest } from "../review-session.ts";
 import { readTemplates } from "../template.ts";
-import type { Place, Removed } from "../types.ts";
+import type { Listing, Place, PrRow, Removed } from "../types.ts";
 import { working } from "../verdict.ts";
 import { cleanUp, removeFinishedSession, type Actions, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "./actions";
 import { holdSending, useAsked } from "./asked";
@@ -135,6 +135,9 @@ export function useRowShell({
   return { shared, overlays };
 }
 
+/** Every row a working server's list holds, in both parts of the page. */
+const rowsOf = (listing: Listing): PrRow[] => [...listing.requested, ...listing.repos.flatMap((r) => [...r.prs, ...r.kept])];
+
 /**
  * Removes the review worktrees whose merge or send-back, asked with "終わったら片付ける", is done, once no session in
  * them is at work (cleanup.ts), on every working server the page lists. Each is tried once by this page; the daemon
@@ -146,7 +149,7 @@ function useAutoCleanup(sources: Record<string, Source>, ready: MachineInfo[], t
     for (const machine of ready) {
       const listing = sources[machine.id]?.listing;
       if (!listing) continue;
-      for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => [...r.prs, ...r.kept])]) {
+      for (const pr of rowsOf(listing)) {
         const place = pr.place;
         if (!place || !readyToClean(machine, place)) continue;
         const key = `${machine.id} ${pr.url} ${place.worktree?.path}`;
@@ -168,7 +171,7 @@ function useFinishedSessions(sources: Record<string, Source>, ready: MachineInfo
     for (const machine of ready) {
       const listing = sources[machine.id]?.listing;
       if (!listing) continue;
-      for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => r.prs)]) {
+      for (const pr of rowsOf(listing)) {
         for (const sessionId of pr.place?.finishedSessions ?? []) {
           const session = machine.sessions.find((s) => s.sessionId === sessionId);
           const key = `${machine.id} ${sessionId}`;
