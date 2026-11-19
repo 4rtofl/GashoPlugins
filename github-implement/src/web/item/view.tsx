@@ -176,8 +176,9 @@ function Detail() {
 
 function Title() {
   const { item, where, busy, run } = useItem();
-  // What is typed, and GitHub's title when the edit started: the daemon part refuses to save over another one.
-  const [edit, setEdit] = useDraft<{ draft: string; from: string }>("title");
+  // What is typed, and GitHub's title when the edit started: the daemon part refuses to save over another one. `over`:
+  // the title a save replaced, which the item read before the save still shows until it is read again.
+  const [edit, setEdit] = useDraft<{ draft: string; from: string; over?: string }>("title");
   if (edit === undefined) {
     return (
       <div className="flex items-start gap-2">
@@ -189,7 +190,7 @@ function Title() {
     );
   }
   const { draft, from } = edit;
-  const changed = from !== item.title;
+  const changed = from !== item.title && edit.over !== item.title;
   // `base`: GitHub's title the draft is saved over.
   const save = async (base: string) => {
     const sent = draft;
@@ -202,14 +203,14 @@ function Title() {
       undo: { op: "edit", params: { title: base }, summary: `#${where.number} の題を戻す` },
     });
     // A title changed while it was being saved stays in the box, to be saved again over the one just saved.
-    if (ok) setEdit((e) => (!e || e.draft === sent ? undefined : { ...e, from: sent }));
+    if (ok) setEdit((e) => (!e || e.draft === sent ? undefined : { ...e, from: sent, over: base }));
   };
   return (
     <div className="space-y-2">
       <input
         autoFocus
         value={draft}
-        onChange={(e) => setEdit({ draft: e.target.value, from })}
+        onChange={(e) => setEdit({ ...edit, draft: e.target.value })}
         onKeyDown={(e) => {
           if (e.key === "Escape" && !isComposing(e)) {
             e.preventDefault();
