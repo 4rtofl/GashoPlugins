@@ -7,7 +7,7 @@ export default defineDaemonPlugin({
   methods: {
     /** The plan's usage limits (UsageLimits). No params: they are the account's, not a session's. */
     async limits(_params, ctx) {
-      return readLimits({ dataDir: ctx.dataDir });
+      return readLimits({ dataDir: ctx.dataDir, signal: ctx.signal });
     },
   },
 });

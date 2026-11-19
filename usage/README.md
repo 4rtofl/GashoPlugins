@@ -74,7 +74,7 @@ claude -p --input-format stream-json --output-format stream-json --verbose --no-
 
 発言は送らないので、モデルは呼ばず、トークンも使わない。フックは止める。止めないと、利用者の設定とプラグインにある SessionStart・SessionEnd のフックが、読むたびにすべて動き（試した Mac では20本）、その分の時間もかかる。`--bare` は Claude Code のログイン（OAuth）を読まないので使えない。
 
-標準入力を閉じても、Claude Code は2つに答えてから終わる。答えの行が出たら、Claude Code が終わるのを待たずに使う（答えてから終わるまで数秒〜十数秒かかる）。`ctx.exec` は終わるまで出力を返さず、標準入力も渡せないので、Node.js の `spawn` で、シェルを通さずに、自分のプロセスグループで起動する。答えたあとは自分で終わるのに任せ、起動から90秒たっても動いていれば、プロセスグループに SIGTERM を送る。答える前に90秒たったときは、読めなかったものとする。90秒は、負荷の高い Mac（load average が200〜340）で、フックを止めても答えまで42〜62秒かかったためである。渡す2行は決まった文字列で、画面から来た値は入れない。`claude` の場所は、gasho-daemon と同じく、環境変数 `GASHO_CLAUDE_BIN` か `claude` にする。
+標準入力を閉じても、Claude Code は2つに答えてから終わる。答えの行が出たら、Claude Code が終わるのを待たずに使う（答えてから終わるまで数秒〜十数秒かかる）。`ctx.exec` は終わるまで出力を返さず、標準入力も渡せないので、Node.js の `spawn` で、シェルを通さずに、自分のプロセスグループで起動する。答えたあとは自分で終わるのに任せ、起動から90秒たっても動いていれば、プロセスグループに SIGTERM を送り、その5秒後にまだ動いていれば SIGKILL を送る（`ctx.exec` と同じ）。呼び出しが中断されたとき（プラグインのプロセスを止めるときなど。`ctx.signal`）も、同じように止める。答える前に90秒たったときは、読めなかったものとする。90秒は、負荷の高い Mac（load average が200〜340）で、フックを止めても答えまで42〜62秒かかったためである。渡す2行は決まった文字列で、画面から来た値は入れない。`claude` の場所は、gasho-daemon と同じく、環境変数 `GASHO_CLAUDE_BIN` か `claude` にする。
 
 Claude Code は `ctx.dataDir`（`~/.local/share/gasho/plugin-data/usage/`）の中で動かす。プラグインの API 1.4 に対応した gasho-daemon は、このフォルダーで動く Claude Code を、セッションの一覧に出さない。
 

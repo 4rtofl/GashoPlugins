@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fakeContext, loadDaemon } from "../../test/daemon.ts";
-import { ARGS, askClaude, forget, KEEP_MS, limitsOf, readLimits, REQUESTS, RUN_MS, type Asked } from "../src/daemon/usage.ts";
+import { ARGS, askClaude, forget, KEEP_MS, KILL_MS, limitsOf, readLimits, REQUESTS, RUN_MS, type Asked } from "../src/daemon/usage.ts";
 import type { UsageLimits } from "../src/types.ts";
 
 /** What Claude Code 2.1.325 answered to get_usage on a Claude.ai plan without a 5-hour limit (fields cut down). */
@@ -35,8 +35,8 @@ const INIT = { type: "control_response", response: { subtype: "success", request
 const out = (...messages: unknown[]) => `${messages.map((m) => JSON.stringify(m)).join("\n")}\n`;
 
 /** Waits until `ok()` holds (readLimits makes the folder before it runs Claude Code). */
-async function until(ok: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 5));
+async function until(ok: () => boolean, tries = 200): Promise<void> {
+  for (let i = 0; i < tries && !ok(); i++) await new Promise((r) => setTimeout(r, 5));
   assert.ok(ok());
 }
 
@@ -102,14 +102,15 @@ test("the method waits longer than Claude Code is given to answer", () => {
 /**
  * A stand-in for Claude Code: a shell script that writes its arguments and stdin to `log`, prints `printed`, and then
  * waits, with its pid in `pid` (the group's: askClaude starts it in a group of its own) and a child of its own.
+ * `deaf`: it and its child ignore SIGTERM.
  */
-async function fakeClaude(printed: string): Promise<{ bin: string; dir: string; read: (name: string) => Promise<string> }> {
+async function fakeClaude(printed: string, deaf = false): Promise<{ bin: string; dir: string; read: (name: string) => Promise<string> }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usage-test-"));
   await fs.writeFile(path.join(dir, "printed"), printed);
   const bin = path.join(dir, "claude");
   await fs.writeFile(
     bin,
-    `#!/bin/sh\necho $$ > "${dir}/pid"\npwd > "${dir}/cwd"\nprintf '%s\\n' "$@" > "${dir}/args"\nread -r a; read -r b\nprintf '%s\\n%s\\n' "$a" "$b" > "${dir}/stdin"\ncat "${dir}/printed"\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`,
+    `#!/bin/sh\n${deaf ? "trap '' TERM\n" : ""}echo $$ > "${dir}/pid"\npwd > "${dir}/cwd"\nprintf '%s\\n' "$@" > "${dir}/args"\nread -r a; read -r b\nprintf '%s\\n%s\\n' "$a" "$b" > "${dir}/stdin"\ncat "${dir}/printed"\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`,
     { mode: 0o755 },
   );
   return { bin, dir, read: (name) => fs.readFile(path.join(dir, name), "utf8") };
@@ -148,6 +149,31 @@ test("askClaude stops Claude Code and what it started when it does not answer in
     assert.equal(asked.answer, undefined);
     const child = Number(await c.read("child"));
     await until(() => !alive(child));
+  } finally {
+    await fs.rm(c.dir, { recursive: true, force: true });
+  }
+});
+
+test("askClaude stops Claude Code when the call is aborted, with SIGKILL when SIGTERM does not stop it", async () => {
+  const c = await fakeClaude(out(INIT), true);
+  const abort = new AbortController();
+  const asking = askClaude(c.bin, c.dir, 60_000, abort.signal);
+  try {
+    const written = (name: string) => {
+      try {
+        return readFileSync(path.join(c.dir, name), "utf8").trim() !== "";
+      } catch {
+        return false;
+      }
+    };
+    await until(() => written("child"), 1000);
+    const pid = Number(await c.read("pid"));
+    const child = Number(await c.read("child"));
+    abort.abort();
+    assert.equal((await asking).killed, true);
+    await new Promise((r) => setTimeout(r, 1000));
+    assert.ok(alive(pid), "SIGTERM is ignored");
+    await until(() => !alive(pid) && !alive(child), KILL_MS / 5 + 400);
   } finally {
     await fs.rm(c.dir, { recursive: true, force: true });
   }

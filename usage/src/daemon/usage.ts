@@ -113,14 +113,18 @@ export interface Asked {
   code?: number | string | null;
 }
 
-/** Runs Claude Code with the two requests on its stdin. */
-export type Ask = (claude: string, cwd: string, timeoutMs: number) => Promise<Asked>;
+/** Runs Claude Code with the two requests on its stdin; `signal` stops it. */
+export type Ask = (claude: string, cwd: string, timeoutMs: number, signal?: AbortSignal) => Promise<Asked>;
+
+/** After SIGTERM, Claude Code gets this long before SIGKILL, as the commands of ctx.exec do. */
+export const KILL_MS = 5000;
 
 /**
  * Gives Claude Code's answer as soon as it prints it: it takes seconds more to end. It ends by itself once it has
- * answered (its stdin is closed), and its process group gets SIGTERM if it still runs `timeoutMs` after its start.
+ * answered (its stdin is closed). Its process group gets SIGTERM, then SIGKILL, if it still runs `timeoutMs` after its
+ * start or when `signal` aborts (the call took too long, or the plugin's process is being stopped).
  */
-export const askClaude: Ask = (claude, cwd, timeoutMs) =>
+export const askClaude: Ask = (claude, cwd, timeoutMs, signal) =>
   new Promise((resolve) => {
     let stderr = "";
     let rest = "";
@@ -132,14 +136,29 @@ export const askClaude: Ask = (claude, cwd, timeoutMs) =>
     };
     // A group of its own, so that what it starts is stopped with it.
     const child = spawn(claude, ARGS, { cwd, detached: true, stdio: ["pipe", "pipe", "pipe"] });
-    const timer = setTimeout(() => {
+    const group = (s: NodeJS.Signals) => {
       try {
-        if (child.pid) process.kill(-child.pid, "SIGTERM");
+        if (child.pid) process.kill(-child.pid, s);
       } catch {
         // it has ended
       }
+    };
+    let kill: NodeJS.Timeout | undefined;
+    const stop = () => {
+      if (kill) return;
+      group("SIGTERM");
+      kill = setTimeout(() => group("SIGKILL"), KILL_MS);
+      kill.unref();
       done({ killed: true });
-    }, timeoutMs);
+    };
+    const timer = setTimeout(stop, timeoutMs);
+    const ended = () => {
+      clearTimeout(timer);
+      if (kill) clearTimeout(kill);
+      signal?.removeEventListener("abort", stop);
+    };
+    if (signal?.aborted) stop();
+    else signal?.addEventListener("abort", stop, { once: true });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       if (settled) return;
@@ -153,11 +172,11 @@ export const askClaude: Ask = (claude, cwd, timeoutMs) =>
       if (stderr.length < 64 * 1024) stderr += chunk;
     });
     child.on("error", (e: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
+      ended();
       done({ code: e.code ?? null });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      ended();
       done(answerOf(rest) ? { answer: rest } : { code });
     });
     // It may end before it has read all of its stdin.
@@ -180,13 +199,13 @@ let running: Promise<UsageLimits> | undefined;
  * The limits, read at most once every KEEP_MS on this working server: calls that come while Claude Code is being asked
  * get the same answer, so that several browsers do not start several Claude Codes.
  */
-export function readLimits(o: { dataDir: string; ask?: Ask; claude?: string; now?: () => number }): Promise<UsageLimits> {
+export function readLimits(o: { dataDir: string; signal?: AbortSignal; ask?: Ask; claude?: string; now?: () => number }): Promise<UsageLimits> {
   const now = o.now ?? Date.now;
   if (last && now() - last.at < KEEP_MS) return Promise.resolve(last);
   running ??= (async () => {
     try {
       await fs.mkdir(o.dataDir, { recursive: true });
-      const asked = await (o.ask ?? askClaude)(o.claude ?? process.env.GASHO_CLAUDE_BIN ?? "claude", o.dataDir, RUN_MS);
+      const asked = await (o.ask ?? askClaude)(o.claude ?? process.env.GASHO_CLAUDE_BIN ?? "claude", o.dataDir, RUN_MS, o.signal);
       if (asked.answer === undefined) throw failure(asked);
       last = limitsOf(asked.answer, now());
       return last;
