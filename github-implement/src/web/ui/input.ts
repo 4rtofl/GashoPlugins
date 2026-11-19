@@ -1,4 +1,5 @@
-// The text boxes of github-implement (a title, a body, a comment), on Gasho's tokens, and the keys typed into them.
+// The text boxes of github-implement (a title, a body, a comment), on Gasho's tokens, the keys typed into them, and
+// what stays typed in them.
 import { useEffect, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 export const INPUT = "w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-foreground/40";
@@ -46,4 +47,22 @@ export function useComposingEscape(): void {
 export function leftAfter(now: string, sent: string): string {
   if (now === sent) return "";
   return now.startsWith(sent) ? now.slice(sent.length).trimStart() : now;
+}
+
+/** What is typed on the screen of a worktree, by name, and the issue or pull request it is typed for ("issues#17"). */
+export interface Drafts {
+  at: string;
+  values: Record<string, unknown>;
+}
+
+/**
+ * The drafts once the screen of `at` sets the draft `name` to `next`. A change sent from one number can end after the
+ * worktree's screen moved to another: the drafts of that one stay, and none are made for `at` when nothing is written.
+ */
+export function withDraft<T>(d: Drafts | undefined, at: string, name: string, next: T | undefined | ((prev: T | undefined) => T | undefined)): Drafts | undefined {
+  if (d && d.at !== at) return d;
+  const { [name]: prev, ...rest } = d?.values ?? {};
+  const v = typeof next === "function" ? (next as (prev: T | undefined) => T | undefined)(prev as T | undefined) : next;
+  if (v === undefined && prev === undefined) return d;
+  return { at, values: v === undefined ? rest : { ...rest, [name]: v } };
 }

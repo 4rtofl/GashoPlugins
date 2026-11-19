@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { usePluginState, type MachineInfo, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind } from "../../types.ts";
 import { useWriteOp } from "../daemon.ts";
+import { withDraft, type Drafts } from "../ui/input.ts";
 import { useToast } from "../ui/toast.tsx";
 
 export interface Where {
@@ -67,12 +68,6 @@ export function useAfterChange(reload: () => void): void {
   }, [revision]);
 }
 
-/** What is typed on the screen of a worktree, by name, and the issue or pull request it is typed for. */
-interface Drafts {
-  at: string;
-  values: Record<string, unknown>;
-}
-
 const draftsKey = (machine: string, worktree: WorktreeInfo) => `drafts:${machine}:${worktree.path}`;
 const draftsAt = (where: Where) => `${where.kind}#${where.number}`;
 
@@ -86,16 +81,7 @@ export function useDraft<T>(name: string): [T | undefined, (next: T | undefined 
   const at = draftsAt(where);
   const [drafts, setDrafts] = usePluginState<Drafts | undefined>(draftsKey(machine, worktree), undefined);
   const value = drafts?.at === at ? (drafts.values[name] as T | undefined) : undefined;
-  // A change sent from this number can end after the worktree's screen moved to another (its drafts then are that one's).
-  const set = (next: T | undefined | ((prev: T | undefined) => T | undefined)) =>
-    setDrafts((d) => {
-      if (d && d.at !== at) return d;
-      const { [name]: prev, ...rest } = d?.values ?? {};
-      const v = typeof next === "function" ? (next as (prev: T | undefined) => T | undefined)(prev as T | undefined) : next;
-      // Nothing to write: the drafts stay none, so that they do not become this number's while another one shows.
-      if (v === undefined && prev === undefined) return d;
-      return { at, values: v === undefined ? rest : { ...rest, [name]: v } };
-    });
+  const set = (next: T | undefined | ((prev: T | undefined) => T | undefined)) => setDrafts((d) => withDraft(d, at, name, next));
   return [value, set];
 }
 
