@@ -41,11 +41,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // Where the focus was before KEY: it goes back there when the toast closes.
   const back = useRef<HTMLElement | null>(null);
   const show = useCallback((t: ToastInput) => setToast({ ...t, key: ++count.current }), []);
-  const done = useCallback((key: number) => {
+  // The focus goes back while the toast still has it.
+  const leave = useCallback(() => {
     if (box.current?.contains(document.activeElement)) back.current?.focus();
     back.current = null;
-    setToast((t) => (t?.key === key ? undefined : t));
   }, []);
+  const done = useCallback(
+    (key: number) => {
+      leave();
+      setToast((t) => (t?.key === key ? undefined : t));
+    },
+    [leave],
+  );
   useEffect(() => {
     if (!toast) return;
     const onKey = (e: KeyboardEvent) => {
@@ -63,7 +70,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={show}>
       {children}
       <div ref={box} className="pointer-events-none fixed bottom-5 left-1/2 z-[95] flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center">
-        <AnimatePresence>{toast && <ToastCard key={toast.key} toast={toast} onDone={done} onFailed={show} />}</AnimatePresence>
+        <AnimatePresence>{toast && <ToastCard key={toast.key} toast={toast} onDone={done} onLeave={leave} onFailed={show} />}</AnimatePresence>
       </div>
     </ToastContext.Provider>
   );
@@ -99,7 +106,7 @@ const ICON: Record<ToastTone, ReactNode> = {
   info: <Info className="size-4 text-muted-foreground" />,
 };
 
-function ToastCard({ toast, onDone, onFailed }: { toast: Shown; onDone: (key: number) => void; onFailed: (t: ToastInput) => void }) {
+function ToastCard({ toast, onDone, onLeave, onFailed }: { toast: Shown; onDone: (key: number) => void; onLeave: () => void; onFailed: (t: ToastInput) => void }) {
   const tone = toast.tone ?? "success";
   const [paused, setPaused] = useState(false);
   const [phase, setPhase] = useState<"shown" | "undoing" | "restored">("shown");
@@ -116,6 +123,8 @@ function ToastCard({ toast, onDone, onFailed }: { toast: Shown; onDone: (key: nu
 
   const undo = async () => {
     if (!toast.undo || phase !== "shown") return;
+    // The button goes away with the focus on it, after Enter.
+    onLeave();
     setPhase("undoing");
     const error = await toast.undo();
     if (error) onFailed({ title: "元に戻せませんでした", description: error, tone: "error" });
