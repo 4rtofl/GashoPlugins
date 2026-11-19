@@ -133,7 +133,22 @@ export function useRowShell({
   // "まとめてレビューさせる" shows its notice again whenever the page's `notify` changes, over the rows' own.
   const notices = useMemo(() => {
     const here = (): NoticeBoard | undefined => (left.current ? boards.at(-1) : board);
-    return { notify: (n: Notice | undefined) => here()?.notify(n), dismiss: (n: Notice) => here()?.dismiss(n) };
+    // Once this is left, a panel opened since shows the next notice; the last one ("起動しています…", which stays till
+    // the next) is taken off where it shows.
+    let last: { on: NoticeBoard; n: Notice } | undefined;
+    return {
+      notify: (n: Notice | undefined) => {
+        const on = here();
+        if (last && last.on !== on) last.on.dismiss(last.n);
+        last = on && n ? { on, n } : undefined;
+        on?.notify(n);
+      },
+      dismiss: (n: Notice) => {
+        if (last?.n !== n) return here()?.dismiss(n);
+        last.on.dismiss(n);
+        last = undefined;
+      },
+    };
   }, [board]);
   const { sending } = useAsked();
   const batch = useBatchRun();

@@ -185,6 +185,25 @@ describe("a pull request without a worktree", () => {
     expect(await screen.findByText("#7 のセッションを起動し、「レビュー」を送りました。")).toBeTruthy();
   });
 
+  it("takes the notice of a closed panel's work off the page once the next one shows in a panel opened since", async () => {
+    let made!: () => void;
+    answerCalls({ create: () => new Promise((resolve) => (made = () => resolve({ ok: true, data: { path: "/work/review-7", created: true } }))) });
+    let started!: () => void;
+    sdk.launchSession.mockReturnValueOnce(new Promise<LaunchResult>((resolve) => (started = () => resolve({ ok: true, sessionId: "launched" }))) as unknown as LaunchResult);
+    // Two parts of the screen that draw the rows, as the review page and the panel of a pull request do.
+    const page = render(<ReviewPage params={{}} />);
+    const panel = render(<ReviewPage params={{}} />);
+    await userEvent.click(within(panel.container).getByRole("button", { name: /worktree を作る/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "何も送らない" }));
+    panel.unmount();
+    await act(async () => made());
+    expect(await within(page.container).findByText("review-7 でセッションを起動しています…")).toBeTruthy();
+    const next = render(<ReviewPage params={{}} />);
+    await act(async () => started());
+    expect(await within(next.container).findByText("#7 のセッションを起動しました。")).toBeTruthy();
+    await waitFor(() => expect(within(page.container).queryByText("review-7 でセッションを起動しています…")).toBeNull());
+  });
+
   it("shows a question once while the page and a panel are both open", async () => {
     answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
     sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true });
