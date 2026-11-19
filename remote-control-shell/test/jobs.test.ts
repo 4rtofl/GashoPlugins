@@ -362,7 +362,7 @@ test("a run sent again with the same request answers the record started for it, 
   }
 });
 
-test("the records of a session folder that has gone are removed once they have not changed for a week", async () => {
+test("the records of a session folder that has gone are removed a week after it was first found gone", async () => {
   const { folder, dataDir, shells } = setup();
   const gone = path.join(path.dirname(folder), "gone");
   const unread = path.join(path.dirname(folder), "unread");
@@ -374,11 +374,18 @@ test("the records of a session folder that has gone are removed once they have n
   }
   for (const f of [gone, unread]) rmSync(f, { recursive: true });
   const again = new Shells({ dataDir });
+  const week = GONE_KEEP_MS + 60_000;
   try {
     // One is read by this process, the other is not.
     assert.equal((await again.watch(gone, { offsets: {}, waitMs: 0 })).jobs.length, 1);
-    assert.equal(await again.sweep(), 0);
-    assert.equal(await again.sweep(Date.now() + GONE_KEEP_MS + 60_000), 2);
+    // Found gone only now: kept, however long ago their records changed.
+    assert.equal(await again.sweep(Date.now() + week), 0);
+    // There again for a while (a disk plugged in): found gone later, the week starts again.
+    mkdirSync(unread);
+    assert.equal(await again.sweep(Date.now() + week), 0);
+    rmSync(unread, { recursive: true });
+    assert.equal(await again.sweep(Date.now() + 2 * week), 1);
+    assert.equal(await again.sweep(Date.now() + 3 * week), 1);
     assert.deepEqual(await new Store(dataDir).keys(), [folderKey(folder)]);
     assert.equal((await again.watch(folder, { offsets: {}, waitMs: 0 })).jobs.length, 1);
   } finally {

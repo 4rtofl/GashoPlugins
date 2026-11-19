@@ -61,7 +61,7 @@ const TERM_MS = 2000;
 const FOREIGN_CHECK_MS = 2000;
 /** Outputs of ended commands kept in memory once read. */
 const CACHED_OUTPUTS = 8;
-/** The records of a session folder that has gone are removed once they have not changed for this long. */
+/** The records of a session folder that has gone are removed this long after it was first found gone. */
 export const GONE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 /** How often the records of gone session folders are looked for. */
 const SWEEP_MS = 6 * 60 * 60 * 1000;
@@ -477,8 +477,10 @@ export class Shells {
   }
 
   /**
-   * Removes the records of session folders that are no longer there (a worktree removed, …) once they have not
-   * changed for GONE_KEEP_MS, unless a command of theirs runs (README.md「記録の保存」). Resolves to how many went.
+   * Removes the records of session folders that are no longer there (a worktree removed, …) GONE_KEEP_MS after one was
+   * first found gone, unless a command of theirs runs (README.md「記録の保存」). When it was first found gone is kept
+   * with the folder, and dropped once it is there again, so that one out of sight for a while (a disk not plugged in)
+   * keeps its records. Resolves to how many went.
    */
   async sweep(now = Date.now()): Promise<number> {
     let removed = 0;
@@ -487,10 +489,18 @@ export class Shells {
       const loading = this.folders.get(key);
       const f = this.loaded.get(key);
       if (loading && !f) continue;
-      const path = f ? f.path : (await this.store.readFolder(key))?.path;
-      if (path === undefined || isDir(path)) continue;
-      const changed = await this.store.lastChange(key);
-      if (changed !== undefined && now - changed < GONE_KEEP_MS) continue;
+      const saved = await this.store.readFolder(key);
+      const path = f ? f.path : saved?.path;
+      if (path === undefined) continue;
+      const there = isDir(path);
+      const gone = saved?.gone;
+      if (there === (gone !== undefined)) {
+        const marked = { path, cwd: f ? f.cwd : (saved?.cwd ?? path), ...(there ? {} : { gone: now }) };
+        const write = () => this.store.writeFolder(key, marked);
+        await (f ? f.write(write, this.log) : write().catch((e: unknown) => this.log("could not write", e)));
+        continue;
+      }
+      if (gone === undefined || now - gone < GONE_KEEP_MS) continue;
       // Looked at again: a call may have come for the folder meanwhile.
       if (this.stopping || this.folders.get(key) !== loading || (f && (f.running > 0 || f.settling))) continue;
       if (f) {

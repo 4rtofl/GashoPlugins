@@ -2,7 +2,7 @@
 // (README.md「記録の保存」):
 //
 //   folders/<the first 16 hex digits of the SHA-256 of the session folder's path>/
-//     folder.json      the session folder's path, and the working folder
+//     folder.json      the session folder's path, the working folder, and when the session folder was found gone
 //     <id>.json        a record: the command, where and when it ran, how it ended
 //     <id>.log         its output, from `logFrom` to `size`
 //     <id>.cwd         while it runs: where the shell's EXIT trap writes the folder it ended in
@@ -32,6 +32,8 @@ export interface StoredJob extends ShellJob {
 export interface StoredFolder {
   path: string;
   cwd: string;
+  /** When the session folder was first found not there (ms; jobs.ts sweep). */
+  gone?: number;
 }
 
 const STATES = new Set<JobState>(["running", "exited", "stopped", "failed", "lost"]);
@@ -103,7 +105,8 @@ export class Store {
   async readFolder(key: string): Promise<StoredFolder | undefined> {
     try {
       const raw = JSON.parse(await fs.readFile(path.join(this.dir(key), "folder.json"), "utf8")) as Partial<StoredFolder> | null;
-      return typeof raw?.path === "string" && typeof raw.cwd === "string" ? { path: raw.path, cwd: raw.cwd } : undefined;
+      if (typeof raw?.path !== "string" || typeof raw.cwd !== "string") return undefined;
+      return { path: raw.path, cwd: raw.cwd, ...(num(raw.gone) ? { gone: raw.gone } : {}) };
     } catch {
       return undefined;
     }
@@ -158,14 +161,6 @@ export class Store {
   async keys(): Promise<string[]> {
     const names = await fs.readdir(this.root).catch(() => [] as string[]);
     return names.filter((n) => /^[0-9a-f]{16}$/.test(n));
-  }
-
-  /** When a session folder's files last changed (ms), or undefined when there are none. */
-  async lastChange(key: string): Promise<number | undefined> {
-    const dir = this.dir(key);
-    const names = await fs.readdir(dir).catch(() => [] as string[]);
-    const times = await Promise.all(names.map((n) => fs.stat(path.join(dir, n)).then((s) => s.mtimeMs, () => 0)));
-    return times.length > 0 ? Math.max(...times) : undefined;
   }
 
   removeFolder(key: string): Promise<void> {
