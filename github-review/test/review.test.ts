@@ -184,10 +184,11 @@ test("remove: not while something would be lost; then the worktree and its local
   await fs.writeFile(path.join(dest, ".env.local"), "TOKEN=x\n");
   const listed = await removeWorktree(exec, await s.clone(), { ...pr, head }, { check: true });
   assert.deepEqual([listed.removed, listed.files, listed.fileCount], [false, [".env.local", ".gitignore"], 2]);
-  await fs.writeFile(path.join(dest, "notes.txt"), "mine\n");
+  // Its name as it is, not quoted as git status does without -z.
+  await fs.writeFile(path.join(dest, "日本語 メモ.txt"), "mine\n");
   const changed = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(listed.token ? { agreed: listed.token } : {}) });
-  assert.deepEqual([changed.removed, changed.files], [false, [".env.local", ".gitignore", "notes.txt"]]);
-  await fs.lstat(path.join(dest, "notes.txt"));
+  assert.deepEqual([changed.removed, changed.files], [false, [".env.local", ".gitignore", "日本語 メモ.txt"]]);
+  await fs.lstat(path.join(dest, "日本語 メモ.txt"));
   const gone = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(changed.token ? { agreed: changed.token } : {}) });
   assert.deepEqual([gone.path, gone.branch, gone.removed, gone.fileCount], [dest, "feat/5-a", true, 3]);
   await assert.rejects(fs.lstat(dest));

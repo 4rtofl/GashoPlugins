@@ -387,11 +387,11 @@ export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { 
   if (ahead > 0 && unread) throw new ReviewError(`GitHub を読めなかったので、${wt.path} の ${ahead} 個の commit が push 済みかを確かめられません。片付けません：${unread}`);
   if (ahead > 0) throw new ReviewError(`${wt.path} に、push していない commit が ${ahead} 個あるので、片付けません。`);
   // The options say what to list whatever the settings (status.showUntrackedFiles=no hides untracked files): a folder
-  // that holds only such files is one line (node_modules/).
+  // that holds only such files is one line (node_modules/). -z gives the names as they are, not quoted (日本語 メモ.txt).
   const loose = wt.missing
     ? []
-    : (await git(exec, wt.path, ["status", "--porcelain", "--untracked-files=normal", "--ignored=traditional"]))
-        .split("\n")
+    : (await git(exec, wt.path, ["status", "--porcelain", "-z", "--untracked-files=normal", "--ignored=traditional"]))
+        .split("\0")
         .filter((l) => l.startsWith("?? ") || l.startsWith("!! "))
         .map((l) => l.slice(3))
         .sort();
