@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
-import { batchTargets, mergeOrdered, pageItems } from "../src/items.ts";
+import { batchTargets, mergeOrdered, pageItems, readListing } from "../src/items.ts";
 import { authorWords, listArgs, namesArgs, ownWanted, parseList, parseNames, requestedQuery, scopeWords, SEARCH_LIMIT, upperSearches, watchedQueries } from "../src/daemon/gh.ts";
 import { createWorktree, projectFiles, prWorktree, readClone, removeWorktree, repoName, ReviewError, reviewName, reviewNumbers, type Clone, type Exec, type OnGitHub } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
@@ -1068,6 +1068,15 @@ test("page: a pull request listed by several working servers shows once, with wh
   const oldestShown = Math.min(...shown.map((i) => Date.parse(i.pr.createdAt ?? "")));
   const all = c.repos.flatMap((r) => r.prs);
   assert.ok(all.filter((p) => !shown.some((i) => i.pr.url === p.url)).every((p) => Date.parse(p.createdAt ?? "") <= oldestShown));
+});
+
+test("pageItems: the list the daemon part of the version before gave, kept by the page once the plugin is updated, still makes rows", () => {
+  const pr: PrRow = { repo: "o/r", number: 1, title: "t1", url: "https://github.com/o/r/pull/1", state: "open", labels: [], comments: 0, branch: "feat/1", place: { primary: "/a/r" } };
+  // 1.38.0's: neither kept, total nor hidden.
+  const before = { watched: ["/a/r"], requested: [pr], requestedMore: 2, repos: [{ repo: "o/r", watched: true, prs: [pr] }], watchedMore: 3, errors: [] } as unknown as Listing;
+  const page = pageItems([{ machine: "m", listing: readListing(before) }], "is:open");
+  assert.deepEqual([page.requested.length, page.requestedMore, page.groups.map((g) => [g.repo, g.items.length, g.total])], [1, 2, [["o/r", 1, 0]]]);
+  assert.deepEqual(readListing(before).hidden, []);
 });
 
 test("まとめてレビューさせる: the pull requests with no worktree on any working server and a clone on the one chosen", () => {

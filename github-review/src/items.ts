@@ -73,6 +73,21 @@ export function mergeOrdered<T>(lists: readonly (readonly T[])[], rank: (x: T) =
   }
 }
 
+/**
+ * A list as this version reads it. Once the plugin is updated, the page keeps what the daemon part of the version
+ * before gave until it reads again, which may lack the parts added since (`kept`, `total`, `hidden`).
+ */
+export function readListing(l: Listing): Listing {
+  const old = l as Partial<Listing> & { repos?: Partial<Listing["repos"][number]>[] };
+  return {
+    ...l,
+    requested: old.requested ?? [],
+    repos: (old.repos ?? []).map((r) => ({ repo: r.repo ?? "", watched: r.watched === true, prs: r.prs ?? [], total: r.total ?? 0, kept: r.kept ?? [] })),
+    hidden: old.hidden ?? [],
+    errors: old.errors ?? [],
+  };
+}
+
 /** The page's rows; `words` are the search words, whose order the lower part keeps. */
 export function pageItems<M>(lists: { machine: M; listing: Listing }[], words: string): PageItems<M> {
   // Every working server's spot of a pull request, whichever part of the page listed it there.
