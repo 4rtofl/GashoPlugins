@@ -189,8 +189,16 @@ test("remove: not while something would be lost; then the worktree and its local
   const changed = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(listed.token ? { agreed: listed.token } : {}) });
   assert.deepEqual([changed.removed, changed.files], [false, [".env.local", ".gitignore", "日本語 メモ.txt"]]);
   await fs.lstat(path.join(dest, "日本語 メモ.txt"));
-  const gone = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(changed.token ? { agreed: changed.token } : {}) });
-  assert.deepEqual([gone.path, gone.branch, gone.removed, gone.fileCount], [dest, "feat/5-a", true, 3]);
+  // A file added inside a folder listed as one line is asked about again too.
+  await fs.mkdir(path.join(dest, "scratch"));
+  await fs.writeFile(path.join(dest, "scratch", "a.txt"), "a\n");
+  const folder = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(changed.token ? { agreed: changed.token } : {}) });
+  assert.deepEqual([folder.removed, folder.files], [false, [".env.local", ".gitignore", "scratch/", "日本語 メモ.txt"]]);
+  await fs.writeFile(path.join(dest, "scratch", "added-after-listing.txt"), "b\n");
+  const inside = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(folder.token ? { agreed: folder.token } : {}) });
+  assert.deepEqual([inside.removed, inside.files], [false, folder.files]);
+  const gone = await removeWorktree(exec, await s.clone(), { ...pr, head }, { ...(inside.token ? { agreed: inside.token } : {}) });
+  assert.deepEqual([gone.path, gone.branch, gone.removed, gone.fileCount], [dest, "feat/5-a", true, 4]);
   await assert.rejects(fs.lstat(dest));
   assert.equal(await git(s.primary, "branch", "--list", "feat/5-a"), "");
 

@@ -395,7 +395,15 @@ export async function removeWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { 
         .filter((l) => l.startsWith("?? ") || l.startsWith("!! "))
         .map((l) => l.slice(3))
         .sort();
-  const token = loose.length > 0 ? createHash("sha256").update(loose.join("\n")).digest("hex").slice(0, 32) : undefined;
+  // The agreement holds while the files are the same, inside the folders listed as one line too (a folder git ignores,
+  // such as node_modules/, stays one line: git does not look inside it).
+  const token =
+    loose.length > 0
+      ? createHash("sha256")
+          .update((await git(exec, wt.path, ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored=matching"])).split("\0").filter((l) => l.startsWith("?? ") || l.startsWith("!! ")).sort().join("\0"))
+          .digest("hex")
+          .slice(0, 32)
+      : undefined;
   const what = { path: wt.path, ...(wt.branch ? { branch: wt.branch } : {}), files: loose.slice(0, SHOWN_FILES), fileCount: loose.length, ...(token ? { token } : {}) };
   if (o.check || (token && o.agreed !== token)) return { ...what, removed: false };
   await step("worktree を消すことが", git(exec, clone.path, ["worktree", "remove", ...(token ? ["--force"] : []), wt.path], { write: true }));
