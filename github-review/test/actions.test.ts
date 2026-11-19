@@ -2,33 +2,55 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MachineInfo, SessionInfo } from "@gasho/plugin-sdk";
 import type { CleanupKind } from "../src/cleanup.ts";
-import { askAgent, createWorktree, followCleanup, newSessionIn, openWorktree, removeFinishedSession, reviewIn, type Item, type Notice, type Spot, type Tools } from "../src/web/actions.ts";
-import type { Created } from "../src/types.ts";
+import { askAgent, createWorktree, followCleanup, newSessionIn, openWorktree, removeFinishedSession, reviewIn, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "../src/web/actions.ts";
+import type { Created, ProjectFiles } from "../src/types.ts";
 
 const PR = { repo: "o/r", number: 5, title: "直す", url: "https://github.com/o/r/pull/5", branch: "feat/5-fix" } as Item["pr"];
 const DIR = "/w/r/review-5";
 
 /** A fake of what the page gives the row's buttons, keeping what they did. */
-function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "fail" | "warn"; sessions?: Partial<SessionInfo>[]; claimed?: boolean; removeSession?: "fail" } = {}) {
+function fake(
+  opts: {
+    created?: boolean;
+    launch?: "ok" | "fail";
+    send?: "ok" | "fail" | "warn";
+    sessions?: Partial<SessionInfo>[];
+    claimed?: boolean;
+    removeSession?: "fail";
+    /** A pull request from a fork, whose worktree has these of PROJECT_FILES (none: it cannot be read), read at `path`. */
+    fork?: { files?: string[]; start: boolean; path?: string };
+  } = {},
+) {
   const steps: string[] = [];
   const tracked: unknown[] = [];
   const removed: string[] = [];
   const notices: (Notice | undefined)[] = [];
+  const methods: string[] = [];
+  const asked: ForkQuestion[] = [];
   const opened: string[] = [];
   const sent: string[] = [];
   const launched: string[] = [];
   const efforts: (string | undefined)[] = [];
   const calls: unknown[] = [];
+  const finishing: unknown[] = [];
   const machine = { id: "m1", name: "m1", canLaunch: true, features: ["effort"], sessions: (opts.sessions ?? []) as SessionInfo[] } as MachineInfo;
   const tools = {
     call: (async ({ method, params }: { method: string; params: { action?: string } }) => {
+      methods.push(method);
       if (method === "reviewSession") {
         steps.push(`reviewSession:${params.action}`);
         tracked.push(params);
         return { ok: true, data: { claimed: opts.claimed ?? true } };
       }
+      if (method === "trackReview") {
+        steps.push("trackReview");
+        finishing.push(params);
+        return { ok: true, data: { ok: true } };
+      }
       calls.push(params);
-      return { ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created };
+      if (method !== "projectFiles") return { ok: true, data: { path: DIR, created: opts.created ?? true } satisfies Created };
+      const files = opts.fork?.files;
+      return files ? { ok: true, data: { path: opts.fork?.path ?? DIR, files } satisfies ProjectFiles } : { ok: false, error: "読めません" };
     }) as unknown as Tools["call"],
     launch: (async ({ cwd }: { cwd: string }) => {
       launched.push(cwd);
@@ -49,6 +71,10 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
     nav: { openSession: (machine: string, sessionId: string) => opened.push(`${machine}/${sessionId}`) } as unknown as Tools["nav"],
     actions: {
       notify: (n) => notices.push(n),
+      askFork: async (q) => {
+        asked.push(q);
+        return opts.fork?.start ?? true;
+      },
       askTrust: async () => true,
       askRemove: async () => true,
       askAgentFor: async () => ({ cleanup: true }),
@@ -57,7 +83,8 @@ function fake(opts: { created?: boolean; launch?: "ok" | "fail"; send?: "ok" | "
     },
   } satisfies Tools;
   const spot: Spot = { machine, primary: "/w/r", worktree: { path: DIR, review: true } as Spot["worktree"] };
-  return { tools, spot, machine, item: { pr: PR, spots: [spot] } as Item, notices, opened, sent, launched, efforts, calls, steps, tracked, removed, last: () => notices.at(-1) };
+  const pr = opts.fork ? { ...PR, fork: true, author: "someone" } : PR;
+  return { tools, spot, machine, item: { pr, spots: [spot] } as Item, notices, methods, asked, opened, sent, launched, efforts, calls, steps, tracked, finishing, removed, last: () => notices.at(-1) };
 }
 
 test("create: starts a session and sends the template, but stays on the page; the notice opens the session", async () => {
@@ -68,12 +95,26 @@ test("create: starts a session and sends the template, but stays on the page; th
   assert.match(f.sent[0] ?? "", /^s-new: #5 をレビュー\n/);
   assert.deepEqual(f.efforts, ["high"]);
   assert.deepEqual(f.opened, []);
+  // A pull request of the same repository is not asked about.
+  assert.deepEqual(f.methods, ["create", "reviewSession", "trackReview"]);
+  assert.deepEqual(f.asked, []);
   const n = f.last();
   assert.equal(n?.text, "#5 のセッションを起動し、「レビューする」を送りました。");
   assert.equal(n?.busy, undefined);
   assert.equal(n?.action?.label, "セッションを開く");
   n?.action?.run();
   assert.deepEqual(f.opened, ["m1/s-new"]);
+});
+
+test("create: the session is tracked before the review is sent, and not when nothing is sent", async () => {
+  const f = fake();
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.deepEqual(f.steps, ["reviewSession:track", "trackReview", "send"]);
+  assert.deepEqual(f.finishing, [{ sessionId: "s-new", repo: "o/r", number: 5 }]);
+  const none = fake();
+  await createWorktree(none.item, none.spot, undefined, none.tools);
+  assert.deepEqual(none.tracked, []);
+  assert.deepEqual(none.finishing, []);
 });
 
 test("create: with 何も送らない it sends nothing, and stays", async () => {
@@ -129,9 +170,9 @@ test("create: when the session does not start, the notice says why and offers no
 
 test("open and new session: these buttons still go to the session", async () => {
   const f = fake({ sessions: [{ sessionId: "s-last", cwd: DIR, managed: true }] });
-  await openWorktree(f.spot, f.tools);
+  await openWorktree(f.item, f.spot, f.tools);
   assert.deepEqual(f.opened, ["m1/s-last"]);
-  await newSessionIn(f.spot, f.tools);
+  await newSessionIn(f.item, f.spot, f.tools);
   assert.deepEqual(f.opened, ["m1/s-last", "m1/s-new"]);
   assert.equal(f.last(), undefined);
 });
@@ -145,6 +186,62 @@ test("create: when the effort level could not be switched, it says why and stays
   assert.equal(n?.tone, "danger");
   n?.action?.run();
   assert.deepEqual(f.opened, ["m1/s-new"]);
+});
+
+test("create: a fork's pull request asks first, with which of .claude/, CLAUDE.md… its worktree has; 起動しない starts nothing and keeps the worktree", async () => {
+  const f = fake({ fork: { files: [".claude/", "CLAUDE.md"], start: false } });
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.equal(f.asked.length, 1);
+  assert.equal(f.asked[0]?.path, DIR);
+  assert.deepEqual(f.asked[0]?.files, [".claude/", "CLAUDE.md"]);
+  assert.equal(f.asked[0]?.pr.number, 5);
+  assert.deepEqual(f.launched, []);
+  assert.deepEqual(f.sent, []);
+  assert.deepEqual(f.methods, ["create", "projectFiles"]);
+  assert.equal(f.last()?.text, "#5 のセッションは起動していません。worktree（review-5）はそのまま残しています。");
+  assert.equal(f.last()?.tone, undefined);
+});
+
+test("create: a fork's worktree the daemon read in another clone of the repository starts nothing, unasked, and says why", async () => {
+  const f = fake({ fork: { files: [], start: true, path: "/v/r/review-5" } });
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.deepEqual(f.asked, []);
+  assert.deepEqual(f.launched, []);
+  assert.match(f.last()?.text ?? "", /\/w\/r\/review-5 ではなく \/v\/r\/review-5 の中身を読んだ/);
+  assert.equal(f.last()?.tone, "danger");
+});
+
+test("create: a fork's pull request starts and gets the template once the person says 起動する", async () => {
+  const f = fake({ fork: { files: [], start: true } });
+  await createWorktree(f.item, f.spot, { name: "レビューする", body: "#{number} をレビュー" }, f.tools);
+  assert.equal(f.asked.length, 1);
+  assert.deepEqual(f.launched, [DIR]);
+  assert.match(f.sent[0] ?? "", /^s-new: #5 をレビュー\n/);
+});
+
+test("open, new session, レビューする: a session started later in a fork's worktree is asked about too, one there already is not", async () => {
+  const f = fake({ fork: { files: [], start: false } });
+  await openWorktree(f.item, f.spot, f.tools);
+  await newSessionIn(f.item, f.spot, f.tools);
+  await reviewIn(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
+  assert.equal(f.asked.length, 3);
+  assert.deepEqual(f.launched, []);
+  assert.deepEqual(f.sent, []);
+  assert.deepEqual(f.opened, []);
+
+  const g = fake({ fork: { files: [], start: false }, sessions: [{ sessionId: "s-last", cwd: DIR, managed: true }] });
+  await openWorktree(g.item, g.spot, g.tools);
+  assert.deepEqual(g.asked, []);
+  assert.deepEqual(g.opened, ["m1/s-last"]);
+});
+
+test("create: when the fork's worktree cannot be read, nothing starts and the notice says why", async () => {
+  const f = fake({ fork: { start: true } });
+  await createWorktree(f.item, f.spot, undefined, f.tools);
+  assert.deepEqual(f.asked, []);
+  assert.deepEqual(f.launched, []);
+  assert.equal(f.last()?.text, "読めません");
+  assert.equal(f.last()?.tone, "danger");
 });
 
 test("create: while the person is asked to trust the folder, the notice hides; it is back once they say yes", async () => {
@@ -191,7 +288,7 @@ test("a session is tracked before the review is sent, with the verdict there was
   const f = fake();
   const marked = { ...f.item, pr: { ...PR, mark: { verdict: "changes", sha: "a".repeat(40), url: "https://github.com/o/r/pull/5#old" } } } as Item;
   await createWorktree(marked, f.spot, { name: "レビューする", body: "x" }, f.tools);
-  assert.deepEqual(f.steps, ["reviewSession:track", "send"]);
+  assert.deepEqual(f.steps, ["reviewSession:track", "trackReview", "send"]);
   assert.deepEqual(f.tracked, [{ action: "track", sessionId: "s-new", repo: "o/r", number: 5, before: "https://github.com/o/r/pull/5#old" }]);
   const none = fake();
   await createWorktree(none.item, none.spot, undefined, none.tools);
@@ -207,12 +304,12 @@ test("レビューする on my own pull request tracks only the new session, not
 test("a session that did not get the review is not removed later", async () => {
   const f = fake({ send: "fail" });
   await createWorktree(f.item, f.spot, { name: "レビューする", body: "x" }, f.tools);
-  assert.deepEqual(f.steps, ["reviewSession:track", "send", "reviewSession:forget"]);
+  assert.deepEqual(f.steps, ["reviewSession:track", "trackReview", "send", "reviewSession:forget"]);
 });
 
 test("a session asked for more than the review is not removed when the review is posted", async () => {
   const f = fake({ sessions: [{ sessionId: "s1", cwd: DIR, managed: true, status: "busy" }] });
-  assert.equal(await askAgent(f.spot, "マージしてもらう", "マージして", "medium", f.tools), true);
+  assert.equal(await askAgent(f.item, f.spot, "マージしてもらう", "マージして", "medium", f.tools), true);
   assert.deepEqual(f.steps, ["reviewSession:forget", "send"]);
   assert.deepEqual(f.tracked, [{ action: "forget", sessionId: "s1" }]);
 });

@@ -7,7 +7,7 @@ import path from "node:path";
 import { cleanable, cleanupDone } from "../cleanup.ts";
 import { reviewPosted } from "../review-session.ts";
 import { MAX_QUERY, MAX_REPOS, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
-import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, requestedQuery, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
+import { detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, upperSearches, watchedQueries, type Lookup, type ParsedPr } from "./gh.ts";
 import type { Cleanups } from "./cleanups.ts";
 import type { SessionRemovals } from "./session-removals.ts";
 import { prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, type Clone, type Exec } from "./git.ts";
@@ -198,8 +198,9 @@ export class Reviewer {
   }
 
   /**
-   * The page: the pull requests I am asked to review, the watched repositories' (both narrowed by `words`, GitHub's
-   * search words), and those with a review worktree here that neither lists (closed ones, say), so they can be removed.
+   * The page: the pull requests I am asked to review, those I opened in the watched repositories, the watched
+   * repositories' (all narrowed by `words`, GitHub's search words), and those with a review worktree here that none
+   * lists (closed ones, say), so they can be removed.
    * `fresh`: without what gasho-daemon kept of gh.
    */
   async list(github: GitHubRead, words: unknown, fresh: boolean): Promise<Listing> {
@@ -233,7 +234,8 @@ export class Reviewer {
       if (l) l.numbers.push(...numbers);
       else lookups.push({ repo: c.github, numbers });
     }
-    const asked = { requested: requestedQuery(q), watched: watchedQueries(watchedRepos, q), lookups };
+    const upper = upperSearches(q, watchedRepos);
+    const asked = { ...upper, watched: watchedQueries(watchedRepos, q), lookups };
     let json: string;
     try {
       json = (await github(listArgs(asked), { timeoutMs: 30_000, maxBuffer: 16 * 1024 * 1024, ...(fresh ? { maxAgeSeconds: 0 } : {}) })).stdout;
@@ -243,7 +245,7 @@ export class Reviewer {
       if (typeof out !== "string" || !out.includes('"data"')) throw new ReviewError(ghError(e));
       json = out;
     }
-    const answer = parseList(json, { watched: asked.watched.length, lookups });
+    const answer = parseList(json, { watched: asked.watched.length, lookups, words: q, upper });
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));
 
     // Those whose worktree is gone from every clone of their repository here are forgotten. A worktree of another name
