@@ -119,7 +119,8 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
     let r = await send();
     let resent = 0;
     for (; resent < RUN_RESENDS && !r.ok && unknownResult(r.error); resent++) {
-      setNotice({ text: "working server からの応答が遅れています。実行されたかを確かめています…" });
+      // Kept until the answers come: each may take as long as the method's time (15 s).
+      setNotice({ text: "working server からの応答が遅れています。実行されたかを確かめています…", keep: true });
       r = await send();
     }
     if (resent > 0) setNotice(undefined);
