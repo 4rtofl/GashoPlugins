@@ -210,3 +210,42 @@ test("list: a review worktree asked to be cleaned up says so, and whether it is 
   // #8 has no review worktree here (removed by hand): forgotten.
   assert.deepEqual((await cleanups.all()).map((e) => e.number), [5, 6]);
 });
+
+test("list: a review worktree whose send-back is done reaches the page to be removed, though the search words leave its row out", async () => {
+  const root = await tmp();
+  const primary = path.join(root, "r", "main");
+  await fs.mkdir(primary, { recursive: true });
+  await run("git", ["init", "-b", "main", primary]);
+  await git(primary, "commit", "--allow-empty", "-m", "base");
+  await git(primary, "remote", "add", "origin", "https://github.com/o/r.git");
+  for (const name of ["review-r-6", "review-r-7"]) await git(primary, "worktree", "add", "--detach", path.join(root, "r", name), "HEAD");
+  const file = path.join(root, "watched.json");
+  await fs.writeFile(file, JSON.stringify({ paths: [primary] }));
+  const asked = Date.parse("2026-11-17T10:00:00Z");
+  const cleanups = new Cleanups({ file: path.join(root, "cleanups.json"), log: () => {}, now: () => asked });
+  await cleanups.follow("o/r", 6, "sendBack");
+  await cleanups.follow("o/r", 7, "sendBack");
+  const pr = (number: number, changedAt: string) => ({
+    number,
+    title: `t${number}`,
+    url: `https://github.com/o/r/pull/${number}`,
+    state: "OPEN",
+    headRefName: `feat/${number}`,
+    isCrossRepository: true,
+    repository: { nameWithOwner: "o/r" },
+    changes: { nodes: [{ viewerDidAuthor: true, submittedAt: changedAt }] },
+  });
+  const github: GitHubRead = async (args) => {
+    const query = args[args.indexOf("-f") + 1] ?? "";
+    if (!query.includes("search(")) return { stdout: JSON.stringify({ data: { r0: { nameWithOwner: "o/r" } } }) };
+    // author:someone finds neither: #6 was sent back after it was asked, #7 before.
+    return { stdout: JSON.stringify({ data: { w0: { issueCount: 0, nodes: [] }, l0: { p6: pr(6, "2026-11-17T11:00:00Z"), p7: pr(7, "2026-11-17T09:00:00Z") } } }) };
+  };
+  const reviewer = new Reviewer({ exec, folders: () => [primary], file, log: () => {}, now: () => asked, cleanups });
+  const listing = await reviewer.list(github, "is:open author:someone", false);
+  assert.deepEqual(listing.repos.flatMap((r) => [...r.prs, ...r.kept]), []);
+  assert.deepEqual(
+    listing.hidden.map((p) => [p.number, p.place?.worktree?.path, p.place?.cleanup?.done]),
+    [[6, path.join(root, "r", "review-r-6"), true]],
+  );
+});

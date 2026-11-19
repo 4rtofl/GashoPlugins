@@ -135,8 +135,8 @@ export function useRowShell({
   return { shared, overlays };
 }
 
-/** Every row a working server's list holds, in both parts of the page. */
-const rowsOf = (listing: Listing): PrRow[] => [...listing.requested, ...listing.repos.flatMap((r) => [...r.prs, ...r.kept])];
+/** Every row a working server's list holds, in both parts of the page and those it does not show. */
+const rowsOf = (listing: Listing): PrRow[] => [...listing.requested, ...listing.repos.flatMap((r) => [...r.prs, ...r.kept]), ...listing.hidden];
 
 /**
  * Removes the review worktrees whose merge or send-back, asked with "終わったら片付ける", is done, once no session in

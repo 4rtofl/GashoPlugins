@@ -24,7 +24,7 @@ const pr = (over: Partial<PrRow> = {}): PrRow => ({
   place: { primary: "/work/app" },
   ...over,
 });
-const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], errors: [], ...over });
+const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], hidden: [], errors: [], ...over });
 const listed = (over: Partial<Listing> = {}) => ({ data: listing(over) });
 const review = { path: "/work/review-7", branch: "pr-7", review: true };
 
@@ -209,6 +209,15 @@ describe("a pull request with a worktree", () => {
     answerCalls({ reviewSession: { ok: true, data: { claimed: true } } });
     render(<ReviewPage params={{}} />);
     await waitFor(() => expect(sdk.removeSession).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1" }));
+  });
+
+  it("removes the session that posted its review in a row the search words leave out, without showing the row", async () => {
+    set({ machines: [machine({ canLaunch: true, sessions: [session({ sessionId: "s1", cwd: "/work/review-7" })] })] });
+    respond({ list: listed({ hidden: [pr({ place: { primary: "/work/app", worktree: review, finishedSessions: ["s1"] } })] }) });
+    answerCalls({ reviewSession: { ok: true, data: { claimed: true } } });
+    render(<ReviewPage params={{}} />);
+    await waitFor(() => expect(sdk.removeSession).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1" }));
+    expect(screen.queryByText("ログインを直す")).toBeNull();
   });
 
   it("offers no removal for a worktree that was not made for the review", () => {

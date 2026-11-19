@@ -801,7 +801,7 @@ test("page: working servers that watch different repositories make one list in o
     order: -number,
     ...over,
   });
-  const listing = (requested: PrRow[], requestedMore = 0): Listing => ({ watched: [], requested, repos: [], errors: [], ...(requestedMore ? { requestedMore } : {}) });
+  const listing = (requested: PrRow[], requestedMore = 0): Listing => ({ watched: [], requested, repos: [], hidden: [], errors: [], ...(requestedMore ? { requestedMore } : {}) });
   const on = (where: string) => ({ place: { primary: where } });
   const page = pageItems([
     // 7 and 3 are mine, watched on A only; 5 on B only; 6 is watched on both.
@@ -1013,6 +1013,7 @@ test("page: a pull request listed by several working servers shows once, with wh
   });
   // Both working servers watch o/r: what GitHub found there counts once.
   const a: Listing = {
+    hidden: [],
     watched: ["/a/r"],
     requested: [row(1, { place: { primary: "/a/r" } }), row(4, { repo: "x/y" })],
     requestedMore: 5,
@@ -1020,6 +1021,7 @@ test("page: a pull request listed by several working servers shows once, with wh
     errors: [],
   };
   const b: Listing = {
+    hidden: [],
     watched: ["/b/r"],
     requested: [row(1, { place: { primary: "/b/r", worktree: { path: "/b/review-1", branch: "feat/1", review: true } } })],
     requestedMore: 5,
@@ -1050,6 +1052,7 @@ test("page: a pull request listed by several working servers shows once, with wh
   const many = (repo: string, from: number): PrRow[] =>
     Array.from({ length: 30 }, (_, i) => row(from + i, { repo, url: `https://github.com/${repo}/pull/${from + i}`, createdAt: day(1 + ((from + i) % 31)), place: { primary: `/c/${repo}` } }));
   const c: Listing = {
+    hidden: [],
     watched: ["/c/p/a", "/c/p/b"],
     requested: [],
     repos: [
@@ -1080,6 +1083,7 @@ test("まとめてレビューさせる: the pull requests with no worktree on a
     ...(place ? { place } : {}),
   });
   const a: Listing = {
+    hidden: [],
     watched: [],
     // 1: on A only. 2: on both, a worktree on B. 3: on both, none anywhere.
     requested: [row(1, { primary: "/a/r" }), row(2, { primary: "/a/r" }), row(3, { primary: "/a/r" })],
@@ -1087,6 +1091,7 @@ test("まとめてレビューさせる: the pull requests with no worktree on a
     errors: [],
   };
   const b: Listing = {
+    hidden: [],
     watched: [],
     requested: [row(2, { primary: "/b/r", worktree: { path: "/b/review-2", review: true } }), row(3, { primary: "/b/r" })],
     repos: [],

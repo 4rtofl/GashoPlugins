@@ -133,6 +133,11 @@ export interface Listing {
   requestedMore?: number;
   /** The watched repositories, then those with a review worktree of a pull request the search did not find. */
   repos: RepoPrs[];
+  /**
+   * Those with a review worktree the page does not show (the search words leave them out, or they are past the first
+   * ones), whose worktree the page still removes once what was asked is done, or whose sessions once they posted.
+   */
+  hidden: PrRow[];
   errors: string[];
 }
 

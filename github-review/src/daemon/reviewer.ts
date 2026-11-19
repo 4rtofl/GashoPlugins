@@ -382,24 +382,32 @@ export class Reviewer {
     }));
     // What the searches read, past the first ones too: those count in their repository's total.
     const shown = new Set([...requested, ...read].map((p) => p.url));
+    const listed = new Set([...requested, ...found].map((p) => p.url));
     const keptUrls = new Set(answer.kept.flatMap((k) => k.urls));
     const keptAll = answer.kept.every((k) => k.all);
+    const hidden: PrRow[] = [];
     for (const pr of answer.lookups.flat()) {
       const place = placeOf(pr);
-      if (shown.has(pr.url) || !(place?.worktree?.review || place?.cleanup)) continue;
+      if (listed.has(pr.url) || !(place?.worktree?.review || place?.cleanup)) continue;
       // An open one shows when the words find it: in a watched repository the search says (one past the first ones is
       // in its total), else the search of those repositories, when it read all it found.
-      if (pr.state === "open" && (isWatched(pr.repo) || open === undefined || !inScope(scope, pr.repo) || (keptAll && !keptUrls.has(pr.url)))) continue;
+      const left = shown.has(pr.url) || (pr.state === "open" && (isWatched(pr.repo) || open === undefined || !inScope(scope, pr.repo) || (keptAll && !keptUrls.has(pr.url))));
+      if (left) {
+        // Not shown, but its worktree is still removed once what was asked is done, and its sessions once they posted.
+        if (place.cleanup?.done || place.finishedSessions) hidden.push(row(pr, place));
+        continue;
+      }
       shown.add(pr.url);
       const group = repos.find((r) => sameRepo(r.repo, pr.repo));
-      if (group) group.kept.push(row(pr, placeOf(pr)));
-      else repos.push({ repo: pr.repo, watched: false, prs: [], total: 0, kept: [row(pr, placeOf(pr))] });
+      if (group) group.kept.push(row(pr, place));
+      else repos.push({ repo: pr.repo, watched: false, prs: [], total: 0, kept: [row(pr, place)] });
     }
     return {
       watched: [...this.watched],
       requested: requested.map((p) => row(p, placeOf(p))),
       ...(answer.requested.more ? { requestedMore: answer.requested.more } : {}),
       repos,
+      hidden,
       errors,
     };
   }

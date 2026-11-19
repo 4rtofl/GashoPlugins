@@ -17,7 +17,7 @@ const pr = (over: Partial<PrRow> = {}): PrRow => ({
   place: { primary: "/work/app" },
   ...over,
 });
-const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], errors: [], ...over });
+const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], hidden: [], errors: [], ...over });
 const listed = (over: Partial<Listing> = {}) => ({ data: listing(over) });
 
 beforeEach(() => set({ machines: [machine({ canLaunch: true })] }));
