@@ -6,7 +6,7 @@ import { test } from "node:test";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
 import type { DaemonContext, GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
-import { askFresh, begin, end, itemRead, readAgain, readDetail, readItems, type Ctx } from "../src/daemon/core.ts";
+import { addDetailParts, askFresh, begin, end, itemRead, readAgain, readDetail, readItems, type Ctx } from "../src/daemon/core.ts";
 import itemsOp from "../src/daemon/ops/items.ts";
 import { branchArg, detailArgs, fitDetail, ghError, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
 import { worktreeHeads } from "../src/daemon/head.ts";
@@ -425,4 +425,29 @@ test("the reason a conversation was locked for, as GitHub's REST API names it, i
   assert.equal(reason("too heated"), "too_heated");
   assert.equal(reason("resolved"), "resolved");
   assert.equal(reason("constructor"), undefined);
+});
+
+// Last: the part of the commits stays in readDetail's parts for the rest of this file.
+test("a pull request of which gh gave its 100 oldest commits is told how many it has", async () => {
+  addDetailParts([commits]);
+  const asked: string[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        if (args[0] === "api") {
+          asked.push("count");
+          return { stdout: JSON.stringify({ data: { repository: { pullRequest: { commits: { totalCount: 456 } } } } }), stderr: "" };
+        }
+        const n = Number(args[2]);
+        asked.push(`pr ${n}`);
+        const oids = Array.from({ length: n === 8 ? 100 : 99 }, (_, i) => ({ oid: i.toString(16).padStart(40, "0") }));
+        return { stdout: JSON.stringify({ number: n, title: "t", url: `https://github.com/o/k/pull/${n}`, state: "OPEN", commits: oids }), stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as Ctx;
+  const many = await readDetail(ctx, "o/k", "pulls", 8);
+  assert.deepEqual([many.commits?.length, many.commitsTotal], [100, 456]);
+  assert.equal((await readDetail(ctx, "o/k", "pulls", 9)).commitsTotal, undefined);
+  assert.deepEqual(asked, ["pr 8", "count", "pr 9"]);
 });

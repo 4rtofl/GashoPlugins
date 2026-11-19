@@ -8,6 +8,7 @@ import path from "node:path";
 import { PluginError, type DaemonContext, type ExecResult, type GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../types.ts";
 import { branchNumber } from "../number.ts";
+import { commitsCountArgs, GH_COMMITS, parseCommitsCount } from "./detail/commits.ts";
 import { detailArgs, ghError, itemsQueryArgs, itemVersions, notAPull, parseDetail, parseItems, urlKind, type DetailPart } from "./gh.ts";
 import { Store, type KeptWorktree } from "./store.ts";
 
@@ -225,6 +226,15 @@ export async function readDetail(ctx: Ctx, repo: string, kind: GitHubKind, numbe
   // gh issue view answers a pull request's number with the pull request, without the fields of one.
   if (item?.kind === "issues" && urlKind(item.url) === "pulls") item = await readAs("pulls");
   if (!item) throw new PluginError("この番号の Issue や Pull request は見つかりません。");
+  if (item.kind === "pulls" && item.commits?.length === GH_COMMITS) {
+    try {
+      const total = parseCommitsCount((await read(commitsCountArgs(repo, number))).stdout);
+      if (total !== undefined) item.commitsTotal = total;
+    } catch (e) {
+      // The commits gh gave still show.
+      ctx.log(`could not count the commits of ${repo}#${number}`, e);
+    }
+  }
   return item;
 }
 

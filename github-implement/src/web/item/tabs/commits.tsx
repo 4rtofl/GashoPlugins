@@ -6,18 +6,17 @@ import { CopyHash, Timeline } from "../../ui/timeline.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemTab } from "../parts.ts";
 
-/** GitHub gives a pull request's first 250 commits and no more (daemon/detail/commits.ts). */
-const COMMITS_MAX = 250;
-
 function Commits() {
   const { item, now } = useItem();
   const commits = item.commits ?? [];
   if (commits.length === 0) return <p className="text-sm text-muted-foreground">コミットはありません。</p>;
+  // gh reads the oldest 100 and no more (daemon/detail/commits.ts).
+  const total = item.commitsTotal ?? commits.length;
   return (
     <>
-      {commits.length >= COMMITS_MAX && (
+      {total > commits.length && (
         <Alert>
-          GitHub が渡すのは、古いほうから {COMMITS_MAX} 件までです。それより新しいコミットは
+          全 {total.toLocaleString()} 件のうち、古いほうの {commits.length} 件を出しています。新しいコミットは
           <a href={`${item.url}/commits`} target="_blank" rel="noreferrer" className="mx-0.5 underline">
             GitHub
           </a>
@@ -45,4 +44,4 @@ function Commits() {
   );
 }
 
-export default { id: "commits", label: "コミット", order: 20, kinds: ["pulls"], icon: GitCommit, badge: (item) => (item.commits && item.commits.length >= COMMITS_MAX ? `${COMMITS_MAX}+` : item.commits?.length), View: Commits } satisfies ItemTab;
+export default { id: "commits", label: "コミット", order: 20, kinds: ["pulls"], icon: GitCommit, badge: (item) => item.commitsTotal ?? item.commits?.length, View: Commits } satisfies ItemTab;
