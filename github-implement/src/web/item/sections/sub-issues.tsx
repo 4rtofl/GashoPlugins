@@ -7,7 +7,7 @@ import { useState } from "react";
 import { cn, Popover, useNavigation, useRequest } from "@gasho/plugin-sdk";
 import type { IssueRef, SubIssues } from "../../../daemon/ops/sub-issues.ts";
 import { readOp } from "../../daemon.ts";
-import { numberFrom } from "../../number.ts";
+import { numberFrom } from "../../../number.ts";
 import { closedUndone, itemIcon, NOT_PLANNED_ICON, useRefreshOptions } from "../../tabs.ts";
 import { Button } from "../../ui/button.tsx";
 import { Skeleton } from "../../ui/skeleton.tsx";

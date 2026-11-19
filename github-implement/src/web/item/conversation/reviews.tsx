@@ -1,6 +1,6 @@
-// The reviews of a pull request that have text of their own, with what they decided and their reactions (read with the
-// comments', conversation-meta.ts).
-import { CircleAlert, CircleCheck, CircleSlash, Clock, History, MessageSquareText, type LucideIcon } from "lucide-react";
+// The reviews of a pull request, with what they decided, how many comments on lines of the code they hold (with a link
+// to them on GitHub, which shows them beside the code) and their reactions (read with the comments', conversation-meta.ts).
+import { CircleAlert, CircleCheck, CircleSlash, Clock, ExternalLink, History, MessageSquareText, type LucideIcon } from "lucide-react";
 import { Markdown, RelativeTime } from "@gasho/plugin-sdk";
 import type { GitHubReview } from "../../../types.ts";
 import { Badge, type BadgeTone } from "../../ui/badge.tsx";
@@ -22,12 +22,16 @@ function useReviews(): ConversationEntry[] {
   const { item, now } = useItem();
   const meta = useConversationMeta().data;
   const byId = new Map((meta?.reviews ?? []).map((m) => [m.id, m]));
-  const entries = (item.reviews ?? []).map((r, i): ConversationEntry => {
+  // A review not yet submitted is gh's login's own draft, which no one else sees yet.
+  const metaOf = (r: GitHubReview) => (r.id && r.state !== "pending" ? byId.get(r.id) : undefined);
+  // One that held only comments on lines, deleted since, has nothing left to show.
+  const shown = (item.reviews ?? []).filter((r) => r.body.trim() || r.state !== "commented" || metaOf(r)?.lineComments !== 0);
+  const entries = shown.map((r, i): ConversationEntry => {
     const s = STATE[r.state];
-    // A review not yet submitted is gh's login's own draft, which no one else sees yet.
-    const m = r.id && r.state !== "pending" ? byId.get(r.id) : undefined;
+    const m = metaOf(r);
+    const empty = !r.body.trim();
     return {
-      key: `review${i}`,
+      key: r.id ?? `review${r.submittedAt}${i}`,
       at: r.submittedAt,
       icon: s.icon,
       tone: s.tone,
@@ -42,7 +46,30 @@ function useReviews(): ConversationEntry[] {
       time: <RelativeTime at={r.submittedAt} now={now} />,
       body: (
         <>
-          {r.body.trim() ? <Markdown text={r.body} /> : <p className="text-sm text-muted-foreground">（本文なし）</p>}
+          {!empty ? (
+            <Markdown text={r.body} />
+          ) : m?.lineComments ? null : r.state === "commented" ? (
+            // Without its count: not among the latest 100 reviews, or the conversation's read is not done.
+            <p className="text-sm text-muted-foreground">
+              コードの行へのコメントは
+              <a href={`${item.url}/files`} target="_blank" rel="noreferrer" className="mx-0.5 underline">
+                GitHub
+              </a>
+              で読めます。
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">（本文なし）</p>
+          )}
+          {m && m.lineComments > 0 && (
+            <p className="text-sm text-muted-foreground">
+              コードの行に {m.lineComments} 件
+              {m.url && (
+                <a href={m.url} target="_blank" rel="noreferrer" className="ml-1.5 inline-flex items-center gap-1 text-foreground/80 hover:underline">
+                  GitHub で読む <ExternalLink className="size-3" />
+                </a>
+              )}
+            </p>
+          )}
           {m && <Reactions subject={m.id} reactions={m.reactions} of={`レビュー（${r.author ?? "不明"}）`} />}
         </>
       ),

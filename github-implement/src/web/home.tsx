@@ -4,6 +4,7 @@
 import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { cn, useDaemonReady, useNavigation, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
+import { branchNumber } from "../number.ts";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
 import { useFreshReload, useWriteOp } from "./daemon.ts";
 import { AddBox } from "./home/add.tsx";
@@ -47,7 +48,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
   const items = r.data ?? (kept && kept.branch === worktree.branch ? kept.items : undefined);
   const wasReady = useRef(false);
   if (daemon.ready) wasReady.current = true;
-  const added = new Set(items?.added.map((i) => i.number));
+  const named = branchNumber(worktree.branch);
   const reload = useFreshReload(machine.id, repo, r.reload);
 
   const run = async (id: string, op: string, params: Record<string, unknown>, summary: string): Promise<string | undefined> => {
@@ -128,20 +129,30 @@ function Home({ machine, worktree }: WorktreeViewProps) {
 
       {items && (
         <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-          {itemsInOrder(items).map((i) => (
-            <Row
-              key={i.number}
-              item={i}
-              why={i.number === items.named?.number ? "ブランチ名の番号" : items.pulls.some((p) => p.number === i.number) ? "このブランチの Pull request" : "手で足したもの"}
-              href={nav.worktreeHref("item", { kind: i.kind, number: String(i.number) })}
-              onOpen={() => nav.openWorktreeView("item", { kind: i.kind, number: String(i.number) })}
-              onRemove={added.has(i.number) ? () => void remove(i.number) : undefined}
-              removing={busy === `remove${i.number}`}
-            />
-          ))}
+          {itemsInOrder(items).map((i) => {
+            // A number the branch names or a pull request of the branch shows without being added: only an added one goes.
+            const byHand = i.number !== items.named?.number && !items.pulls.some((p) => p.number === i.number);
+            return (
+              <Row
+                key={i.number}
+                item={i}
+                why={i.number === items.named?.number ? "ブランチ名の番号" : byHand ? "手で足したもの" : "このブランチの Pull request"}
+                href={nav.worktreeHref("item", { kind: i.kind, number: String(i.number) })}
+                onOpen={() => nav.openWorktreeView("item", { kind: i.kind, number: String(i.number) })}
+                {...(byHand ? { onRemove: () => void remove(i.number) } : {})}
+                removing={busy === `remove${i.number}`}
+                disabled={busy !== undefined}
+              />
+            );
+          })}
           {itemsInOrder(items).length === 0 && (
             <li className="px-3 py-2.5 text-sm text-muted-foreground">
-              {worktree.branch ? "ブランチ名に番号がなく、このブランチの Pull request もありません。" : "この worktree にはブランチがありません。"}下から番号や題の語で足せます。
+              {!worktree.branch
+                ? "この worktree にはブランチがありません。"
+                : named !== undefined
+                  ? `ブランチ名の #${named} は GitHub で見つからず、このブランチの Pull request もありません。`
+                  : "ブランチ名に番号がなく、このブランチの Pull request もありません。"}
+              下から番号や題の語で足せます。
             </li>
           )}
         </ul>
@@ -151,7 +162,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
           手で足した {items.missing.map((n) => `#${n}`).join("、")} は、GitHub で見つかりません。
           <span className="ml-1 inline-flex flex-wrap gap-1.5 align-middle">
             {items.missing.map((n) => (
-              <Button key={n} size="xs" variant="ghost" onClick={() => void remove(n)} isLoading={busy === `remove${n}`}>
+              <Button key={n} size="xs" variant="ghost" onClick={() => void remove(n)} isLoading={busy === `remove${n}`} disabled={busy !== undefined}>
                 #{n} を外す
               </Button>
             ))}
@@ -161,7 +172,15 @@ function Home({ machine, worktree }: WorktreeViewProps) {
 
       {/* A branch whose pull request is open or merged is done with: a closed one may be made again. */}
       {repo && wasReady.current && items && worktree.branch && !items.pulls.some((p) => p.state !== "closed") && (
-        <NewPullBox machine={machine.id} worktree={worktree} branch={worktree.branch} repo={repo} {...(items.named?.kind === "issues" ? { title: items.named.title } : {})} onCreated={r.reload} />
+        <NewPullBox
+          machine={machine.id}
+          worktree={worktree}
+          branch={worktree.branch}
+          repo={repo}
+          {...(items.named?.kind === "issues" ? { title: items.named.title } : {})}
+          closed={items.pulls.map((p) => p.number)}
+          onCreated={r.reload}
+        />
       )}
 
       {repo && wasReady.current && (
@@ -175,7 +194,7 @@ function Home({ machine, worktree }: WorktreeViewProps) {
   );
 }
 
-function Row({ item, why, href, onOpen, onRemove, removing }: { item: ItemSummary; why: string; href: string; onOpen: () => void; onRemove?: () => void; removing: boolean }) {
+function Row({ item, why, href, onOpen, onRemove, removing, disabled }: { item: ItemSummary; why: string; href: string; onOpen: () => void; onRemove?: () => void; removing: boolean; disabled: boolean }) {
   const { ColoredIcon, label, tone } = itemLook(item);
   return (
     <li className="flex items-center gap-2 px-3 py-2.5 hover:bg-surface-raised">
@@ -200,7 +219,7 @@ function Row({ item, why, href, onOpen, onRemove, removing }: { item: ItemSummar
         </span>
       </a>
       {onRemove && (
-        <Button variant="ghost" size="icon" onClick={onRemove} isLoading={removing} aria-label={`#${item.number} を外す`} title="worktree から外す">
+        <Button variant="ghost" size="icon" onClick={onRemove} isLoading={removing} disabled={disabled} aria-label={`#${item.number} を外す`} title="worktree から外す">
           <X />
         </Button>
       )}
