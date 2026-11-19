@@ -311,14 +311,18 @@ export class Reviewer {
       kept: open === undefined ? [] : watchedQueries(keptRepos, `is:open ${open}`.trim()),
       lookups,
     };
-    let json: string;
-    try {
-      json = (await github(listArgs(asked), { timeoutMs: 30_000, maxBuffer: 16 * 1024 * 1024, ...(fresh ? { maxAgeSeconds: 0 } : {}) })).stdout;
-    } catch (e) {
-      // GitHub answered what it could: gh fails, with the answer on its output.
-      const out = (e as { stdout?: unknown } | null)?.stdout;
-      if (typeof out !== "string" || !out.includes('"data"')) throw new ReviewError(ghError(e));
-      json = out;
+    // With nothing to search for or read (is:merged, nothing watched and no review worktree), GitHub is not asked.
+    const nothing = asked.requested === undefined && [asked.own, asked.both, asked.watched, asked.counts, asked.kept, asked.lookups].every((x) => x.length === 0);
+    let json = '{"data":{}}';
+    if (!nothing) {
+      try {
+        json = (await github(listArgs(asked), { timeoutMs: 30_000, maxBuffer: 16 * 1024 * 1024, ...(fresh ? { maxAgeSeconds: 0 } : {}) })).stdout;
+      } catch (e) {
+        // GitHub answered what it could: gh fails, with the answer on its output.
+        const out = (e as { stdout?: unknown } | null)?.stdout;
+        if (typeof out !== "string" || !out.includes('"data"')) throw new ReviewError(ghError(e));
+        json = out;
+      }
     }
     const answer = parseList(json, { ...asked, words: q, upper });
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));

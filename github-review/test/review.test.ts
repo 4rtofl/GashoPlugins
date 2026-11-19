@@ -389,6 +389,24 @@ test("search words: the upper part reads only open pull requests; repo:, org: an
   assert.deepEqual(inOrder(prs, "sort:reactions-desc").map((p) => p.n), [1, 2, 3]);
 });
 
+test("list: with nothing to search for or read, GitHub is not asked, and the page is empty", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "github-review-"));
+  roots.push(root);
+  const asked: string[] = [];
+  const github: GitHubRead = async (args) => {
+    asked.push(args[args.indexOf("-f") + 1] ?? "");
+    return { stdout: JSON.stringify({ data: { viewer: { login: "me" }, req: { issueCount: 0, nodes: [] } } }) };
+  };
+  const reviewer = new Reviewer({ exec, folders: () => [], file: path.join(root, "watched.json"), log: () => {} });
+  for (const words of ["is:merged", "repo:o/r is:closed"]) {
+    const listing = await reviewer.list(github, words, false);
+    assert.deepEqual([listing.requested, listing.repos, listing.errors], [[], [], []], words);
+  }
+  assert.deepEqual(asked, []);
+  await reviewer.list(github, "is:open", false);
+  assert.equal(asked.length, 1);
+});
+
 test("gh: each part of the answer comes back to its part of the query, with what GitHub could not answer", () => {
   const lookups = [{ repo: "o/r", numbers: [12, 99] }];
   const args = listArgs({ ...upperSearches("", ["o/r"]), watched: ["is:pr repo:o/r", "is:pr repo:o/s"], counts: ["is:pr repo:o/r"], kept: ["is:pr is:open repo:x/z"], lookups });
