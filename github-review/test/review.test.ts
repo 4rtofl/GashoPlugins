@@ -389,6 +389,29 @@ test("search words: the upper part reads only open pull requests; repo:, org: an
   assert.deepEqual(inOrder(prs, "sort:reactions-desc").map((p) => p.n), [1, 2, 3]);
 });
 
+test("list: the worktrees of a clone are read with git again only when they change, whichever clone the side panel or a worktree read since", async () => {
+  const s = await setup();
+  const other = path.join(s.root, "other");
+  await run("git", ["clone", path.join(s.root, "origin.git"), other]);
+  await git(s.primary, "remote", "set-url", "origin", "https://github.com/o/a.git");
+  await git(other, "remote", "set-url", "origin", "https://github.com/o/b.git");
+  let reads = 0;
+  const counting: Exec = (command, args, o) => {
+    if (args.includes("worktree") && args.includes("list")) reads += 1;
+    return exec(command, args, o);
+  };
+  const github: GitHubRead = async () => ({ stdout: JSON.stringify({ data: {} }) });
+  const reviewer = new Reviewer({ exec: counting, folders: () => [s.primary, other], file: path.join(s.root, "watched.json"), log: () => {} });
+  await reviewer.list(github, "is:open", false);
+  const first = reads;
+  assert.equal((await reviewer.cloneOf(github, "o/a"))?.path, s.primary);
+  await reviewer.list(github, "is:open", false);
+  assert.equal(reads, first);
+  await git(other, "worktree", "add", "-b", "x", path.join(s.root, "other-x"));
+  await reviewer.list(github, "is:open", false);
+  assert.equal(reads, first + 1);
+});
+
 test("list: with nothing to search for or read, GitHub is not asked, and the page is empty", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "github-review-"));
   roots.push(root);

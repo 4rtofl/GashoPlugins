@@ -207,7 +207,9 @@ export class Reviewer {
         return undefined;
       }
     });
-    for (const p of this.read.keys()) if (!on.some((o) => o.path === p)) this.read.delete(p);
+    // Those of folders no longer listed are forgotten: `options` may be some of them only (cloneOf).
+    const listed = new Set((this.options?.list ?? []).map((o) => o.path));
+    for (const p of this.read.keys()) if (!listed.has(p)) this.read.delete(p);
     return read.filter((c): c is Clone => c !== undefined);
   }
 
