@@ -50,6 +50,12 @@ test("the sessions outlast a restart, until forgotten", async () => {
   assert.deepEqual(await b.all(), [{ sessionId: "s1", repo: "o/r", number: 5, at: SENT, before: "u1" }]);
   await b.forget("s1");
   assert.deepEqual(await new SessionRemovals({ file: f, log: () => undefined, now: () => SENT }).all(), []);
+  // A broken file starts from none, and the next one tracked writes it anew.
+  fs.writeFileSync(f, "{ broken");
+  const c = new SessionRemovals({ file: f, log: () => undefined, now: () => SENT });
+  assert.deepEqual(await c.all(), []);
+  await c.track("s2", "o/r", 6, undefined);
+  assert.deepEqual((await new SessionRemovals({ file: f, log: () => undefined, now: () => SENT }).all()).map((e) => e.sessionId), ["s2"]);
 });
 
 test("one page at a time claims a session, until the claim runs out; one not kept cannot be claimed", async () => {

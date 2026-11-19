@@ -37,6 +37,12 @@ test("the sessions under review outlast a restart, until forgotten", async () =>
   assert.deepEqual(await b.get("s1"), { sessionId: "s1", repo: "o/r", number: 5, at: ASKED });
   await b.forget("s1");
   assert.equal(await new ReviewSessions({ file: f, log: () => undefined }).get("s1"), undefined);
+  // A broken file starts from none, and the next one tracked writes it anew.
+  fs.writeFileSync(f, "{ broken");
+  const c = new ReviewSessions({ file: f, log: () => undefined, now: () => ASKED });
+  assert.equal(await c.get("s1"), undefined);
+  await c.track("s2", "o/r", 6);
+  assert.deepEqual(await new ReviewSessions({ file: f, log: () => undefined, now: () => ASKED }).get("s2"), { sessionId: "s2", repo: "o/r", number: 6, at: ASKED });
 });
 
 test("a review too old is not waited for, and only the latest sessions are kept", async () => {
