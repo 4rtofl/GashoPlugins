@@ -13,10 +13,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import { PluginError } from "@gasho/plugin-sdk/daemon";
-import type { OutputAnswer, OutputPiece, ShellJob, ShellView, StatusAnswer } from "../types.ts";
+import type { OutputAnswer, OutputPiece, RunAnswer, ShellJob, ShellView, StatusAnswer } from "../types.ts";
 import { OutputBuffer } from "./output.ts";
 import { processStart, sameProcess } from "./proc.ts";
-import { pickShell, shellArgs, shellEnv, type ShellChoice, type Startup } from "./shell.ts";
+import { CAUGHT, pickShell, shellArgs, shellEnv, type ShellChoice, type Startup } from "./shell.ts";
 import { folderKey, Store, type StoredJob } from "./store.ts";
 
 export interface ShellSettings {
@@ -61,6 +61,10 @@ const TERM_MS = 2000;
 const FOREIGN_CHECK_MS = 2000;
 /** Outputs of ended commands kept in memory once read. */
 const CACHED_OUTPUTS = 8;
+/** The records of a session folder that has gone are removed this long after it was first found gone. */
+export const GONE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+/** How often the records of gone session folders are looked for. */
+const SWEEP_MS = 6 * 60 * 60 * 1000;
 
 /** This process's part of every version, so that one from before a restart never matches. */
 const EPOCH = randomBytes(3).toString("hex");
@@ -94,8 +98,18 @@ function killGroup(pgid: number | undefined, signal: NodeJS.Signals): boolean {
   }
 }
 
+/**
+ * The signal that ended a command, from its shell's status (128 + the signal's number, shell.ts): the one sent from
+ * here, or, when none was (another process of the plugin sent it, or someone with kill), one the trap catches. A command
+ * that ends with such a status by itself (`exit 130`) counts as stopped too: the status alone cannot tell.
+ */
+function stoppedBy(sent: NodeJS.Signals | undefined, code: number | null | undefined): NodeJS.Signals | undefined {
+  return (sent ? [sent] : CAUGHT).find((s) => code === 128 + (os.constants.signals[s] ?? 0));
+}
+
 /** A record as the panel gets it. */
-const publicJob = ({ owner: _owner, ownerStart: _ownerStart, pgid: _pgid, pgidStart: _pgidStart, logFrom: _logFrom, ...job }: StoredJob): ShellJob => job;
+const publicJob = ({ owner: _owner, ownerStart: _ownerStart, pgid: _pgid, pgidStart: _pgidStart, request: _request, logFrom: _logFrom, ...job }: StoredJob): ShellJob =>
+  job;
 
 class Job {
   meta: StoredJob;
@@ -220,6 +234,11 @@ export interface RunInput {
   /** Runs the command of this record again, in the folder it ran in. */
   again?: string;
   cols?: number;
+  /**
+   * The panel's name for this request, the same when it sends it again after getting no answer: a record started for
+   * it is answered instead of running the command twice (README.md「メソッド」).
+   */
+  request?: string;
 }
 
 export interface WatchInput {
@@ -240,6 +259,7 @@ export class Shells {
   private readonly ownerStart: Promise<string | undefined> = processStart(process.pid);
   private waiting = 0;
   private stopping = false;
+  private sweepTimer?: NodeJS.Timeout;
 
   constructor(opts: { dataDir: string; env?: NodeJS.ProcessEnv; log?: (...args: unknown[]) => void }) {
     this.store = new Store(opts.dataDir);
@@ -250,9 +270,14 @@ export class Shells {
 
   // ---- the methods ----
 
-  async run(folderPath: string, input: RunInput, settings: ShellSettings): Promise<ShellJob> {
-    if (this.stopping) throw new PluginError("Remote Control Shell が止まるところなので、実行できません。");
+  async run(folderPath: string, input: RunInput, settings: ShellSettings): Promise<RunAnswer> {
+    const refuse = () => new PluginError("Remote Control Shell が止まるところなので、実行できません。");
+    if (this.stopping) throw refuse();
     const [f, ownerStart] = await Promise.all([this.folder(folderPath), this.ownerStart]);
+    // stop() may have begun meanwhile: it ends only the commands it found.
+    if (this.stopping) throw refuse();
+    const earlier = input.request === undefined ? undefined : f.jobs.find((j) => j.meta.request === input.request);
+    if (earlier) return { ...publicJob(earlier.meta), earlier: true };
     let command = input.command;
     let cwd = f.cwd;
     if (input.again !== undefined) {
@@ -292,6 +317,7 @@ export class Shells {
       lines: 0,
       owner: process.pid,
       ...(ownerStart ? { ownerStart } : {}),
+      ...(input.request !== undefined ? { request: input.request } : {}),
       logFrom: 0,
     }, true);
     job.out = new OutputBuffer(settings.maxOutput);
@@ -429,6 +455,8 @@ export class Shells {
    */
   async stop(): Promise<void> {
     this.stopping = true;
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = undefined;
     const folders = [...this.loaded.values()];
     const mine = folders.flatMap((f) => f.jobs.filter((j) => j.running && j.mine).map((j) => ({ f, j })));
     for (const { j } of mine) {
@@ -447,6 +475,59 @@ export class Shells {
       f.foreignTimer = undefined;
       f.changed();
     }
+  }
+
+  /** Looks for the records of session folders that have gone now, and every few hours until stop(). */
+  tidy(): void {
+    void this.sweep();
+    if (this.sweepTimer) return;
+    this.sweepTimer = setInterval(() => void this.sweep(), SWEEP_MS);
+    this.sweepTimer.unref();
+  }
+
+  /**
+   * Removes the records of session folders that are no longer there (a worktree removed, …) GONE_KEEP_MS after one was
+   * first found gone, unless a command of theirs runs (README.md「記録の保存」). When it was first found gone is kept
+   * with the folder, and dropped once it is there again, so that one out of sight for a while (a disk not plugged in)
+   * keeps its records. Resolves to how many went.
+   */
+  async sweep(now = Date.now()): Promise<number> {
+    let removed = 0;
+    for (const key of await this.store.keys()) {
+      if (this.stopping) break;
+      const loading = this.folders.get(key);
+      const f = this.loaded.get(key);
+      if (loading && !f) continue;
+      const saved = await this.store.readFolder(key);
+      const path = f ? f.path : saved?.path;
+      if (path === undefined) continue;
+      const there = isDir(path);
+      const gone = saved?.gone;
+      if (there === (gone !== undefined)) {
+        const marked = { path, cwd: f ? f.cwd : (saved?.cwd ?? path), ...(there ? {} : { gone: now }) };
+        const write = () => this.store.writeFolder(key, marked);
+        await (f ? f.write(write, this.log) : write().catch((e: unknown) => this.log("could not write", e)));
+        continue;
+      }
+      if (gone === undefined || now - gone < GONE_KEEP_MS) continue;
+      // Looked at again: a call may have come for the folder meanwhile.
+      if (this.stopping || this.folders.get(key) !== loading || (f && (f.running > 0 || f.settling))) continue;
+      if (f) {
+        this.folders.delete(key);
+        this.loaded.delete(key);
+        if (f.foreignTimer) clearInterval(f.foreignTimer);
+        for (const j of f.jobs) this.forget(j);
+        await f.idle();
+      }
+      await this.store.removeFolder(key).then(
+        () => {
+          removed++;
+          this.log("removed the records of a folder that has gone:", path);
+        },
+        (e: unknown) => this.log("could not remove the records of", path, e),
+      );
+    }
+    return removed;
   }
 
   /** Settles once what has been written so far is on disk, and the records that ended are in the list (for tests). */
@@ -531,18 +612,15 @@ export class Shells {
     const m = job.meta;
     if (m.state !== "running") return;
     m.endedAt = Date.now();
+    const signal = how.signal ?? stoppedBy(job.sent, how.code);
     if (how.error !== undefined) {
       m.state = "failed";
       m.note = how.error;
     } else if (job.lost) {
       m.state = "lost";
-    } else if (job.sent) {
+    } else if (signal) {
       m.state = "stopped";
-      m.signal = job.sent;
-      if (typeof how.code === "number") m.exitCode = how.code;
-    } else if (how.signal) {
-      m.state = "stopped";
-      m.signal = how.signal;
+      m.signal = signal;
     } else {
       m.state = "exited";
       m.exitCode = how.code ?? 0;

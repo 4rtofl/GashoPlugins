@@ -2,7 +2,7 @@
 // (README.md「記録の保存」):
 //
 //   folders/<the first 16 hex digits of the SHA-256 of the session folder's path>/
-//     folder.json      the session folder's path, and the working folder
+//     folder.json      the session folder's path, the working folder, and when the session folder was found gone
 //     <id>.json        a record: the command, where and when it ran, how it ended
 //     <id>.log         its output, from `logFrom` to `size`
 //     <id>.cwd         while it runs: where the shell's EXIT trap writes the folder it ended in
@@ -23,6 +23,8 @@ export interface StoredJob extends ShellJob {
   ownerStart?: string;
   pgid?: number;
   pgidStart?: string;
+  /** The panel's name for the `run` that started it (jobs.ts RunInput). */
+  request?: string;
   /** The output file holds the output from this position (characters) to `size`. */
   logFrom: number;
 }
@@ -30,6 +32,8 @@ export interface StoredJob extends ShellJob {
 export interface StoredFolder {
   path: string;
   cwd: string;
+  /** When the session folder was first found not there (ms; jobs.ts sweep). */
+  gone?: number;
 }
 
 const STATES = new Set<JobState>(["running", "exited", "stopped", "failed", "lost"]);
@@ -60,6 +64,7 @@ export function storedJob(raw: unknown): StoredJob | undefined {
     ...(typeof j.ownerStart === "string" ? { ownerStart: j.ownerStart } : {}),
     ...(num(j.pgid) ? { pgid: j.pgid } : {}),
     ...(typeof j.pgidStart === "string" ? { pgidStart: j.pgidStart } : {}),
+    ...(typeof j.request === "string" ? { request: j.request } : {}),
     logFrom: num(j.logFrom) ? j.logFrom : j.dropped,
   };
 }
@@ -100,7 +105,8 @@ export class Store {
   async readFolder(key: string): Promise<StoredFolder | undefined> {
     try {
       const raw = JSON.parse(await fs.readFile(path.join(this.dir(key), "folder.json"), "utf8")) as Partial<StoredFolder> | null;
-      return typeof raw?.path === "string" && typeof raw.cwd === "string" ? { path: raw.path, cwd: raw.cwd } : undefined;
+      if (typeof raw?.path !== "string" || typeof raw.cwd !== "string") return undefined;
+      return { path: raw.path, cwd: raw.cwd, ...(num(raw.gone) ? { gone: raw.gone } : {}) };
     } catch {
       return undefined;
     }
@@ -149,5 +155,15 @@ export class Store {
 
   async removeJob(key: string, id: string): Promise<void> {
     await Promise.all([".json", ".log", ".cwd"].map((ext) => fs.rm(path.join(this.dir(key), `${id}${ext}`), { force: true })));
+  }
+
+  /** The session folders kept (their keys). */
+  async keys(): Promise<string[]> {
+    const names = await fs.readdir(this.root).catch(() => [] as string[]);
+    return names.filter((n) => /^[0-9a-f]{16}$/.test(n));
+  }
+
+  removeFolder(key: string): Promise<void> {
+    return fs.rm(this.dir(key), { recursive: true, force: true });
   }
 }

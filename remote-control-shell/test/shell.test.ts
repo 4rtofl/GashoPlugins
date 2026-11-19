@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -61,6 +61,59 @@ test("the script runs the command as written, keeps its exit status, and writes 
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** Runs the script in `shell -i` in a group of its own, sends `signal` to the group once the command says "ready": its exit status. */
+function interrupted(shell: string, home: string, command: string, signal: NodeJS.Signals = "SIGINT"): Promise<number | NodeJS.Signals | null> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(shell, ["-i", "-c", SCRIPT, "gasho-shell", path.join(home, "cwd"), command], {
+      cwd: home,
+      env: { PATH: process.env.PATH ?? "", HOME: home },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+    const group = (signal: NodeJS.Signals) => {
+      try {
+        process.kill(-child.pid!, signal);
+      } catch {
+        // Gone already.
+      }
+    };
+    const timer = setTimeout(() => {
+      group("SIGKILL");
+      reject(new Error(`${shell}: ${signal} did not end "${command}"`));
+    }, 15_000);
+    let out = "";
+    child.stdout.on("data", (b: Buffer) => {
+      const was = out;
+      out += b.toString();
+      if (!was.includes("ready") && out.includes("ready")) group(signal);
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve(code ?? signal);
+    });
+  });
+}
+
+test("in an interactive shell, SIGINT and SIGTERM to the shell's group reach the command; the script ends with its status", async () => {
+  // Startup files of its own, so that none of the person's runs (zsh asks to make one when there is none).
+  const home = mkdtempSync(path.join(os.tmpdir(), "rcs-int-"));
+  for (const rc of [".bashrc", ".zshrc"]) writeFileSync(path.join(home, rc), "");
+  try {
+    for (const shell of shells) {
+      // The command waits in a process of its own, as a program does: one an interactive bash 3.2 would put in a group apart.
+      assert.equal(await interrupted(shell, home, "sh -c 'echo ready; exec sleep 30'"), 130, shell);
+      // Ended by itself after the signal: its own code, not the signal's.
+      assert.equal(await interrupted(shell, home, "sh -c \"trap '' INT; echo ready; sleep 0.3; exit 3\""), 3, shell);
+      // SIGTERM (the plugin stops): nothing after `;` runs, though an interactive shell ignores SIGTERM.
+      const after = path.join(home, "went-on");
+      assert.equal(await interrupted(shell, home, `sh -c 'echo ready; exec sleep 30'; touch '${after}'`, "SIGTERM"), 143, shell);
+      assert.ok(!existsSync(after), shell);
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

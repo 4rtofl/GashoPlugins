@@ -28,8 +28,19 @@ export function startupArgs(startup: Startup): string[] {
  * so that it may span lines; however the shell then ends (also by `exit` in the command), the EXIT trap writes the
  * folder it is in to <cwd file>, for the next command (README.md「作業フォルダー」). The trap keeps the command's exit
  * status.
+ *
+ * `set +m`: an interactive bash 3.2 (macOS's /bin/bash and /bin/sh) puts each command in a process group of its own,
+ * which the signals sent to the shell's group would miss. On SIGINT or SIGTERM the shell ends once the command has, with
+ * the command's status: 128 + the signal's number when the signal ended it, its own code when it ended by itself. A
+ * shell left to itself would, on SIGINT, end at once (zsh) or with 1 (an interactive bash), whatever the command did,
+ * and an interactive one would, on SIGTERM (stop()), go on to the commands after `;` (README.md「止める」).
  */
+/** The signals the script's trap catches: the shell ends with 128 + the number of the one that ended the command. */
+export const CAUGHT: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+
 export const SCRIPT = [
+  "set +m",
+  "trap 'exit $?' INT TERM",
   "__gasho_cwd_file=$1",
   "__gasho_command=$2",
   "shift 2",
