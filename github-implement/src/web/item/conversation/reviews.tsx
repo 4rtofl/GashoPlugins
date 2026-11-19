@@ -22,10 +22,14 @@ function useReviews(): ConversationEntry[] {
   const { item, now } = useItem();
   const meta = useConversationMeta().data;
   const byId = new Map((meta?.reviews ?? []).map((m) => [m.id, m]));
-  const entries = (item.reviews ?? []).map((r, i): ConversationEntry => {
+  // A review not yet submitted is gh's login's own draft, which no one else sees yet.
+  const metaOf = (r: GitHubReview) => (r.id && r.state !== "pending" ? byId.get(r.id) : undefined);
+  // One that held only comments on lines, deleted since, has nothing left to show.
+  const shown = (item.reviews ?? []).filter((r) => r.body.trim() || r.state !== "commented" || metaOf(r)?.lineComments !== 0);
+  const entries = shown.map((r, i): ConversationEntry => {
     const s = STATE[r.state];
-    // A review not yet submitted is gh's login's own draft, which no one else sees yet.
-    const m = r.id && r.state !== "pending" ? byId.get(r.id) : undefined;
+    const m = metaOf(r);
+    const empty = !r.body.trim();
     return {
       key: r.id ?? `review${r.submittedAt}${i}`,
       at: r.submittedAt,
@@ -42,7 +46,20 @@ function useReviews(): ConversationEntry[] {
       time: <RelativeTime at={r.submittedAt} now={now} />,
       body: (
         <>
-          {r.body.trim() ? <Markdown text={r.body} /> : !m?.lineComments && <p className="text-sm text-muted-foreground">（本文なし）</p>}
+          {!empty ? (
+            <Markdown text={r.body} />
+          ) : m?.lineComments ? null : r.state === "commented" ? (
+            // Without its count: not among the latest 100 reviews, or the conversation's read is not done.
+            <p className="text-sm text-muted-foreground">
+              コードの行へのコメントは
+              <a href={`${item.url}/files`} target="_blank" rel="noreferrer" className="mx-0.5 underline">
+                GitHub
+              </a>
+              で読めます。
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">（本文なし）</p>
+          )}
           {m && m.lineComments > 0 && (
             <p className="text-sm text-muted-foreground">
               コードの行に {m.lineComments} 件
