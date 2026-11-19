@@ -4,10 +4,11 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LaunchResult } from "@gasho/plugin-sdk";
+import type { CallResult, LaunchResult } from "@gasho/plugin-sdk";
 import { answerCalls, callsOf, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
+import { batchRun, hideBatch, startBatch } from "../src/web/batch-run.ts";
 import { ForkDialog } from "../src/web/dialogs.tsx";
-import type { ForkQuestion } from "../src/web/actions.ts";
+import type { Actions, ForkQuestion, Item, Tools } from "../src/web/actions.ts";
 import { ReviewPage } from "../src/web/page.tsx";
 import type { Listing, PrRow } from "../src/types.ts";
 
@@ -102,6 +103,32 @@ describe("a pull request without a worktree", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("gh: could not fetch the pull request");
     expect(screen.getByRole("button", { name: /worktree を作る/ })).toHaveProperty("disabled", false);
     expect(sdk.launchSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps the notice of its work while \"まとめてレビューさせる\" runs for another pull request", async () => {
+    answerCalls({ create: { ok: false, error: "gh: could not fetch the pull request" } });
+    render(<ReviewPage params={{}} />);
+    // The run holds on making #99's worktree.
+    let release!: () => void;
+    const held = new Promise<CallResult<unknown>>((resolve) => (release = () => resolve({ ok: false, error: "held" })));
+    const spot = { machine: machine({ canLaunch: true }), primary: "/work/app" };
+    const other = { item: { pr: pr({ number: 99, url: "https://github.com/4rtofl/app/pull/99" }), spots: [spot] } as Item, spot };
+    const actions = { notify: () => {}, dismiss: () => {}, reload: () => {} } as unknown as Actions;
+    act(() => {
+      startBatch({ machine: spot.machine, template: { name: "レビュー", body: "" }, targets: [other] }, [other], { call: () => held, actions } as unknown as Tools);
+      hideBatch();
+    });
+    try {
+      expect(await screen.findByText("1 / 1：#99 のレビューを用意しています…")).toBeTruthy();
+      await choose("何も送らない");
+      // The row's notice takes the place of the run's, and stays though the page is drawn again.
+      await waitFor(() => expect(screen.queryByText("1 / 1：#99 のレビューを用意しています…")).toBeNull());
+      expect(screen.getByRole("alert").textContent).toContain("gh: could not fetch the pull request");
+    } finally {
+      // The run is kept outside the page: it ends here, not to hold the rows of the tests after this one.
+      await act(async () => release());
+      await waitFor(() => expect(batchRun()?.running).toBe(false));
+    }
   });
 
   it("asks before Claude Code trusts the new folder, and starts the session only once trusted", async () => {

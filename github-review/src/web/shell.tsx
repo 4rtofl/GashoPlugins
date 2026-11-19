@@ -129,15 +129,20 @@ export function useRowShell({
       left.current = true;
     };
   }, []);
-  const here = (): NoticeBoard | undefined => (left.current ? boards.at(-1) : board);
+  // The same while this is drawn again (Gasho's useNavigation is new on every draw, and `tools` with it): the run of
+  // "まとめてレビューさせる" shows its notice again whenever the page's `notify` changes, over the rows' own.
+  const notices = useMemo(() => {
+    const here = (): NoticeBoard | undefined => (left.current ? boards.at(-1) : board);
+    return { notify: (n: Notice | undefined) => here()?.notify(n), dismiss: (n: Notice) => here()?.dismiss(n) };
+  }, [board]);
   const { sending } = useAsked();
   const batch = useBatchRun();
   const atWork = useMemo(() => new Set([...sending.keys(), ...batchBusy(batch)]), [sending, batch]);
 
   const tools = useMemo<Tools>(() => {
     const actions: Actions = {
-      notify: (n) => here()?.notify(n),
-      dismiss: (n) => here()?.dismiss(n),
+      notify: notices.notify,
+      dismiss: notices.dismiss,
       askFork: forks.ask,
       askTrust: trusts.ask,
       askRemove: removals.ask,
@@ -146,7 +151,7 @@ export function useRowShell({
       refresh: async (id) => sources[id]?.refresh(),
     };
     return { call, launch, send, remove, removeSession, nav, actions };
-  }, [call, launch, send, remove, removeSession, nav, sources]);
+  }, [call, launch, send, remove, removeSession, nav, sources, notices]);
   useAutoCleanup(sources, ready, tools);
   useFinishedSessions(sources, ready, tools);
 
