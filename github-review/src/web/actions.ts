@@ -374,9 +374,12 @@ export async function reviewAll(
       end({ state: "skipped", text: `worktree（${folderName(r.data.path)}）がもうあるので、作りませんでした。` });
       continue;
     }
+    // How it was made otherwise than usual (detached HEAD…) goes in its result after the rest, as "worktree を作る" says it.
+    const { note } = r.data;
+    const said = (text?: string) => [text, note].filter(Boolean).join(" ");
     const started = await launchIn(machine, r.data.path, preparing, t, trustQuietly);
     if (!started.ok) {
-      end({ state: "failed", text: started.error ?? "フォルダーを信頼しなかったので、セッションを起動しませんでした（worktree は作りました）。" });
+      end({ state: "failed", text: said(started.error ?? "フォルダーを信頼しなかったので、セッションを起動しませんでした（worktree は作りました）。") });
       continue;
     }
     trustQuietly ||= started.trusted;
@@ -385,12 +388,13 @@ export async function reviewAll(
     const sent = await t.send({ machine: machine.id, sessionId, text: reviewInstruction(template, pr), ...effortFor(machine, REVIEW_EFFORT) });
     if (!sent.ok) {
       await forgetSession(machine, sessionId, t);
-      end({ state: "failed", sessionId, text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}` });
+      end({ state: "failed", sessionId, text: said(`セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`) });
       continue;
     }
     // Sent, but not quite as asked (the effort level could not be switched, say): its result says so.
     if (sent.data.warning) count.warned += 1;
-    end({ state: "done", sessionId, ...(sent.data.warning ? { text: sent.data.warning } : {}) });
+    const text = said(sent.data.warning);
+    end({ state: "done", sessionId, ...(text ? { text } : {}) });
   }
   return count;
 }
