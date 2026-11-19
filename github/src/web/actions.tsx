@@ -56,6 +56,8 @@ export function RunsPanel({ machine, session, params }: PanelProps) {
     if (!data || restored.current === scrollKey) return;
     restored.current = scrollKey;
     const top = SCROLLED.get(scrollKey);
+    // Once: opened again later, or back to these filters from others, the list starts at the top.
+    SCROLLED.delete(scrollKey);
     const box = scroller(listRef.current);
     if (top !== undefined && box) box.scrollTop = top;
   }, [data, scrollKey]);
