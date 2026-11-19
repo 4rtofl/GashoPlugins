@@ -38,11 +38,23 @@ export function sameWork(base: Baseline, turn: number | undefined, watched: bool
 }
 
 /**
- * The baseline once the session is seen working on the work at `turn` with `output` tokens written: `base` for the same
- * work, a new one from now for another. `fresh`: this view saw the session out of work since, so it sees this work from
- * its start. A start Gasho no longer knows keeps the baseline, so that the count goes on once the start is known again.
+ * Whether `turn`, told as this view first sees the session working again, is still the last work's start: that of the
+ * last baseline, or one from before this view saw the session out of work (`idleSince`). Without the Stop hook of the
+ * last work among the hooks Gasho keeps, Gasho tells the last message in the conversation, however old. A start from
+ * less than LATE_MS ago may be this work's, sent before this view learned that the last one had ended.
  */
-export function nextBaseline(base: Baseline | null, turn: number | undefined, output: number, now: number, fresh: boolean): Baseline {
+function lastStart(base: Baseline | null, turn: number, now: number, idleSince: number): boolean {
+  return (base !== null && near(base.turn ?? base.before, turn)) || (now - turn >= LATE_MS && turn < idleSince);
+}
+
+/**
+ * The baseline once the session is seen working on the work at `turn` with `output` tokens written: `base` for the same
+ * work, a new one from now for another. `idleSince`: when this view first saw the session out of work since `base` was
+ * taken (the browser's clock), if it did; it then sees this work from its start. A start Gasho no longer knows keeps
+ * the baseline, so that the count goes on once the start is known again.
+ */
+export function nextBaseline(base: Baseline | null, turn: number | undefined, output: number, now: number, idleSince: number | undefined): Baseline {
+  const fresh = idleSince !== undefined;
   if (base && !fresh) {
     if (turn === undefined || sameWork(base, turn, false)) return base;
     // The start of a work seen from its start, told later: the count goes on from where it began.
@@ -50,7 +62,7 @@ export function nextBaseline(base: Baseline | null, turn: number | undefined, ou
       return { turn, output: base.output, early: true, seen: base.seen };
     }
   }
-  if (base && fresh && turn !== undefined && near(base.turn ?? base.before, turn)) return { output, early: true, seen: now, before: turn };
+  if (fresh && turn !== undefined && lastStart(base, turn, now, idleSince)) return { output, early: true, seen: now, before: turn };
   return { ...(turn !== undefined ? { turn } : {}), output, early: fresh || (turn !== undefined && now - turn < LATE_MS), seen: now };
 }
 

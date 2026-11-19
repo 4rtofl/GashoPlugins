@@ -58,15 +58,16 @@ export function Pondering({ machine, session }: ConversationEndProps) {
   const key = `${machine.id}/${session.sessionId}`;
   const stored = useMemo(() => saved(key), [key]);
   const [base, setBase] = usePluginState<Baseline | null>(`tokens:${key}`, stored);
-  // The session was shown here out of work: the work that follows is seen from its start.
-  const sawIdle = useRef(false);
+  // When the session was first shown here out of work since the baseline was taken: the work that follows is seen
+  // from its start.
+  const idleSince = useRef<number | undefined>(undefined);
   // This view has watched the work of `base` go on since Gasho last told its start (see sameWork).
   const [watched, setWatched] = useState(false);
   // Worked out as it is drawn, so that even the first frame of a new work shows nothing of the last one; kept below.
-  const next = working && output !== undefined ? nextBaseline(base, turn, output, Date.now(), sawIdle.current) : base;
+  const next = working && output !== undefined ? nextBaseline(base, turn, output, Date.now(), idleSince.current) : base;
   useEffect(() => {
     if (!inWork) {
-      sawIdle.current = true;
+      idleSince.current ??= Date.now();
       setWatched(false);
       return;
     }
@@ -74,7 +75,7 @@ export function Pondering({ machine, session }: ConversationEndProps) {
     if (next && next !== base) {
       setBase(next);
       save(key, next);
-      sawIdle.current = false;
+      idleSince.current = undefined;
     }
     if (turn !== undefined) setWatched(true);
   }, [inWork, working, turn, next, base, setBase, key]);
