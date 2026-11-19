@@ -214,6 +214,7 @@ test("readLimits says why Claude Code gave no answer", async () => {
   forget();
   const fail = (a: Omit<Asked, "stderr"> & { stderr?: string }) => ({ ask: async (): Promise<Asked> => ({ stderr: "", ...a }), dataDir: "/tmp", now: () => 1 });
   await assert.rejects(readLimits(fail({ code: "ENOENT" })), /Claude Code が見つかりません/);
+  await assert.rejects(readLimits(fail({ code: "EACCES" })), { message: "Claude Code を起動できませんでした（gasho-daemon の GASHO_CLAUDE_BIN、EACCES）。" });
   await assert.rejects(readLimits(fail({ killed: true })), /時間内に読めませんでした/);
   await assert.rejects(readLimits(fail({ code: 1, stderr: "Error: not logged in\nmore" })), /週の上限を読めませんでした（Error: not logged in）/);
   await assert.rejects(readLimits(fail({ code: 0 })), /get_usage に答えませんでした/);

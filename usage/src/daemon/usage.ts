@@ -188,6 +188,8 @@ export const askClaude: Ask = (claude, cwd, timeoutMs, signal) =>
 function failure(a: Asked): PluginError {
   if (a.killed) return new PluginError("週の上限を、時間内に読めませんでした。");
   if (a.code === 127 || a.code === "ENOENT") return new PluginError("Claude Code が見つかりません（gasho-daemon の GASHO_CLAUDE_BIN）。");
+  // The code of the error that kept it from starting, such as EACCES for a file that may not be run.
+  if (typeof a.code === "string") return new PluginError(`Claude Code を起動できませんでした（gasho-daemon の GASHO_CLAUDE_BIN、${a.code}）。`);
   const why = a.stderr.trim().split("\n")[0]?.slice(0, 200);
   return new PluginError(why ? `週の上限を読めませんでした（${why}）。` : "週の上限を読めませんでした（Claude Code が get_usage に答えませんでした）。");
 }
