@@ -136,6 +136,7 @@ test("what the browser sends never becomes a flag of gh", () => {
 test("a number is taken from 17, #17, or a URL of the same repository only", () => {
   assert.equal(numberFrom(" #17 ", "4rtofl/Gasho"), 17);
   assert.equal(numberFrom("https://github.com/4rtofl/Gasho/pull/36/files", "4rtofl/Gasho"), 36);
+  assert.deepEqual(typedItem("http://github.com/4rtofl/Gasho/issues/3", "4rtofl/Gasho"), { number: 3 });
   assert.equal(numberFrom("https://github.com/4rtofl/GashoPlugins/issues/4", "4rtofl/Gasho"), undefined);
   assert.equal(numberFrom("abc", "4rtofl/Gasho"), undefined);
   // Neither is searched: GitHub reads "-1" as "without 1", and another repository's number is not this one's.
