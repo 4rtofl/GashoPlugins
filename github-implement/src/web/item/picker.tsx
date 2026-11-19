@@ -7,6 +7,7 @@ import type { FoundAssignable } from "../../daemon/ops/assignable.ts";
 import type { FoundLabels } from "../../daemon/ops/labels.ts";
 import { readOp } from "../daemon.ts";
 import { Button } from "../ui/button.tsx";
+import { isComposing } from "../ui/input.ts";
 
 export interface Choice {
   key: string;
@@ -81,7 +82,8 @@ export function Picker<T extends { more: boolean }>({ label, choices, error, dis
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             const first = shown?.[0];
-            if (e.key === "Enter" && first) {
+            // The Enter that ends a composition picks nothing.
+            if (e.key === "Enter" && first && !isComposing(e)) {
               e.preventDefault();
               setOpen(false);
               setQuery("");

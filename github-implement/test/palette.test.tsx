@@ -24,20 +24,21 @@ const commands = () => {
   render(<Palette label="操作" groups={groups} />);
   return run;
 };
-const open = () => userEvent.keyboard("{Meta>}k{/Meta}");
+// happy-dom is not a Mac (navigator.platform), where it would be ⌘K.
+const open = () => userEvent.keyboard("{Control>}k{/Control}");
 const box = () => screen.queryByRole("combobox", { name: "探す操作や Issue・Pull request" });
 const options = () => screen.queryAllByRole("option").map((o) => o.textContent);
 
 describe("Palette", () => {
-  it("opens on ⌘K or Ctrl+K, and closes on it again", async () => {
+  it("opens on Ctrl+K but on a Mac, and closes on it again", async () => {
     commands();
     expect(box()).toBeNull();
+    await userEvent.keyboard("{Meta>}k{/Meta}");
+    expect(box()).toBeNull();
     await open();
     expect(box()).toBeTruthy();
     await open();
     expect(box()).toBeNull();
-    await userEvent.keyboard("{Control>}k{/Control}");
-    expect(box()).toBeTruthy();
   });
 
   it("finds the commands that have every word typed in their label, hint or keywords, in any case", async () => {

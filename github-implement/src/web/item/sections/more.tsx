@@ -15,6 +15,7 @@ import { useRefreshOptions } from "../../tabs.ts";
 import { Alert } from "../../ui/alert.tsx";
 import { Badge } from "../../ui/badge.tsx";
 import { Button, buttonClass } from "../../ui/button.tsx";
+import { isComposing } from "../../ui/input.ts";
 import { useToast } from "../../ui/toast.tsx";
 import { useAfterChange, useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
@@ -205,7 +206,7 @@ function TransferControl({ onMoved }: { onMoved: (notice: ReactNode) => void }) 
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 const first = shown?.[0];
-                if (e.key === "Enter" && first) {
+                if (e.key === "Enter" && first && !isComposing(e)) {
                   e.preventDefault();
                   setTo(first);
                 }
