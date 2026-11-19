@@ -35,6 +35,9 @@ export function startupArgs(startup: Startup): string[] {
  * shell left to itself would, on SIGINT, end at once (zsh) or with 1 (an interactive bash), whatever the command did,
  * and an interactive one would, on SIGTERM (stop()), go on to the commands after `;` (README.md「止める」).
  */
+/** The signals the script's trap catches: the shell ends with 128 + the number of the one that ended the command. */
+export const CAUGHT: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+
 export const SCRIPT = [
   "set +m",
   "trap 'exit $?' INT TERM",

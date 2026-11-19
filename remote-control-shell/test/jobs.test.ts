@@ -107,8 +107,8 @@ async function said(s: Shells, folder: string, id: string, text: string): Promis
   throw new Error(`${id} did not write ${text}`);
 }
 
-test("SIGINT stops a command, and SIGKILL one that ignores SIGINT; one that ends by itself keeps its exit code", async () => {
-  const { folder, shells } = setup();
+test("SIGINT stops a command, sent from here or not, and SIGKILL one that ignores SIGINT; one that ends by itself keeps its exit code", async () => {
+  const { folder, dataDir, shells } = setup();
   try {
     // "ready" comes from the process the shell waits for, so that the signal comes while it does.
     const sleeping = await shells.run(folder, { command: "sh -c 'echo ready; exec sleep 30'" }, SH);
@@ -129,6 +129,13 @@ test("SIGINT stops a command, and SIGKILL one that ignores SIGINT; one that ends
     await shells.signal(folder, own.id, "INT");
     const c = await settle(shells, folder, own.id);
     assert.deepEqual([c.job.state, c.job.exitCode, c.job.signal], ["exited", 3, undefined]);
+    // Sent by another process of the plugin (during a hot reload), or by someone with kill.
+    const outside = await shells.run(folder, { command: "sh -c 'echo ready; exec sleep 30'" }, SH);
+    await said(shells, folder, outside.id, "ready");
+    await shells.idle();
+    process.kill(-(await new Store(dataDir).readJob(folderKey(folder), outside.id))!.pgid!, "SIGINT");
+    const d = await settle(shells, folder, outside.id);
+    assert.deepEqual([d.job.state, d.job.signal], ["stopped", "SIGINT"]);
   } finally {
     await shells.stop();
   }

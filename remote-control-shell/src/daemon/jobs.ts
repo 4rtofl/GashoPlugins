@@ -16,7 +16,7 @@ import { PluginError } from "@gasho/plugin-sdk/daemon";
 import type { OutputAnswer, OutputPiece, RunAnswer, ShellJob, ShellView, StatusAnswer } from "../types.ts";
 import { OutputBuffer } from "./output.ts";
 import { processStart, sameProcess } from "./proc.ts";
-import { pickShell, shellArgs, shellEnv, type ShellChoice, type Startup } from "./shell.ts";
+import { CAUGHT, pickShell, shellArgs, shellEnv, type ShellChoice, type Startup } from "./shell.ts";
 import { folderKey, Store, type StoredJob } from "./store.ts";
 
 export interface ShellSettings {
@@ -96,6 +96,15 @@ function killGroup(pgid: number | undefined, signal: NodeJS.Signals): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The signal that ended a command, from its shell's status (128 + the signal's number, shell.ts): the one sent from
+ * here, or, when none was (another process of the plugin sent it, or someone with kill), one the trap catches. A command
+ * that ends with such a status by itself (`exit 130`) counts as stopped too: the status alone cannot tell.
+ */
+function stoppedBy(sent: NodeJS.Signals | undefined, code: number | null | undefined): NodeJS.Signals | undefined {
+  return (sent ? [sent] : CAUGHT).find((s) => code === 128 + (os.constants.signals[s] ?? 0));
 }
 
 /** A record as the panel gets it. */
@@ -603,18 +612,15 @@ export class Shells {
     const m = job.meta;
     if (m.state !== "running") return;
     m.endedAt = Date.now();
+    const signal = how.signal ?? stoppedBy(job.sent, how.code);
     if (how.error !== undefined) {
       m.state = "failed";
       m.note = how.error;
     } else if (job.lost) {
       m.state = "lost";
-    } else if (how.signal) {
+    } else if (signal) {
       m.state = "stopped";
-      m.signal = how.signal;
-    } else if (job.sent && how.code === 128 + (os.constants.signals[job.sent] ?? 0)) {
-      // The shell ends with the command's status (shell.ts): 128 + the signal's number when the signal ended it.
-      m.state = "stopped";
-      m.signal = job.sent;
+      m.signal = signal;
     } else {
       m.state = "exited";
       m.exitCode = how.code ?? 0;
