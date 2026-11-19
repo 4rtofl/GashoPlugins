@@ -13,7 +13,7 @@ const dirOf = (n: number) => `/w/r/review-r-${n}`;
  * not trust their folders yet; `warned` are the numbers whose folder it has warnings about. Making the worktree of
  * `hold` waits for `release()`.
  */
-function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[]; sendWarning?: number[]; sendFail?: number[]; features?: string[]; answers?: boolean[]; hold?: number } = {}) {
+function fakeBatch(opts: { count?: number; existing?: number[]; notes?: Record<number, string>; warned?: number[]; sendWarning?: number[]; sendFail?: number[]; features?: string[]; answers?: boolean[]; hold?: number } = {}) {
   const machine = { id: "m1", name: "m1", canLaunch: true, features: opts.features ?? ["effort"], sessions: [] } as unknown as MachineInfo;
   const items = Array.from({ length: opts.count ?? 3 }, (_, i) => {
     const number = i + 1;
@@ -42,7 +42,8 @@ function fakeBatch(opts: { count?: number; existing?: number[]; warned?: number[
       }
       if (params.number === opts.hold) await held;
       log.push(`create #${params.number}`);
-      return { ok: true, data: { path: dirOf(params.number), created: !opts.existing?.includes(params.number) } satisfies Created };
+      const note = opts.notes?.[params.number];
+      return { ok: true, data: { path: dirOf(params.number), created: !opts.existing?.includes(params.number), ...(note ? { note } : {}) } satisfies Created };
     }) as unknown as Tools["call"],
     launch: (async ({ cwd, trust }: { cwd: string; trust?: boolean }) => {
       if (!trusted.has(cwd) && !trust) {
@@ -90,6 +91,14 @@ test("batch: each one is sent the template at the effort level of a review; a wa
   assert.deepEqual(f.steps["#2"]?.at(-1), { state: "done", sessionId: "s-2", text: "Effort を Max にできませんでした。いまの Effort のまま送ります。" });
   assert.deepEqual(count, { done: 2, failed: 0, skipped: 0, warned: 1 });
   assert.deepEqual(batchSummary(count, 2), { text: "2 件のうち 2 件でレビューを始めました（1 件は送るときに注意が出ました）。", tone: "danger" });
+});
+
+test("batch: how a worktree was made otherwise than usual goes in its result", async () => {
+  const detached = "ローカルのブランチ feat-1 に origin に無い commit があるので、そのままにして、origin の feat-1 を detached HEAD で取ってきました。";
+  const f = fakeBatch({ count: 2, notes: { 1: detached, 2: detached }, sendWarning: [2] });
+  await reviewAll(f.items, TEMPLATE, f.tools, f.onStep);
+  assert.deepEqual(f.steps["#1"]?.at(-1), { state: "done", sessionId: "s-1", text: detached });
+  assert.deepEqual(f.steps["#2"]?.at(-1), { state: "done", sessionId: "s-2", text: `Effort を Max にできませんでした。いまの Effort のまま送ります。 ${detached}` });
 });
 
 test("batch: a session is tracked before its review is sent, and forgotten when the review did not go", async () => {

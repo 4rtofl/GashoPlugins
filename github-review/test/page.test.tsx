@@ -17,7 +17,7 @@ const pr = (over: Partial<PrRow> = {}): PrRow => ({
   place: { primary: "/work/app" },
   ...over,
 });
-const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], errors: [], ...over });
+const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], hidden: [], errors: [], ...over });
 const listed = (over: Partial<Listing> = {}) => ({ data: listing(over) });
 
 beforeEach(() => set({ machines: [machine({ canLaunch: true })] }));
@@ -42,7 +42,8 @@ describe("ReviewPage", () => {
     expect(await screen.findByText("API rate limit exceeded")).toBeTruthy();
     expect(screen.getByText("読めなかったものがあります")).toBeTruthy();
     expect(callsOf("list")).toEqual([{ query: "is:open", fresh: true }]);
-    expect(sdk.reload).toHaveBeenCalledWith("list");
+    // The list is not asked for again: what gasho-daemon kept of it would take the error away at once.
+    expect(sdk.reload).not.toHaveBeenCalledWith("list");
 
     await userEvent.type(screen.getByRole("textbox", { name: "Pull request を探す" }), " draft:false{Enter}");
     await waitFor(() => expect(screen.queryByText("API rate limit exceeded")).toBeNull());
@@ -105,11 +106,11 @@ describe("ReviewPage", () => {
       list: listed({
         requested: [pr()],
         requestedMore: 5,
-        repos: [{ repo: "4rtofl/lib", watched: false, prs: [pr({ repo: "4rtofl/lib", number: 3, url: "https://github.com/4rtofl/lib/pull/3", place: { primary: "/work/lib", worktree: { path: "/work/review-3", review: true } } })] }],
+        repos: [{ repo: "4rtofl/lib", watched: false, prs: [], total: 0, kept: [pr({ repo: "4rtofl/lib", number: 3, url: "https://github.com/4rtofl/lib/pull/3", place: { primary: "/work/lib", worktree: { path: "/work/review-3", review: true } } })] }],
       }),
     });
     render(<ReviewPage params={{}} />);
-    expect(screen.getByText("ほかに 5 件あります。検索の語で絞り込んでください。")).toBeTruthy();
+    expect(screen.getByText("まだ読んでいないものが 5 件あります（clone があるかは分かりません）。検索の語で絞り込んでください。")).toBeTruthy();
     expect(screen.getByRole("heading", { name: /^4rtofl\/lib\s*対象リポジトリではありませんが、Pull request の worktree があります$/ })).toBeTruthy();
   });
 

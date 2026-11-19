@@ -31,7 +31,14 @@ export function ReviewPage(_: PageProps) {
   // The pull request whose panel is open (the panel says so while it is open).
   const [open] = usePluginState<string | null>("openPr", null);
   const { sourcesEl, machines, sources, ready, page, pending, refreshing } = useListings(query, freshAsk);
-  const watched = ready.reduce((n, m) => n + (sources[m.id]?.listing?.watched.length ?? 0), 0);
+  // What each working server watches is known once its list, or what it watches, has been read.
+  const watchedKnown = ready.every((m) => sources[m.id]?.watched !== undefined);
+  const watched = ready.reduce((n, m) => n + (sources[m.id]?.watched?.length ?? 0), 0);
+  // Those whose list could not be read: their watched repositories are named, as they could not be read.
+  const failed = ready.filter((m) => !sources[m.id]?.listing && sources[m.id]?.error);
+  const unread = failed.flatMap((m) => (sources[m.id]?.watched ?? []).map((path) => ({ machine: m, path })));
+  // Nothing could be read: no working server answers, or none of their lists came.
+  const noneRead = ready.length === 0 || (failed.length > 0 && !ready.some((m) => sources[m.id]?.listing));
   const errors = ready.flatMap((m) => {
     const s = sources[m.id];
     return [...(s?.error ? [s.error] : []), ...(s?.listing?.errors ?? [])].map((e) => (machines.length > 1 ? `${m.name}：${e}` : e));
@@ -121,7 +128,10 @@ export function ReviewPage(_: PageProps) {
         <Section
           title="レビューを頼まれた Pull request と自分の Pull request"
           count={page.requested.length}
-          more={page.requestedMore}
+          notes={[
+            page.requested.length > 0 && page.requestedNoClone > 0 ? `ほかに、clone が Claude Code の信頼しているフォルダーに無いリポジトリの ${page.requestedNoClone} 件は、worktree を作れないので出していません。` : undefined,
+            page.requestedMore > 0 ? `まだ読んでいないものが ${page.requestedMore} 件あります（clone があるかは分かりません）。検索の語で絞り込んでください。` : undefined,
+          ]}
           loading={pending && page.requested.length === 0}
           action={
             <BatchMenu
@@ -133,15 +143,26 @@ export function ReviewPage(_: PageProps) {
             />
           }
         >
-          {page.requested.length === 0 ? (
-            <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request も、自分の Pull request もありません。" : "レビューを頼まれた Pull request も、自分の Pull request もありません。"}</Empty>
-          ) : (
+          {page.requested.length > 0 ? (
             <Rows items={page.requested} now={now} showRepo />
+          ) : noneRead ? (
+            <Empty>読めませんでした（理由は上に出しています）。</Empty>
+          ) : page.requestedNoClone > 0 ? (
+            <Empty>{`レビューを頼まれた Pull request が ${page.requestedNoClone} 件ありますが、どれもリポジトリの clone が Claude Code の信頼しているフォルダーに無いので、worktree を作れず、出していません。`}</Empty>
+          ) : (
+            <Empty>{query ? "検索の語に合う、レビューを頼まれた Pull request も、自分の Pull request もありません。" : "レビューを頼まれた Pull request も、自分の Pull request もありません。"}</Empty>
           )}
         </Section>
 
-        <Section title="対象リポジトリの Pull request" count={page.groups.reduce((n, g) => n + g.items.length, 0)} more={page.watchedMore} loading={pending && page.groups.length === 0}>
-          {watched === 0 && page.groups.length === 0 && !pending ? (
+        <Section
+          title="対象リポジトリの Pull request"
+          count={page.groups.reduce((n, g) => n + g.items.length, 0)}
+          notes={[page.watchedMore > 0 ? `ほかに ${page.watchedMore} 件あります。検索の語で絞り込んでください。` : undefined]}
+          loading={pending && page.groups.length === 0 && unread.length === 0}
+        >
+          {ready.length === 0 ? (
+            <Empty>読めませんでした（理由は上に出しています）。</Empty>
+          ) : watchedKnown && watched === 0 && page.groups.length === 0 && !pending ? (
             <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border px-4 py-5">
               <p className="text-sm text-muted-foreground">対象リポジトリを選ぶと、そのリポジトリの Pull request をここに出します。</p>
               <Button size="sm" variant="primary" leftIcon={<Settings2 />} onClick={() => setChoosing(true)} disabled={ready.length === 0}>
@@ -156,9 +177,32 @@ export function ReviewPage(_: PageProps) {
                     {g.repo}
                     {!g.watched && <span className="font-normal text-muted-foreground">対象リポジトリではありませんが、Pull request の worktree があります</span>}
                   </h3>
-                  {g.items.length === 0 ? <Empty>検索の語に合う Pull request はありません。</Empty> : <Rows items={g.items} now={now} fresh />}
+                  {g.items.length > 0 ? (
+                    <Rows items={g.items} now={now} fresh />
+                  ) : (
+                    <Empty>
+                      {g.total > 0
+                        ? `この repo の ${g.total} 件は、ほかの repo のものを先に出しているので、ここには出していません。検索の語で絞り込んでください。`
+                        : "検索の語に合う Pull request はありません。"}
+                    </Empty>
+                  )}
                 </div>
               ))}
+              {unread.map(({ machine, path }) => (
+                <div key={`${machine.id} ${path}`} className="space-y-1.5">
+                  <h3 className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                    {folderName(path)}
+                    <span className="font-mono font-normal break-all text-muted-foreground">
+                      {path}
+                      {machines.length > 1 ? `（${machine.name}）` : ""}
+                    </span>
+                  </h3>
+                  <Empty>この対象リポジトリの Pull request を読めませんでした（理由は上に出しています）。</Empty>
+                </div>
+              ))}
+              {failed.some((m) => sources[m.id]?.watched === undefined) && page.groups.length === 0 && unread.length === 0 && (
+                <Empty>対象リポジトリの Pull request を読めませんでした（理由は上に出しています）。</Empty>
+              )}
             </div>
           )}
         </Section>
@@ -174,7 +218,7 @@ export function ReviewPage(_: PageProps) {
         open={choosing}
         onClose={() => setChoosing(false)}
         machines={ready}
-        watched={(id) => sources[id]?.listing?.watched}
+        watched={(id) => sources[id]?.watched}
         reload={(id) => sources[id]?.reload()}
       />
       <BatchDialog
@@ -198,7 +242,7 @@ export function ReviewPage(_: PageProps) {
   );
 }
 
-function Section({ title, count, more, loading, action, children }: { title: string; count: number; more: number; loading: boolean; action?: ReactNode; children: ReactNode }) {
+function Section({ title, count, notes, loading, action, children }: { title: string; count: number; notes: (string | undefined)[]; loading: boolean; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -217,10 +261,20 @@ function Section({ title, count, more, loading, action, children }: { title: str
       ) : (
         children
       )}
-      {!loading && more > 0 && <p className="text-[11px] text-muted-foreground">ほかに {more} 件あります。検索の語で絞り込んでください。</p>}
+      {!loading &&
+        notes.map(
+          (n) =>
+            n && (
+              <p key={n} className="text-[11px] text-muted-foreground">
+                {n}
+              </p>
+            ),
+        )}
     </section>
   );
 }
+
+const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? p;
 
 /** `fresh`: a worktree there gets a new session ("新たにセッションを作成する") instead of opening the one used last. */
 function Rows({ items, now, showRepo, fresh }: { items: Item[]; now: number; showRepo?: boolean; fresh?: boolean }) {

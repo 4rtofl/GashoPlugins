@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, 
 import { cn, removeWorktreeProblem } from "@gasho/plugin-sdk";
 import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
-import { canPush, PROJECT_FILES } from "../types.ts";
+import { canPush, PROJECT_FILES, type Removed } from "../types.ts";
 import { sessionsIn, type ForkQuestion, type Item, type Notice, type Spot } from "./actions";
 import { Button, DrawCheckbox } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
@@ -194,11 +194,15 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
   );
 }
 
-/** Before a review worktree is removed: what goes, and the sessions that keep running in it. */
-export function RemoveDialog({ question, onAnswer }: { question: { item: Item; spot: Spot } | undefined; onAnswer: (yes: boolean) => void }) {
+/**
+ * Before a review worktree is removed: what goes (with the files git does not track, which are lost with it), and the
+ * sessions that keep running in it.
+ */
+export function RemoveDialog({ question, onAnswer }: { question: { item: Item; spot: Spot; removal: Removed } | undefined; onAnswer: (yes: boolean) => void }) {
   const shown = useOnScreen(question);
   const wt = shown?.spot.worktree;
   const running = shown && wt ? sessionsIn(shown.spot.machine, wt.path).length : 0;
+  const removal = shown?.removal;
   return (
     <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
@@ -207,9 +211,22 @@ export function RemoveDialog({ question, onAnswer }: { question: { item: Item; s
           <div className="space-y-1.5">
             <Dialog.Title className="text-base font-semibold tracking-tight">worktree を片付けますか</Dialog.Title>
             <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-              {wt?.missing ? "フォルダーはもうありません。git に残っている worktree の登録" : "worktree のフォルダー"}{wt?.branch ? "とローカルのブランチ" : ""}を消します。未コミットの変更か、push していない commit があるときは、消さずに理由を出します。
+              {wt?.missing ? "フォルダーはもうありません。git に残っている worktree の登録" : "worktree のフォルダー"}{wt?.branch ? "とローカルのブランチ" : ""}を消します。{wt?.missing ? "" : "git が追跡しているファイルの変更と、"}push していない commit は無いことを確かめました。
             </Dialog.Description>
           </div>
+          {removal && removal.fileCount > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-300">
+                git が追跡していないファイル（追跡していないものと、.gitignore で無視されたもの）が {removal.fileCount} 件あり、一緒に消えます。
+              </p>
+              <ul className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">
+                {removal.files.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+                {removal.fileCount > removal.files.length && <li className="font-sans text-muted-foreground">ほか {removal.fileCount - removal.files.length} 件</li>}
+              </ul>
+            </div>
+          )}
           <dl className="space-y-1 rounded-lg border border-border bg-background px-3 py-2 text-xs">
             <div className="flex gap-2">
               <dt className="shrink-0 text-muted-foreground">フォルダー</dt>
@@ -230,7 +247,7 @@ export function RemoveDialog({ question, onAnswer }: { question: { item: Item; s
               やめる
             </Button>
             <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
-              片付ける
+              {removal && removal.fileCount > 0 ? "ファイルも消して片付ける" : "片付ける"}
             </Button>
           </div>
         </Dialog.Content>

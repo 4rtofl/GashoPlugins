@@ -35,9 +35,9 @@ function numberArg(v: unknown): number {
   return v;
 }
 
-/** The clone of `repo` here. */
-async function cloneOf(repo: string, ctx: DaemonContext) {
-  const clone = await current().cloneOf((args, o) => ctx.github.read(args, o), repo);
+/** The clone of `repo` here (for `o.pr`: Reviewer.cloneOf). */
+async function cloneOf(repo: string, ctx: DaemonContext, o: Parameters<Reviewer["cloneOf"]>[2] = {}) {
+  const clone = await current().cloneOf((args, ro) => ctx.github.read(args, ro), repo, o);
   if (!clone) throw new ReviewError(`この working server の、Claude Code が信頼しているフォルダーに、${repo} の clone がありません。`);
   return clone;
 }
@@ -61,8 +61,8 @@ async function target(params: unknown, ctx: DaemonContext) {
     throw new ReviewError(ghError(e));
   }
   if (!pr) throw new ReviewError(`${repo} に Pull request #${number} はありません。`);
-  const clone = await cloneOf(repo, ctx);
   const head: PrHead = { number, branch: pr.branch, fork: pr.fork === true, ...(pr.head ? { head: pr.head } : {}) };
+  const clone = await cloneOf(repo, ctx, { pr: head, wait: true });
   const onGitHub: OnGitHub = async (oid) => {
     try {
       return parseCommit((await ctx.github.read(commitArgs(repo, oid), { repo, timeoutMs: 20_000 })).stdout, oid);
@@ -70,7 +70,7 @@ async function target(params: unknown, ctx: DaemonContext) {
       throw new ReviewError(ghError(e));
     }
   };
-  return { clone, head, onGitHub };
+  return { clone, head, p, onGitHub };
 }
 
 export default defineDaemonPlugin({
@@ -80,6 +80,8 @@ export default defineDaemonPlugin({
     reviewer = new Reviewer({ exec: ctx.exec, folders: ctx.folders, file: path.join(ctx.dataDir, "watched.json"), log: ctx.log, cleanups, removals });
     void reviewer.load();
     void cleanups.load();
+    // Listing the folders can take a minute: the first page does not wait for all of it.
+    reviewer.repoOptions().catch(() => {});
     void removals.load();
     reviewSessions = new ReviewSessions({ file: path.join(ctx.dataDir, "review-sessions.json"), log: ctx.log });
     void reviewSessions.load();
@@ -106,7 +108,7 @@ export default defineDaemonPlugin({
   methods: {
     /** The repositories that can be watched: RepoOption[]. */
     async options() {
-      return current().repoOptions(30_000);
+      return current().offered();
     },
     /** The page (Listing) for { query } (GitHub's search words); { fresh: true } reads without what gasho-daemon kept of gh. */
     async list(params, ctx) {
@@ -117,6 +119,10 @@ export default defineDaemonPlugin({
     async detail(params, ctx) {
       const p = objArg(params);
       return current().detail((args, o) => ctx.github.read(args, o), repoArg(p.repo), numberArg(p.number), p.fresh === true);
+    },
+    /** The primary checkouts watched (string[]), read without gh: the page chooses from them while it has no list. */
+    async watched() {
+      return current().watching();
     },
     /** Watches { paths } (primary checkouts from `options`) from now on; returns them. */
     async watch(params) {
@@ -201,12 +207,18 @@ export default defineDaemonPlugin({
     },
     /**
      * Removes the review worktree of { repo, number } and its local branch, when nothing in it would be lost (Removed);
-     * a worktree of any other name only when "マージしてもらう" asked for it to be cleaned up.
+     * a worktree of any other name only when "マージしてもらう" asked for it to be cleaned up. Files git does not track go
+     * only with { agreed } (the `token` of an answer that listed them); { check: true } only says what would go.
      */
     async remove(params, ctx) {
-      const { clone, head, onGitHub } = await target(params, ctx);
-      const asked = await cleanups?.get(repoArg(objArg(params).repo), head.number);
-      return removeWorktree(ctx.exec, clone, head, { anyName: asked?.kind === "merge", onGitHub });
+      const { clone, head, p, onGitHub } = await target(params, ctx);
+      const asked = await cleanups?.get(repoArg(p.repo), head.number);
+      return removeWorktree(ctx.exec, clone, head, {
+        anyName: asked?.kind === "merge",
+        onGitHub,
+        ...(typeof p.agreed === "string" ? { agreed: p.agreed } : {}),
+        ...(p.check === true ? { check: true } : {}),
+      });
     },
   },
 });

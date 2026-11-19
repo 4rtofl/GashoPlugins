@@ -7,8 +7,8 @@ import { useCall, useLaunchSession, useNavigation, useRemoveSession, useRemoveWo
 import type { CleanupKind } from "../cleanup.ts";
 import { mergeMethodOf } from "../instructions.ts";
 import { atRest } from "../review-session.ts";
-import { parseTemplates } from "../template.ts";
-import type { Place } from "../types.ts";
+import { readTemplates } from "../template.ts";
+import type { Listing, Place, PrRow, Removed } from "../types.ts";
 import { working } from "../verdict.ts";
 import { cleanUp, removeFinishedSession, type Actions, type ForkQuestion, type Item, type Notice, type Spot, type Tools } from "./actions";
 import { holdSending, useAsked } from "./asked";
@@ -55,14 +55,14 @@ export function useRowShell({
   const remove = useRemoveWorktree();
   const removeSession = useRemoveSession();
   const [rawTemplates] = useSetting<string>("templates");
-  const templates = useMemo(() => parseTemplates(rawTemplates), [rawTemplates]);
+  const { templates, problem: templatesProblem } = useMemo(() => readTemplates(rawTemplates), [rawTemplates]);
   const [rawMethod] = useSetting<string>("mergeMethod");
   const [rawDelete] = useSetting<boolean>("deleteBranch");
   const merge = useMemo(() => ({ method: mergeMethodOf(rawMethod), deleteBranch: rawDelete !== false }), [rawMethod, rawDelete]);
   const [notice, setNotice] = useState<Notice>();
   const [fork, askFork, answerFork] = useQuestions<ForkQuestion>();
   const [trust, askTrust, answerTrust] = useQuestions<{ path: string; warnings: string[] }>();
-  const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot }>>();
+  const [removing, setRemoving] = useState<Question<{ item: Item; spot: Spot; removal: Removed }>>();
   const [asking, setAsking] = useState<Question<{ kind: CleanupKind; item: Item; spot: Spot }, { cleanup: boolean } | undefined>>();
   const { sending } = useAsked();
   // What this page's buttons hold. A dialog of a page that was left is never answered: its button is not held after that.
@@ -95,6 +95,7 @@ export function useRowShell({
   const shared: RowShared = {
     tools,
     templates,
+    ...(templatesProblem ? { templatesProblem } : {}),
     busy: atWork,
     machines: ready.length > 1,
     merge,
@@ -134,6 +135,9 @@ export function useRowShell({
   return { shared, overlays };
 }
 
+/** Every row a working server's list holds, in both parts of the page and those it does not show. */
+const rowsOf = (listing: Listing): PrRow[] => [...listing.requested, ...listing.repos.flatMap((r) => [...r.prs, ...r.kept]), ...listing.hidden];
+
 /**
  * Removes the review worktrees whose merge or send-back, asked with "終わったら片付ける", is done, once no session in
  * them is at work (cleanup.ts), on every working server the page lists. Each is tried once by this page; the daemon
@@ -145,7 +149,7 @@ function useAutoCleanup(sources: Record<string, Source>, ready: MachineInfo[], t
     for (const machine of ready) {
       const listing = sources[machine.id]?.listing;
       if (!listing) continue;
-      for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => r.prs)]) {
+      for (const pr of rowsOf(listing)) {
         const place = pr.place;
         if (!place || !readyToClean(machine, place)) continue;
         const key = `${machine.id} ${pr.url} ${place.worktree?.path}`;
@@ -167,7 +171,7 @@ function useFinishedSessions(sources: Record<string, Source>, ready: MachineInfo
     for (const machine of ready) {
       const listing = sources[machine.id]?.listing;
       if (!listing) continue;
-      for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => r.prs)]) {
+      for (const pr of rowsOf(listing)) {
         for (const sessionId of pr.place?.finishedSessions ?? []) {
           const session = machine.sessions.find((s) => s.sessionId === sessionId);
           const key = `${machine.id} ${sessionId}`;
