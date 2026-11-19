@@ -11,7 +11,7 @@ import { cleanable, type CleanupKind } from "../cleanup.ts";
 import type { MergeMethod } from "../instructions.ts";
 import { canPush, PROJECT_FILES } from "../types.ts";
 import { sessionsIn, type ForkQuestion, type Item, type Notice, type Spot } from "./actions";
-import { Button, DrawCheckbox } from "./ui/parts";
+import { Button, DrawCheckbox, PortalScope } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions } from "./ui/styles";
 
 /**
@@ -99,39 +99,41 @@ export function TrustDialog({
   return (
     <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
-        <Dialog.Overlay className={DIALOG_OVERLAY} />
-        <Dialog.Content
-          key={shown?.path}
-          onKeyDown={onKeyDown}
-          onMouseDown={onMouseDown}
-          onEscapeKeyDown={onEscapeKeyDown}
-          onPointerDownOutside={stayOpen}
-          className={cn(DIALOG_PANEL, "flex flex-col gap-4")}
-        >
-          <div className="space-y-1.5">
-            <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
-            <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-              Claude Code は、このフォルダーをまだ信頼していません。信頼すると、セッションはこのフォルダーのファイルを読み書きし、コマンドを実行できます。
-              {note && <span className="mt-1 block">{note}</span>}
-            </Dialog.Description>
-          </div>
-          <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{shown?.path}</p>
-          {(shown?.warnings.length ?? 0) > 0 && (
-            <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
-              {shown?.warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
-          )}
-          <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Button size="sm" onClick={answer(false)}>
-              やめる
-            </Button>
-            <Button size="sm" variant="primary" onClick={answer(true)}>
-              信頼して起動する
-            </Button>
-          </div>
-        </Dialog.Content>
+        <PortalScope>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content
+            key={shown?.path}
+            onKeyDown={onKeyDown}
+            onMouseDown={onMouseDown}
+            onEscapeKeyDown={onEscapeKeyDown}
+            onPointerDownOutside={stayOpen}
+            className={cn(DIALOG_PANEL, "flex flex-col gap-4")}
+          >
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                Claude Code は、このフォルダーをまだ信頼していません。信頼すると、セッションはこのフォルダーのファイルを読み書きし、コマンドを実行できます。
+                {note && <span className="mt-1 block">{note}</span>}
+              </Dialog.Description>
+            </div>
+            <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{shown?.path}</p>
+            {(shown?.warnings.length ?? 0) > 0 && (
+              <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
+                {shown?.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" onClick={answer(false)}>
+                やめる
+              </Button>
+              <Button size="sm" variant="primary" onClick={answer(true)}>
+                信頼して起動する
+              </Button>
+            </div>
+          </Dialog.Content>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );
@@ -149,8 +151,7 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
   return (
     <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
-        {/* The portal lands outside the plugin's part of the page, where its CSS would not apply. */}
-        <div data-gasho-plugin="github-review" style={{ display: "contents" }}>
+        <PortalScope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
           <Dialog.Content
             key={shown?.path}
@@ -188,7 +189,7 @@ export function ForkDialog({ question, onAnswer }: { question: ForkQuestion | un
               </Button>
             </div>
           </Dialog.Content>
-        </div>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );
@@ -202,38 +203,40 @@ export function RemoveDialog({ question, onAnswer }: { question: { item: Item; s
   return (
     <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(false)}>
       <Dialog.Portal>
-        <Dialog.Overlay className={DIALOG_OVERLAY} />
-        <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
-          <div className="space-y-1.5">
-            <Dialog.Title className="text-base font-semibold tracking-tight">worktree を片付けますか</Dialog.Title>
-            <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-              {wt?.missing ? "フォルダーはもうありません。git に残っている worktree の登録" : "worktree のフォルダー"}{wt?.branch ? "とローカルのブランチ" : ""}を消します。未コミットの変更か、push していない commit があるときは、消さずに理由を出します。
-            </Dialog.Description>
-          </div>
-          <dl className="space-y-1 rounded-lg border border-border bg-background px-3 py-2 text-xs">
-            <div className="flex gap-2">
-              <dt className="shrink-0 text-muted-foreground">フォルダー</dt>
-              <dd className="font-mono break-all">{wt?.path}</dd>
+        <PortalScope>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">worktree を片付けますか</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                {wt?.missing ? "フォルダーはもうありません。git に残っている worktree の登録" : "worktree のフォルダー"}{wt?.branch ? "とローカルのブランチ" : ""}を消します。未コミットの変更か、push していない commit があるときは、消さずに理由を出します。
+              </Dialog.Description>
             </div>
-            {wt?.branch && (
+            <dl className="space-y-1 rounded-lg border border-border bg-background px-3 py-2 text-xs">
               <div className="flex gap-2">
-                <dt className="shrink-0 text-muted-foreground">ブランチ</dt>
-                <dd className="font-mono break-all">{wt.branch}</dd>
+                <dt className="shrink-0 text-muted-foreground">フォルダー</dt>
+                <dd className="font-mono break-all">{wt?.path}</dd>
               </div>
+              {wt?.branch && (
+                <div className="flex gap-2">
+                  <dt className="shrink-0 text-muted-foreground">ブランチ</dt>
+                  <dd className="font-mono break-all">{wt.branch}</dd>
+                </div>
+              )}
+            </dl>
+            {running > 0 && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">このフォルダーで、Gasho のセッションが {running} 個動いています。片付けても、セッションは止まりません。</p>
             )}
-          </dl>
-          {running > 0 && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">このフォルダーで、Gasho のセッションが {running} 個動いています。片付けても、セッションは止まりません。</p>
-          )}
-          <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Button size="sm" onClick={() => onAnswer(false)}>
-              やめる
-            </Button>
-            <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
-              片付ける
-            </Button>
-          </div>
-        </Dialog.Content>
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" onClick={() => onAnswer(false)}>
+                やめる
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
+                片付ける
+              </Button>
+            </div>
+          </Dialog.Content>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );
@@ -292,8 +295,7 @@ export function AskDialog({
   return (
     <Dialog.Root open={Boolean(shown)} onOpenChange={(next) => !next && onAnswer(undefined)}>
       <Dialog.Portal>
-        {/* The portal lands outside the plugin's part of the page, where its CSS would not apply. */}
-        <div data-gasho-plugin="github-review" style={{ display: "contents" }}>
+        <PortalScope>
           <Dialog.Overlay className={DIALOG_OVERLAY} />
           <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
             <div className="space-y-1.5">
@@ -327,7 +329,7 @@ export function AskDialog({
               </Button>
             </div>
           </Dialog.Content>
-        </div>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );
@@ -337,12 +339,15 @@ const folderName = (p: string): string => p.split("/").filter(Boolean).pop() ?? 
 
 /** A notice at the bottom of the page (after EasyUI's VelocityToast); it goes after a few seconds once nothing is going on. */
 export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose: () => void }) {
+  // While a question shows, the notice cannot be pressed (the page under a modal dialog is not), and a press there would
+  // say no to the question: its buttons wait, and so does its going, until no question is left.
+  const asking = useSyncExternalStore(watchAsked, () => asked.length > 0);
   useEffect(() => {
-    if (!notice || notice.busy) return;
+    if (!notice || notice.busy || asking) return;
     const t = setTimeout(onClose, notice.action ? 10_000 : 6000);
     return () => clearTimeout(t);
-    // Restarts only for a new notice.
-  }, [notice]);
+    // Restarts only for a new notice, or once no question is left.
+  }, [notice, asking]);
   return (
     <AnimatePresence>
       {notice && (
@@ -360,7 +365,7 @@ export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose
         >
           {notice.busy && <LoaderCircle className="size-4 shrink-0 text-muted-foreground motion-safe:animate-spin" />}
           <span className="min-w-0">{notice.text}</span>
-          {notice.action && (
+          {notice.action && !asking && (
             <button
               type="button"
               onClick={() => {
@@ -372,7 +377,7 @@ export function Toast({ notice, onClose }: { notice: Notice | undefined; onClose
               {notice.action.label}
             </button>
           )}
-          {!notice.busy && (
+          {!notice.busy && !asking && (
             <button type="button" onClick={onClose} aria-label="閉じる" className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground">
               <X className="size-3.5" />
             </button>

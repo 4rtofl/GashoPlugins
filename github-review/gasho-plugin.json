@@ -1,7 +1,7 @@
 {
   "id": "github-review",
   "name": "GitHub Review",
-  "version": "1.38.0",
+  "version": "1.40.0",
   "description": "レビューを頼まれた Pull request、自分の Pull request、選んだ repo の Pull request を探し、レビュー用の worktree とセッションを用意する（working server の git と gh を使う）",
   "genre": "workflow",
   "api": "1.15",
@@ -12,6 +12,7 @@
     "options": { "kind": "read", "timeoutSeconds": 60 },
     "list": { "kind": "read", "timeoutSeconds": 60 },
     "detail": { "kind": "read", "timeoutSeconds": 30 },
+    "watched": { "kind": "read" },
     "watch": { "kind": "write", "timeoutSeconds": 60 },
     "create": { "kind": "write", "timeoutSeconds": 120 },
     "projectFiles": { "kind": "read", "timeoutSeconds": 30 },

@@ -7,7 +7,7 @@ import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { batchTargets, mergeOrdered, pageItems } from "../src/items.ts";
 import { authorWords, listArgs, namesArgs, ownWanted, parseList, parseNames, requestedQuery, scopeWords, SEARCH_LIMIT, upperSearches, watchedQueries } from "../src/daemon/gh.ts";
-import { createWorktree, projectFiles, prWorktree, readClone, removeWorktree, repoName, ReviewError, reviewName, reviewNumbers, type Clone, type Exec, type OnGitHub } from "../src/daemon/git.ts";
+import { createWorktree, projectFiles, prWorktree, readClone, removeWorktree, repoName, repoOptions, ReviewError, reviewName, reviewNumbers, type Clone, type Exec, type OnGitHub } from "../src/daemon/git.ts";
 import { Reviewer, type GitHubRead } from "../src/daemon/reviewer.ts";
 import { fillTemplate, parseTemplates } from "../src/template.ts";
 import type { Listing, PrRow } from "../src/types.ts";
@@ -783,6 +783,86 @@ test("list: a clone whose origin says its owner's old name lists its pull reques
   assert.equal(await reviewer.cloneOf(github, "new/r"), undefined);
   assert.equal((await reviewer.cloneOf(github, "old/r"))?.path, s.primary);
   assert.equal(names(), 2);
+});
+
+const notARepo = () => Object.assign(new Error("not a git repository"), { code: 128, stdout: "", stderr: "fatal: not a git repository" });
+
+test("watch: what the dialog was offered in the last 5 minutes is watched without listing the folders again; only one it was not offered lists them again", async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "github-review-")));
+  roots.push(root);
+  const dir = (name: string) => path.join(root, name);
+  const repos = new Set(["a", "b"]);
+  let listings = 0;
+  const fake: Exec = async (_command, args) => {
+    const [, cwd = "", ...rest] = args;
+    const name = path.basename(cwd);
+    if (!repos.has(name)) throw notARepo();
+    const step = rest.join(" ");
+    if (step === "rev-parse --git-common-dir") {
+      if (name === "a") listings++;
+      return { stdout: ".git\n", stderr: "" };
+    }
+    if (step === "worktree list --porcelain") return { stdout: `worktree ${cwd}\nHEAD 0\nbranch refs/heads/main\n`, stderr: "" };
+    if (step === "remote get-url origin") return { stdout: `https://github.com/o/${name}.git\n`, stderr: "" };
+    throw new Error(`unexpected git ${step}`);
+  };
+  let at = 0;
+  const reviewer = new Reviewer({ exec: fake, folders: () => ["a", "b", "c", "d"].map(dir), file: dir("watched.json"), log: () => {}, now: () => at });
+  // The dialog lists what can be watched when it opens.
+  assert.deepEqual((await reviewer.repoOptions()).map((o) => o.github), ["o/a", "o/b"]);
+  assert.equal(listings, 1);
+  // Four minutes on, what it offered is watched as listed then: listing a hundred folders again can take longer than watch may.
+  at = 4 * 60_000;
+  repos.add("c");
+  assert.deepEqual(await reviewer.watch([dir("a")]), [dir("a")]);
+  assert.equal(listings, 1);
+  // One it did not offer lists them again, as that list is older than 30 seconds.
+  assert.deepEqual(await reviewer.watch([dir("a"), dir("c")]), [dir("a"), dir("c")]);
+  assert.equal(listings, 2);
+  // Within 30 seconds of that, one still not there is refused without listing them again.
+  at += 10_000;
+  await assert.rejects(reviewer.watch([dir("a"), dir("d")]), /選べない repo です/);
+  assert.equal(listings, 2);
+  // Past 5 minutes, the folders are listed again before one is added.
+  at += 6 * 60_000;
+  assert.deepEqual(await reviewer.watch([dir("a"), dir("c"), dir("b")]), [dir("a"), dir("c"), dir("b")]);
+  assert.equal(listings, 3);
+});
+
+test("repoOptions: git runs at most 8 at a time, and each repository comes once, by its primary checkout, in the order of one at a time", async () => {
+  const dir = (name: string) => path.join("/nonexistent/github-review", name);
+  let running = 0;
+  let most = 0;
+  const fake: Exec = async (_command, args) => {
+    running++;
+    most = Math.max(most, running);
+    try {
+      // Each git answers late by its own time, so they end in another order than they started.
+      await new Promise((r) => setTimeout(r, Math.random() * 5));
+      const [, cwd = "", ...rest] = args;
+      const name = path.basename(cwd);
+      const repo = name.replace(/-wt$/, "");
+      const step = rest.join(" ");
+      if (name === "plain") throw notARepo();
+      if (step === "rev-parse --git-common-dir") return { stdout: `${dir(repo)}/.git\n`, stderr: "" };
+      if (step === "worktree list --porcelain") {
+        if (repo === "bare") return { stdout: `worktree ${dir("bare")}\nbare\n\nworktree ${cwd}\nHEAD 0\nbranch refs/heads/x\n`, stderr: "" };
+        return { stdout: `worktree ${dir(repo)}\nHEAD 0\nbranch refs/heads/main\n`, stderr: "" };
+      }
+      if (step === "remote get-url origin") {
+        if (repo === "local") throw Object.assign(new Error("No such remote"), { code: 2, stdout: "", stderr: "error: No such remote 'origin'" });
+        return { stdout: `git@github.com:o/${repo}.git\n`, stderr: "" };
+      }
+      throw new Error(`unexpected git ${step}`);
+    } finally {
+      running--;
+    }
+  };
+  const names = Array.from({ length: 20 }, (_, i) => `r${String(i).padStart(2, "0")}`);
+  // A worktree of r05 before its primary checkout, a folder in no repository, one with no origin and a bare repository's worktree.
+  const folders = ["r05-wt", ...[...names].reverse(), "plain", "local", "bare-wt"].map(dir);
+  assert.deepEqual(await repoOptions(fake, folders), [...names.map((n) => ({ path: dir(n), github: `o/${n}` })), { path: dir("local") }]);
+  assert.ok(most > 1 && most <= 8, `git ran ${most} at a time`);
 });
 
 test("template: the placeholders become the pull request's, once; a setting that is not a list of templates gives none", () => {

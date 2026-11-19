@@ -8,7 +8,7 @@ import { DropdownMenu } from "radix-ui";
 import { createContext, useContext, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { cn, relativeTime, useLaunchSession, useNavigation, useSendInput, type MachineInfo, type SessionInfo } from "@gasho/plugin-sdk";
 import type { CardAction, KanbanCard, PlacedCard } from "../cards.ts";
-import { Skeleton, StatusDot, sessionLabel } from "./ui/parts";
+import { PortalScope, Skeleton, StatusDot, sessionLabel } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
 /** Where the cards come from, on each card only when it is not obvious. */
@@ -27,13 +27,22 @@ export interface Notice {
   session?: { machine: string; sessionId: string };
 }
 
-/** What the cards ask of the page: to show a notice, and to ask the person whether Claude Code may trust a folder. */
+/**
+ * What the cards ask of the page: to show a notice, to ask the person whether Claude Code may trust a folder, and to
+ * count the sessions being started.
+ */
 export interface CardActions {
   notify: (n: Notice | undefined) => void;
+  /** Takes `n` off, unless another notice has come since (another card's session to open, say). */
+  dismiss: (n: Notice) => void;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
+  /** Counts a session being started, its folder's question included, until the function it returns is called. */
+  begin: () => () => void;
+  /** How many sessions the cards are starting now. */
+  starting: () => number;
 }
 
-export const CardActionsContext = createContext<CardActions>({ notify: () => undefined, askTrust: async () => false });
+export const CardActionsContext = createContext<CardActions>({ notify: () => undefined, dismiss: () => undefined, askTrust: async () => false, begin: () => () => undefined, starting: () => 0 });
 
 /** The pull request's state, as an icon in GitHub's colors: none yet, open, draft, merged or closed. */
 function prLook(card: KanbanCard): { Icon: LucideIcon; className: string; label: string } {
@@ -236,18 +245,23 @@ function gashoSessions({ machine, card }: PlacedCard): SessionInfo[] {
 async function startSession({ machine, card }: PlacedCard, launch: ReturnType<typeof useLaunchSession>, actions: CardActions): Promise<string | undefined> {
   const cwd = card.path;
   if (!cwd) return undefined;
-  const starting: Notice = { text: `${card.label} でセッションを起動しています…`, busy: true };
-  actions.notify(starting);
-  let r = await launch({ machine: machine.id, cwd });
-  if (!r.ok && r.needsTrust) {
-    actions.notify(undefined);
-    if (!(await actions.askTrust({ path: cwd, warnings: r.trustWarnings ?? [] }))) return undefined;
+  const end = actions.begin();
+  try {
+    const starting: Notice = { text: `${card.label} でセッションを起動しています…`, busy: true };
     actions.notify(starting);
-    r = await launch({ machine: machine.id, cwd, trust: true });
+    let r = await launch({ machine: machine.id, cwd });
+    if (!r.ok && r.needsTrust) {
+      actions.dismiss(starting);
+      if (!(await actions.askTrust({ path: cwd, warnings: r.trustWarnings ?? [] }))) return undefined;
+      actions.notify(starting);
+      r = await launch({ machine: machine.id, cwd, trust: true });
+    }
+    if (r.ok) return r.sessionId;
+    actions.notify({ text: r.error, tone: "danger" });
+    return undefined;
+  } finally {
+    end();
   }
-  if (r.ok) return r.sessionId;
-  actions.notify({ text: r.error, tone: "danger" });
-  return undefined;
 }
 
 /**
@@ -307,79 +321,89 @@ function CardMenu({ row, children }: { row: PlacedCard; children: ReactElement }
         {children}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          align="start"
-          sideOffset={6}
-          collisionPadding={12}
-          className={cn(
-            MENU,
-            "origin-(--radix-dropdown-menu-content-transform-origin) data-[side=bottom]:slide-in-from-top-1.5 data-[side=left]:slide-in-from-right-1.5 data-[side=right]:slide-in-from-left-1.5 data-[side=top]:slide-in-from-bottom-1.5",
-          )}
-        >
-          <DropdownMenu.Label className="truncate px-2.5 pt-1 pb-1.5 text-xs text-muted-foreground">{card.label}</DropdownMenu.Label>
-          {card.reason && (
-            <p className={cn("max-w-64 px-2.5 pb-1.5 text-xs break-words", reasonTone(card))}>
-              {card.reason.text}
-              {card.reason.error && <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">{card.reason.error}</span>}
-            </p>
-          )}
-          {card.detached && <p className="max-w-64 px-2.5 pb-1.5 text-xs break-words text-muted-foreground">{detachedLook(card)?.detail}</p>}
-          {card.marks && (
-            <ul className="max-w-64 space-y-0.5 px-2.5 pb-1.5 text-xs break-words text-muted-foreground">
-              {card.marks.map((m, i) => (
-                <li key={i} className={cn(m.active && "text-amber-700 dark:text-amber-300")}>
-                  {m.detail ?? m.text}
-                </li>
-              ))}
-            </ul>
-          )}
-          {card.actions?.map((a, i) => (
-            <DropdownMenu.Item
-              key={i}
-              disabled={sessions.length === 0 && !canStart}
-              onSelect={() => void sendAction(row, a, launch, send, actions)}
-              title={a.text}
-              className={MENU_ITEM}
-            >
-              <Send />
-              <span className="truncate">{a.label}</span>
-            </DropdownMenu.Item>
-          ))}
-          {card.actions && (sessions.length > 0 || card.path || card.pr) && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
-          {sessions.map((s) => (
-            <DropdownMenu.Item key={s.sessionId} onSelect={() => nav.openSession(machine.id, s.sessionId)} className={MENU_ITEM}>
-              <span className="flex size-4 items-center justify-center">
-                <StatusDot status={s.status} />
-              </span>
-              <span className="truncate">{sessionLabel(s)} を開く</span>
-            </DropdownMenu.Item>
-          ))}
-          {sessions.length === 0 && card.path && (
-            <DropdownMenu.Item
-              disabled={!canStart}
-              onSelect={() =>
-                void startSession(row, launch, actions).then((sessionId) => {
-                  if (!sessionId) return;
-                  actions.notify({ text: `${card.label} でセッションを起動しました。`, session: { machine: machine.id, sessionId } });
-                  nav.openSession(machine.id, sessionId);
-                })
-              }
-              className={MENU_ITEM}
-            >
-              <Plus />
-              セッションを起動して開く
-            </DropdownMenu.Item>
-          )}
-          {card.pr && (
-            <DropdownMenu.Item asChild className={MENU_ITEM}>
-              <a href={card.pr.url} target="_blank" rel="noopener noreferrer">
-                <ExternalLink />
-                PR #{card.pr.number} を GitHub で開く
-              </a>
-            </DropdownMenu.Item>
-          )}
-          {hint && <p className="max-w-64 px-2.5 pt-1.5 pb-1 text-xs text-muted-foreground">{hint}</p>}
-        </DropdownMenu.Content>
+        <PortalScope>
+          <DropdownMenu.Content
+            align="start"
+            sideOffset={6}
+            collisionPadding={12}
+            className={cn(
+              MENU,
+              "origin-(--radix-dropdown-menu-content-transform-origin) data-[side=bottom]:slide-in-from-top-1.5 data-[side=left]:slide-in-from-right-1.5 data-[side=right]:slide-in-from-left-1.5 data-[side=top]:slide-in-from-bottom-1.5",
+            )}
+          >
+            <DropdownMenu.Label className="truncate px-2.5 pt-1 pb-1.5 text-xs text-muted-foreground">{card.label}</DropdownMenu.Label>
+            {card.reason && (
+              <p className={cn("max-w-64 px-2.5 pb-1.5 text-xs break-words", reasonTone(card))}>
+                {card.reason.text}
+                {card.reason.error && <span className="mt-0.5 block font-mono text-[11px] text-muted-foreground">{card.reason.error}</span>}
+              </p>
+            )}
+            {card.detached && <p className="max-w-64 px-2.5 pb-1.5 text-xs break-words text-muted-foreground">{detachedLook(card)?.detail}</p>}
+            {card.marks && (
+              <ul className="max-w-64 space-y-0.5 px-2.5 pb-1.5 text-xs break-words text-muted-foreground">
+                {card.marks.map((m, i) => (
+                  <li key={i} className={cn(m.active && "text-amber-700 dark:text-amber-300")}>
+                    {m.detail ?? m.text}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {card.actions?.map((a, i) => (
+              <DropdownMenu.Item
+                key={i}
+                disabled={sessions.length === 0 && !canStart}
+                onSelect={() => void sendAction(row, a, launch, send, actions)}
+                title={a.text}
+                className={MENU_ITEM}
+              >
+                <Send />
+                <span className="truncate">{a.label}</span>
+              </DropdownMenu.Item>
+            ))}
+            {card.actions && (sessions.length > 0 || card.path || card.pr) && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
+            {sessions.map((s) => (
+              <DropdownMenu.Item key={s.sessionId} onSelect={() => nav.openSession(machine.id, s.sessionId)} className={MENU_ITEM}>
+                <span className="flex size-4 items-center justify-center">
+                  <StatusDot status={s.status} />
+                </span>
+                <span className="truncate">{sessionLabel(s)} を開く</span>
+              </DropdownMenu.Item>
+            ))}
+            {sessions.length === 0 && card.path && (
+              <DropdownMenu.Item
+                disabled={!canStart}
+                onSelect={() =>
+                  void startSession(row, launch, actions).then((sessionId) => {
+                    if (!sessionId) return;
+                    const session = { machine: machine.id, sessionId };
+                    // Leaving the board, the question of another card still starting one would wait unseen till the
+                    // person is back (board.tsx): the board stays, and the last to start is opened (the others are in
+                    // the sidebar).
+                    if (actions.starting() > 0) {
+                      actions.notify({ text: `${card.label} でセッションを起動しました。ほかのカードの起動中だったので、カンバンのままにしました。`, session });
+                      return;
+                    }
+                    actions.notify({ text: `${card.label} でセッションを起動しました。`, session });
+                    nav.openSession(machine.id, sessionId);
+                  })
+                }
+                className={MENU_ITEM}
+              >
+                <Plus />
+                セッションを起動して開く
+              </DropdownMenu.Item>
+            )}
+            {card.pr && (
+              <DropdownMenu.Item asChild className={MENU_ITEM}>
+                <a href={card.pr.url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink />
+                  PR #{card.pr.number} を GitHub で開く
+                </a>
+              </DropdownMenu.Item>
+            )}
+            {hint && <p className="max-w-64 px-2.5 pt-1.5 pb-1 text-xs text-muted-foreground">{hint}</p>}
+          </DropdownMenu.Content>
+        </PortalScope>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );

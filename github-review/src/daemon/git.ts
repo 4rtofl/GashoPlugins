@@ -140,21 +140,46 @@ async function realPath(p: string): Promise<string> {
 }
 
 /**
+ * How many git commands repoOptions runs at once. Starting git can take a third of a second, and a working server can
+ * have a hundred folders: listed one after another, they took longer than watch (which lists them again) may take.
+ */
+const PARALLEL_GIT = 8;
+
+/** `fn` of each of `items`, `n` at a time, in the order of `items`. */
+async function inParallel<T, R>(items: readonly T[], n: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i] as T);
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return out;
+}
+
+/**
  * The repositories in `folders` (those Gasho can start sessions in), one per repository however many of its worktrees
  * are there, by their primary checkout. Folders that are not in a repository and bare repositories are left out.
  */
 export async function repoOptions(exec: Exec, folders: readonly string[]): Promise<RepoOption[]> {
-  const found = new Map<string, RepoOption>();
-  for (const dir of folders) {
-    const common = await git(exec, dir, ["rev-parse", "--git-common-dir"]).then((s) => path.resolve(dir, s.trim()), () => undefined);
-    if (!common || found.has(common)) continue;
+  const commons = await inParallel(folders, PARALLEL_GIT, (dir) =>
+    git(exec, dir, ["rev-parse", "--git-common-dir"]).then((s) => path.resolve(dir, s.trim()), () => undefined),
+  );
+  // One folder of each repository, however many of its worktrees are among the folders.
+  const repos = new Map<string, string>();
+  folders.forEach((dir, i) => {
+    const common = commons[i];
+    if (common && !repos.has(common)) repos.set(common, dir);
+  });
+  const found = await inParallel([...repos.values()], PARALLEL_GIT, async (dir): Promise<RepoOption | undefined> => {
     const primary = await git(exec, dir, ["worktree", "list", "--porcelain"]).then((s) => parseWorktrees(s)[0], () => undefined);
-    if (!primary || primary.bare) continue;
+    if (!primary || primary.bare) return undefined;
     const github = await git(exec, primary.path, ["remote", "get-url", "origin"]).then(parseGitHubUrl, () => undefined);
-    found.set(common, { path: await realPath(primary.path), ...(github ? { github } : {}) });
-  }
+    return { path: await realPath(primary.path), ...(github ? { github } : {}) };
+  });
   // Those on GitHub first: the others cannot be watched.
-  return [...found.values()].sort((a, b) => Number(!a.github) - Number(!b.github) || (a.github ?? a.path).localeCompare(b.github ?? b.path));
+  return found
+    .filter((o): o is RepoOption => o !== undefined)
+    .sort((a, b) => Number(!a.github) - Number(!b.github) || (a.github ?? a.path).localeCompare(b.github ?? b.path));
 }
 
 /** A repository's clone as it is now: its worktrees, with real paths. */

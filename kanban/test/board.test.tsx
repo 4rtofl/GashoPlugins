@@ -1,6 +1,7 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import type { LaunchResult } from "@gasho/plugin-sdk";
 import { answerCalls, lastRequest, machine, NOW, respond, sdk, set } from "../../test/sdk.tsx";
 import { KanbanPage } from "../src/web/board.tsx";
 import type { Board } from "../src/types.ts";
@@ -12,6 +13,13 @@ const board = (over: Partial<Board> = {}): Board => ({
   updatedAt: NOW - 30_000,
   ...over,
 });
+
+/** Answers the question whether to trust a folder, which takes an answer half a second after it shows (board.tsx). */
+async function answerTrust(dialog: HTMLElement, name: "信頼して起動する" | "やめる") {
+  const button = within(dialog).getByRole("button", { name });
+  await waitFor(() => expect(button).toHaveProperty("disabled", false), { timeout: 5000 });
+  await userEvent.click(button);
+}
 
 describe("KanbanPage", () => {
   it("asks for the board every minute, and every 2 seconds while the working server reads the repositories", () => {
@@ -84,12 +92,85 @@ describe("KanbanPage", () => {
     const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
     expect(within(dialog).getByText("/work/issue-1-x")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json に hooks があります")).toBeTruthy();
-    await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
+    // Drawn where the plugin's CSS applies, though the portal puts it outside the page.
+    expect(dialog.closest('[data-gasho-plugin="kanban"]')).not.toBeNull();
+    // As it shows, neither its buttons nor Esc answer it (the second click of a double click, say).
+    expect(within(dialog).getByRole("button", { name: "信頼して起動する" })).toHaveProperty("disabled", true);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "このフォルダーを信頼しますか" })).toBe(dialog);
+    await answerTrust(dialog, "信頼して起動する");
 
     await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
     expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/issue-1-x", trust: true });
     // The "starting…" notice may still be leaving while this one comes in, so both can be a status for a moment.
     expect((await screen.findByText("issue-1-x でセッションを起動しました。")).closest('[role="status"]')).not.toBeNull();
+  });
+
+  it("keeps the notice of a card's session started while another card waits to ask about its folder, which opens it once that is answered", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    const two = board();
+    two.repos[0]!.worktrees.push({ branch: "feat/2-y", path: "/work/issue-2-y" });
+    respond({ board: { data: two } });
+    // Claude Code answers for issue-2-y only when the test says.
+    let answer!: (r: LaunchResult) => void;
+    sdk.launchSession.mockImplementation((input) =>
+      input.cwd === "/work/issue-2-y" ? (new Promise<LaunchResult>((resolve) => (answer = resolve)) as unknown as LaunchResult) : { ok: true, sessionId: "s-1" },
+    );
+    render(<KanbanPage params={{}} />);
+    for (const label of ["issue-2-y", "issue-1-x"]) {
+      await userEvent.click(screen.getByRole("button", { name: `${label} のメニュー` }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+    }
+    expect(await screen.findByText("issue-1-x でセッションを起動しました。ほかのカードの起動中だったので、カンバンのままにしました。")).toBeTruthy();
+    await act(async () => answer({ ok: false, error: "trust", needsTrust: true }));
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
+    await userEvent.click(await screen.findByRole("button", { name: "セッションを開く" }));
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-1");
+  });
+
+  it("keeps a card's question while the board is left, shows it once the board is back, and then starts the session and opens it", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    respond({ board: { data: board() } });
+    let answer!: (r: LaunchResult) => void;
+    sdk.launchSession.mockImplementationOnce(() => new Promise<LaunchResult>((resolve) => (answer = resolve)) as unknown as LaunchResult);
+    const page = render(<KanbanPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+    // Left while Claude Code answers: a session opened from the notice, a card or the sidebar closes the board.
+    page.unmount();
+    await act(async () => answer({ ok: false, error: "trust", needsTrust: true }));
+    render(<KanbanPage params={{}} />);
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "信頼して起動する");
+    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
+    expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/issue-1-x", trust: true });
+  });
+
+  it("asks about two cards' folders one after the other, in the order they were asked, and opens the last to start", async () => {
+    set({ machines: [machine({ canLaunch: true })] });
+    const two = board();
+    two.repos[0]!.worktrees.push({ branch: "feat/2-y", path: "/work/issue-2-y" });
+    respond({ board: { data: two } });
+    const answers: Record<string, (r: LaunchResult) => void> = {};
+    sdk.launchSession.mockImplementation((input) =>
+      input.trust ? { ok: true, sessionId: `s-${input.cwd.slice(-3)}` } : (new Promise<LaunchResult>((resolve) => (answers[input.cwd] = resolve)) as unknown as LaunchResult),
+    );
+    render(<KanbanPage params={{}} />);
+    for (const label of ["issue-2-y", "issue-1-x"]) {
+      await userEvent.click(screen.getByRole("button", { name: `${label} のメニュー` }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
+    }
+    await act(async () => {
+      answers["/work/issue-1-x"]!({ ok: false, error: "trust", needsTrust: true });
+      answers["/work/issue-2-y"]!({ ok: false, error: "trust", needsTrust: true });
+    });
+    const asked = () => within(screen.getByRole("dialog", { name: "このフォルダーを信頼しますか" }));
+    await waitFor(() => expect(asked().getByText("/work/issue-1-x")).toBeTruthy());
+    await answerTrust(screen.getByRole("dialog"), "信頼して起動する");
+    await waitFor(() => expect(asked().getByText("/work/issue-2-y")).toBeTruthy());
+    expect(sdk.nav.openSession).not.toHaveBeenCalled();
+    await answerTrust(screen.getByRole("dialog"), "信頼して起動する");
+    await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-2-y"));
+    expect(sdk.launchSession.mock.calls.flatMap(([input]) => (input.trust ? [input.cwd] : []))).toEqual(["/work/issue-1-x", "/work/issue-2-y"]);
   });
 
   it("starts nothing when the person does not trust the folder", async () => {
@@ -99,7 +180,7 @@ describe("KanbanPage", () => {
     render(<KanbanPage params={{}} />);
     await userEvent.click(screen.getByRole("button", { name: "issue-1-x のメニュー" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "セッションを起動して開く" }));
-    await userEvent.click(await screen.findByRole("button", { name: "やめる" }));
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(sdk.launchSession).toHaveBeenCalledTimes(1);
     expect(sdk.nav.openSession).not.toHaveBeenCalled();
