@@ -71,6 +71,86 @@ test("the same repository on two working servers makes two categories, each name
   );
 });
 
+test("a worktree with its repository's name but not its folder goes in that repository's category, or in one of its name", () => {
+  // From an older gasho-daemon, or remembered by a Gasho that did not keep the folder yet.
+  const old = worktree(mac, "/tmp/wt/old", { repoName: "Gasho", branch: "fix/y" });
+  const got = repoCategories(context([mac], [used(old, 300), used(gasho, 200)]));
+  assert.deepEqual(shown(got), ["Gasho: /tmp/wt/old,/repos/Gasho"]);
+  assert.equal(got[0]!.id, "mac\u001f/repos/Gasho");
+  assert.equal(got[0]!.launch, gasho.key);
+
+  // Its working server has no repository of that name: a category of the name, started in the worktree used last.
+  const alone = worktree(mac, "/tmp/wt/alone", { repoName: "Bobert" });
+  const named = repoCategories(context([mac], [used(alone, 300), used(gasho, 200)]));
+  assert.deepEqual(shown(named), ["Bobert: /tmp/wt/alone", "Gasho: /repos/Gasho"]);
+  assert.equal(named[0]!.id, "mac\u001f\u001fname\u001fBobert");
+  assert.equal(named[0]!.launch, alone.key);
+  assert.equal(named[0]!.description, undefined);
+
+  // Two repositories of the name: a category of the name, told apart by a fixed word whatever worktree was used last
+  // (one in /u/src would otherwise be told as …/src, as the repository in /u/src is).
+  const upstream = worktree(mac, "/u/src/Gasho", { repo: "/u/src/Gasho", repoName: "Gasho" });
+  const fork = worktree(mac, "/u/fork/Gasho", { repo: "/u/fork/Gasho", repoName: "Gasho" });
+  const inSrc = worktree(mac, "/u/src/old", { repoName: "Gasho" });
+  const elsewhere = worktree(mac, "/var/old/two", { repoName: "Gasho" });
+  for (const last of [inSrc, elsewhere]) {
+    assert.deepEqual(
+      repoCategories(context([mac], [used(last, 300), used(upstream, 200), used(fork, 100)])).map((c) => `${c.title} ${c.description}`),
+      ["Gasho フォルダー不明", "Gasho …/src", "Gasho …/fork"],
+    );
+  }
+
+  // Another working server's repository of the name is not it.
+  const pc = machine("pc");
+  const onPc = worktree(pc, "/tmp/wt/old", { repoName: "Gasho" });
+  assert.deepEqual(
+    repoCategories(context([mac, pc], [used(onPc, 300), used(gasho, 200)])).map((c) => c.id),
+    ["pc\u001f\u001fname\u001fGasho", "mac\u001f/repos/Gasho"],
+  );
+});
+
+test("headings of the same name on a working server tell the folder they are in, as far up as it takes", () => {
+  // A fork and its upstream cloned in two folders of the same name.
+  const upstream = worktree(mac, "/u/src/Gasho", { repo: "/u/src/Gasho", repoName: "Gasho" });
+  const fork = worktree(mac, "/u/fork/Gasho", { repo: "/u/fork/Gasho", repoName: "Gasho" });
+  const got = repoCategories(context([mac], [used(upstream, 300), used(fork, 200), used(plugins, 100)]));
+  assert.deepEqual(
+    got.map((c) => `${c.title} ${c.description ?? "-"}`),
+    ["Gasho …/src", "Gasho …/fork", "GashoPlugins -"],
+  );
+
+  // The folders they are in have the same name too: one more up. Up to the top, the whole path.
+  const a = worktree(mac, "/u/a/x/Gasho", { repo: "/u/a/x/Gasho", repoName: "Gasho" });
+  const b = worktree(mac, "/u/b/x/Gasho", { repo: "/u/b/x/Gasho", repoName: "Gasho" });
+  const top = worktree(mac, "/Gasho", { repo: "/Gasho", repoName: "Gasho" });
+  assert.deepEqual(
+    repoCategories(context([mac], [used(a, 300), used(b, 200), used(top, 100)])).map((c) => c.description),
+    ["…/a/x", "…/b/x", "/"],
+  );
+
+  // Clones side by side in one folder, both named after the repository on GitHub: their own folders' names.
+  const side = worktree(mac, "/home/u/repos/Gasho", { repo: "/home/u/repos/Gasho", repoName: "Gasho" });
+  const sideFork = worktree(mac, "/home/u/repos/Gasho-fork", { repo: "/home/u/repos/Gasho-fork", repoName: "Gasho" });
+  assert.deepEqual(
+    repoCategories(context([mac], [used(side, 300), used(sideFork, 200)])).map((c) => c.description),
+    ["…/Gasho", "…/Gasho-fork"],
+  );
+  // With another in a folder of its own, as far up as it takes for all of them.
+  const other = worktree(mac, "/home/u/other/Gasho", { repo: "/home/u/other/Gasho", repoName: "Gasho" });
+  assert.deepEqual(
+    repoCategories(context([mac], [used(side, 300), used(sideFork, 200), used(other, 100)])).map((c) => c.description),
+    ["…/repos/Gasho", "…/repos/Gasho-fork", "…/other/Gasho"],
+  );
+
+  // On two working servers, the server's name comes first.
+  const pc = machine("pc");
+  const forkPc = worktree(pc, "/u/fork/Gasho", { repo: "/u/fork/Gasho", repoName: "Gasho" });
+  assert.deepEqual(
+    repoCategories(context([mac, pc], [used(upstream, 300), used(fork, 200), used(forkPc, 100)])).map((c) => c.description),
+    ["mac · …/src", "mac · …/fork", "pc"],
+  );
+});
+
 test("no worktrees, no categories", () => {
   assert.deepEqual(repoCategories(context([mac], [])), []);
 });

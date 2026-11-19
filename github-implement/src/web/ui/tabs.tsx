@@ -29,7 +29,7 @@ export function AnimatedTabs({ tabs, value, onChange, label, children }: { tabs:
   return (
     <div className="flex flex-col gap-4">
       <div className="scrollbar-none -mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
-        <div ref={list} role="tablist" aria-label={label} className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface-raised p-1 select-none dark:border-[#1F1F1F] dark:bg-[#0E0E0E]">
+        <div ref={list} role="tablist" aria-label={label} className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface-raised p-1 select-none dark:border-neutral-800 dark:bg-neutral-950">
           {tabs.map((tab, i) => {
             const active = tab.id === value;
             return (
@@ -53,14 +53,14 @@ export function AnimatedTabs({ tabs, value, onChange, label, children }: { tabs:
                   <motion.span
                     layoutId={`${id}-pill`}
                     transition={motionTransitions.springMorph}
-                    className="absolute inset-0 rounded-md border border-border-hover bg-surface shadow-xs dark:border-[#1F1F1F] dark:bg-[#141414]"
+                    className="absolute inset-0 rounded-md border border-border-hover bg-surface shadow-xs dark:border-neutral-800 dark:bg-neutral-900"
                   />
                 )}
                 <span className="relative z-10 flex items-center gap-1.5 [&_svg]:size-3.5">
                   {tab.icon}
                   {tab.label}
                   {tab.badge !== undefined && (
-                    <span className="rounded border border-border bg-surface-hover px-1.5 py-px font-mono text-[10px] text-muted-foreground tabular-nums dark:border-[#1F1F1F] dark:bg-[#141414]">
+                    <span className="rounded border border-border bg-surface-hover px-1.5 py-px font-mono text-[10px] text-muted-foreground tabular-nums dark:border-neutral-800 dark:bg-neutral-900">
                       {tab.badge}
                     </span>
                   )}
