@@ -205,6 +205,32 @@ describe("a pull request with a worktree", () => {
   });
 });
 
+describe("my own open pull request with a worktree", () => {
+  const head = "abc1234";
+  // A number of its own: what the tests above sent for #7 is remembered on the page for a while (asked.ts).
+  const own = (over: Partial<PrRow> = {}) => pr({ number: 70, url: "https://github.com/4rtofl/app/pull/70", own: true, head, place: { primary: "/work/app", worktree: review }, ...over });
+  const verdict = (v: "changes" | "mergeable", sha = head) => ({ verdict: v, sha, url: "https://github.com/4rtofl/app/pull/7#issuecomment-1" });
+  const button = (name: RegExp) => screen.queryByRole("button", { name });
+
+  it("offers only 修正してもらう, not レビューする, when the review asks for changes", () => {
+    respond({ list: listed({ requested: [own({ mark: verdict("changes") })] }) });
+    render(<ReviewPage params={{}} />);
+    expect(button(/修正してもらう/)).not.toBeNull();
+    expect(button(/レビューする/)).toBeNull();
+  });
+
+  it.each([
+    ["has no review yet", undefined],
+    ["was pushed to after the review asked for changes", verdict("changes", "def5678")],
+    ["can be merged", verdict("mergeable")],
+  ])("offers レビューする when it %s", (_, mark) => {
+    respond({ list: listed({ requested: [own(mark ? { mark } : {})] }) });
+    render(<ReviewPage params={{}} />);
+    expect(button(/レビューする/)).not.toBeNull();
+    expect(button(/修正してもらう/)).toBeNull();
+  });
+});
+
 describe("fork pull requests asked about one after another", () => {
   const fork = (n: number) =>
     pr({ number: n, url: `https://github.com/4rtofl/app/pull/${n}`, fork: true, place: { primary: "/work/app", worktree: { path: `/work/review-${n}`, branch: `pr-${n}`, review: true } } });
