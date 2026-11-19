@@ -85,8 +85,11 @@ function MergeBody({ m, reload }: { m: PullMerge; reload: () => void }) {
   const method = [chosen, m.preferred, ...m.methods].find((x): x is MergeMethod => x !== undefined && m.methods.includes(x) && usable(x));
   // Not kept between pull requests: deleting a branch is asked for each one.
   const [deleteBranch, setDeleteBranch] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  // The head commit the confirmation was asked with: the merge is of that commit, and GitHub refuses it once the branch
+  // has moved. A read that shows another head asks again, before the button can merge.
+  const [confirming, setConfirming] = useState<{ head?: string }>();
   const head = m.headOid ? { head: m.headOid } : {};
+  const moved = confirming !== undefined && confirming.head !== m.headOid;
 
   if (m.queued) return <p className="text-muted-foreground">マージキューに入っています。順番が来ると、GitHub がマージします。</p>;
 
@@ -135,12 +138,12 @@ function MergeBody({ m, reload }: { m: PullMerge; reload: () => void }) {
   const auto = !m.queue && blocked && waitsOnly && m.auto.allowed && m.auto.canEnable;
   const canDelete = !m.queue && m.head !== undefined && !m.deletesBranch;
   const merge = () => {
-    if (!method) return;
-    setConfirming(false);
+    if (!method || !confirming || moved) return;
+    setConfirming(undefined);
     void run({
       id: "merge",
       op: "merge",
-      params: { action: "merge", method, deleteBranch: canDelete && deleteBranch, ...head },
+      params: { action: "merge", method, deleteBranch: canDelete && deleteBranch, ...(confirming.head ? { head: confirming.head } : {}) },
       summary: m.queue ? `${id} をマージキューに入れる` : `${id} を ${METHOD[method].label} でマージする${canDelete && deleteBranch ? `（${m.head} を消す）` : ""}`,
       done: m.queue ? "マージキューに入れました" : canDelete && deleteBranch ? `マージして、${m.head} を消しました` : "マージしました",
     });
@@ -209,18 +212,30 @@ function MergeBody({ m, reload }: { m: PullMerge; reload: () => void }) {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {confirming && method ? (
+        {confirming && method && moved ? (
+          <>
+            <span className="w-full text-amber-700 dark:text-amber-400">
+              確認を出したあとに、head のブランチに push がありました{confirming.head && m.headOid ? `（${confirming.head.slice(0, 7)} → ${m.headOid.slice(0, 7)}）` : ""}。中身を確かめてから、もう一度確認してください。
+            </span>
+            <Button variant="primary" onClick={() => setConfirming(head)} disabled={!mergeable || busy !== undefined}>
+              もう一度確認する
+            </Button>
+            <Button onClick={() => setConfirming(undefined)} disabled={busy !== undefined}>
+              やめる
+            </Button>
+          </>
+        ) : confirming && method ? (
           <>
             <Button variant="primary" onClick={merge} isLoading={busy === "merge"} loadingText="マージしています…" disabled={!mergeable || busy !== undefined}>
               {m.queue ? "マージキューに入れる" : `${METHOD[method].label} でマージする`}
             </Button>
-            <Button onClick={() => setConfirming(false)} disabled={busy !== undefined}>
+            <Button onClick={() => setConfirming(undefined)} disabled={busy !== undefined}>
               やめる
             </Button>
             <span className="text-muted-foreground">マージは、ここでは元に戻せません。</span>
           </>
         ) : (
-          <Button variant="primary" leftIcon={<GitMerge />} onClick={() => setConfirming(true)} disabled={!mergeable || !method || busy !== undefined} isLoading={busy === "merge"} loadingText="マージしています…">
+          <Button variant="primary" leftIcon={<GitMerge />} onClick={() => setConfirming(head)} disabled={!mergeable || !method || busy !== undefined} isLoading={busy === "merge"} loadingText="マージしています…">
             {m.queue ? "マージキューに入れる…" : "マージする…"}
           </Button>
         )}

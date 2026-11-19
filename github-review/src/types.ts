@@ -97,6 +97,8 @@ export interface PrRow {
   mark?: ReviewMark;
   /** When I last requested changes on it (ISO 8601). */
   changesRequestedAt?: string;
+  /** Where the search words put it in the upper part, the smaller first: the same on every working server. */
+  order?: number;
   /** Absent when this working server has no clone of its repository. */
   place?: Place;
 }
@@ -125,10 +127,10 @@ export interface RepoPrs {
 export interface Listing {
   /** The primary checkouts watched, as chosen. */
   watched: string[];
-  /** The open pull requests GitHub asks me to review (all of GitHub), narrowed by the search words: the newest ones. */
+  /** The open pull requests GitHub asks me to review (all of GitHub) and those I opened in the watched repositories, narrowed by the search words: the newest ones. */
   requested: PrRow[];
-  /** How many GitHub found for the upper part (`requested` holds at most SEARCH_LIMIT of them). */
-  requestedTotal: number;
+  /** How many more GitHub found for the upper part than `requested` holds (each once). */
+  requestedMore?: number;
   /** The watched repositories, then those with a review worktree of a pull request the search did not find. */
   repos: RepoPrs[];
   errors: string[];
@@ -142,6 +144,18 @@ export interface Created {
   branch?: string;
   /** Why it was made otherwise than README says (detached HEAD, another folder name…). */
   note?: string;
+}
+
+/**
+ * What Claude Code reads from the top of a session's folder as it starts: the project's settings (hooks, commands,
+ * agents, skills…), its instructions, and its MCP servers.
+ */
+export const PROJECT_FILES = [".claude/", "CLAUDE.md", "CLAUDE.local.md", ".mcp.json"] as const;
+
+/** Which of PROJECT_FILES a review worktree has (the daemon's `projectFiles`). */
+export interface ProjectFiles {
+  path: string;
+  files: string[];
 }
 
 /** What "片付ける" removed, or would remove. */

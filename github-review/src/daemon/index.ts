@@ -1,18 +1,21 @@
 // The daemon part of github-review: on each working server, the repositories that can be watched (from the folders
-// Gasho can start sessions in), the pull requests of the review page with where each is here, and making and removing
-// the review worktrees with git. gh runs through gasho-daemon (ctx.github); git only in the clones of those folders.
+// Gasho can start sessions in), the pull requests of the review page with where each is here, making and removing the
+// review worktrees with git, and what Claude Code would read in one. gh runs through gasho-daemon (ctx.github); git
+// only in the clones of those folders.
 import path from "node:path";
 import { defineDaemonPlugin, PluginError, type DaemonContext } from "@gasho/plugin-sdk/daemon";
 import { CLEANUP_KINDS, type CleanupKind } from "../cleanup.ts";
 import { Cleanups } from "./cleanups.ts";
 import { commitArgs, ghError, headArgs, parseCommit, parseHead } from "./gh.ts";
-import { createWorktree, removeWorktree, ReviewError, type OnGitHub, type PrHead } from "./git.ts";
+import { createWorktree, projectFiles, removeWorktree, ReviewError, type OnGitHub, type PrHead } from "./git.ts";
 import { Reviewer } from "./reviewer.ts";
+import { finishedNotification, ReviewSessions } from "./review-sessions.ts";
 import { SessionRemovals } from "./session-removals.ts";
 
 let reviewer: Reviewer | undefined;
 let cleanups: Cleanups | undefined;
 let removals: SessionRemovals | undefined;
+let reviewSessions: ReviewSessions | undefined;
 
 function current(): Reviewer {
   if (!reviewer) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
@@ -30,6 +33,13 @@ function repoArg(v: unknown): string {
 function numberArg(v: unknown): number {
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > 1e9) throw new PluginError("番号が正しくありません。");
   return v;
+}
+
+/** The clone of `repo` here (for `o.pr`: Reviewer.cloneOf). */
+async function cloneOf(repo: string, ctx: DaemonContext, o: Parameters<Reviewer["cloneOf"]>[2] = {}) {
+  const clone = await current().cloneOf((args, ro) => ctx.github.read(args, ro), repo, o);
+  if (!clone) throw new ReviewError(`この working server の、Claude Code が信頼しているフォルダーに、${repo} の clone がありません。`);
+  return clone;
 }
 
 /** A commit's SHA, whole or its start (a verdict's mark may hold either), in lower case; undefined when not given. */
@@ -52,8 +62,7 @@ async function target(params: unknown, ctx: DaemonContext) {
   }
   if (!pr) throw new ReviewError(`${repo} に Pull request #${number} はありません。`);
   const head: PrHead = { number, branch: pr.branch, fork: pr.fork === true, ...(pr.head ? { head: pr.head } : {}) };
-  const clone = await current().cloneOf((args, o) => ctx.github.read(args, o), repo, { pr: head, wait: true });
-  if (!clone) throw new ReviewError(`この working server の、Claude Code が信頼しているフォルダーに、${repo} の clone がありません。`);
+  const clone = await cloneOf(repo, ctx, { pr: head, wait: true });
   const onGitHub: OnGitHub = async (oid) => {
     try {
       return parseCommit((await ctx.github.read(commitArgs(repo, oid), { repo, timeoutMs: 20_000 })).stdout, oid);
@@ -74,11 +83,27 @@ export default defineDaemonPlugin({
     // Listing the folders can take a minute: the first page does not wait for all of it.
     reviewer.repoOptions().catch(() => {});
     void removals.load();
+    reviewSessions = new ReviewSessions({ file: path.join(ctx.dataDir, "review-sessions.json"), log: ctx.log });
+    void reviewSessions.load();
   },
   stop() {
     reviewer = undefined;
     cleanups = undefined;
     removals = undefined;
+    reviewSessions = undefined;
+  },
+  /**
+   * A session that was sent a review ended a turn: once the review of the head now is posted, the notification says so,
+   * once. Until then (the Agent asks something, GitHub cannot be read) Gasho's own notification goes out.
+   */
+  async onSessionStop(ctx) {
+    const review = await reviewSessions?.get(ctx.session.sessionId);
+    if (!review) return undefined;
+    const { stdout } = await ctx.github.read(headArgs(review.repo, review.number), { repo: review.repo, maxAgeSeconds: 0, timeoutMs: 4000 });
+    const pr = parseHead(stdout);
+    const notification = pr && finishedNotification(pr, review);
+    if (notification) await reviewSessions?.forget(ctx.session.sessionId);
+    return notification;
   },
   methods: {
     /** The repositories that can be watched: RepoOption[]. */
@@ -107,6 +132,14 @@ export default defineDaemonPlugin({
     async create(params, ctx) {
       const { clone, head, onGitHub } = await target(params, ctx);
       return createWorktree(ctx.exec, clone, head, { onGitHub });
+    },
+    /**
+     * Which of PROJECT_FILES the review worktree of { repo, number } has (ProjectFiles): the page shows them before a
+     * session starts in a fork's code.
+     */
+    async projectFiles(params, ctx) {
+      const p = objArg(params);
+      return projectFiles(await cloneOf(repoArg(p.repo), ctx), numberArg(p.number));
     },
     /**
      * The review worktree of { repo, number } once what was asked of its Agent is done (cleanup.ts), by `action`:
@@ -139,6 +172,14 @@ export default defineDaemonPlugin({
         default:
           throw new PluginError("片付けの指定が正しくありません。");
       }
+    },
+    /** The session { sessionId } is about to be sent the review of { repo, number }: its end is notified (onSessionStop). */
+    async trackReview(params) {
+      if (!reviewSessions) throw new PluginError("github-review の daemon の部分が、まだ動き始めていません。");
+      const p = objArg(params);
+      if (typeof p.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(p.sessionId)) throw new PluginError("セッションの指定が正しくありません。");
+      await reviewSessions.track(p.sessionId, repoArg(p.repo), numberArg(p.number));
+      return { ok: true };
     },
     /**
      * The session { sessionId } a review is sent to (review-session.ts), by `action`: "track" { repo, number, before? } —

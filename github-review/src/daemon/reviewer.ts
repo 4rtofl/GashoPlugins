@@ -8,9 +8,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { cleanable, cleanupDone } from "../cleanup.ts";
 import { reviewPosted } from "../review-session.ts";
-import { inOrder, openWords, repoWords } from "../search.ts";
+import { inOrder, openWords } from "../search.ts";
 import { MAX_QUERY, MAX_REPOS, SEARCH_LIMIT, type Listing, type Place, type PrDetail, type PrRow, type RepoOption, type RepoPrs } from "../types.ts";
-import { countQuery, detailArgs, ghError, listArgs, namesArgs, parseDetail, parseList, parseNames, requestedQuery, watchedQueries, type ListAsk, type Lookup, type ParsedPr } from "./gh.ts";
+import { countQuery, detailArgs, ghError, inScope, listArgs, namesArgs, parseDetail, parseList, parseNames, scopeWords, upperSearches, watchedQueries, type ListAsk, type Lookup, type ParsedPr } from "./gh.ts";
 import type { Cleanups } from "./cleanups.ts";
 import type { SessionRemovals } from "./session-removals.ts";
 import { inParallel, PARALLEL_GIT, prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, worktreesStamp, type Clone, type Exec } from "./git.ts";
@@ -259,9 +259,9 @@ export class Reviewer {
   }
 
   /**
-   * The page: the open pull requests I am asked to review, the watched repositories' (both narrowed by `words`,
-   * GitHub's search words), and those with a review worktree here that neither lists (closed ones, say), so they can be
-   * removed. `fresh`: without what gasho-daemon kept of gh.
+   * The page: the open pull requests I am asked to review and those I opened in the watched repositories, the watched
+   * repositories' (all narrowed by `words`, GitHub's search words), and those with a review worktree here that none
+   * lists (closed ones, say), so they can be removed. `fresh`: without what gasho-daemon kept of gh.
    */
   async list(github: GitHubRead, words: unknown, fresh: boolean): Promise<Listing> {
     await this.load();
@@ -293,14 +293,19 @@ export class Reviewer {
       if (l) l.numbers.push(...numbers);
       else lookups.push({ repo: c.github, numbers });
     }
-    // repo:, org: and user: narrow the watched repositories (GitHub would take them with the watched ones as "any of").
-    const { words: rest, names } = repoWords(q);
-    const searched = names ? watchedRepos.filter(names) : watchedRepos;
+    // repo:, org:, user: and owner: narrow the watched repositories (GitHub would take them with the watched ones as
+    // "any of").
+    const scope = scopeWords(q);
+    const rest = scope.rest;
+    const searched = watchedRepos.filter((r) => inScope(scope, r));
     // The open pull requests with a review worktree in a repository that is not watched show when the words find them.
     const open = openWords(rest);
-    const keptRepos = open === undefined ? [] : lookups.map((l) => l.repo).filter((r) => !isWatched(r) && (!names || names(r)));
+    const keptRepos = open === undefined ? [] : lookups.map((l) => l.repo).filter((r) => !isWatched(r) && inScope(scope, r));
+    const upper = upperSearches(q, watchedRepos);
     const asked: ListAsk = {
-      requested: requestedQuery(q),
+      requested: upper.requested,
+      own: upper.own,
+      both: upper.both,
       watched: watchedQueries(searched, rest),
       counts: searched.length > 1 ? searched.map((r) => countQuery(r, rest)) : [],
       kept: open === undefined ? [] : watchedQueries(keptRepos, `is:open ${open}`.trim()),
@@ -315,7 +320,7 @@ export class Reviewer {
       if (typeof out !== "string" || !out.includes('"data"')) throw new ReviewError(ghError(e));
       json = out;
     }
-    const answer = parseList(json, asked);
+    const answer = parseList(json, { ...asked, words: q, upper });
     errors.push(...answer.errors.map((m) => `GitHub：${m}`));
 
     // Those whose worktree is gone from every clone of their repository here are forgotten. A worktree of another name
@@ -378,7 +383,7 @@ export class Reviewer {
       if (shown.has(pr.url) || !(place?.worktree?.review || place?.cleanup)) continue;
       // An open one shows when the words find it: in a watched repository the search says (one past the first ones is
       // in its total), else the search of those repositories, when it read all it found.
-      if (pr.state === "open" && (isWatched(pr.repo) || open === undefined || (names && !names(pr.repo)) || (keptAll && !keptUrls.has(pr.url)))) continue;
+      if (pr.state === "open" && (isWatched(pr.repo) || open === undefined || !inScope(scope, pr.repo) || (keptAll && !keptUrls.has(pr.url)))) continue;
       shown.add(pr.url);
       const group = repos.find((r) => sameRepo(r.repo, pr.repo));
       if (group) group.kept.push(row(pr, placeOf(pr)));
@@ -387,7 +392,7 @@ export class Reviewer {
     return {
       watched: [...this.watched],
       requested: requested.map((p) => row(p, placeOf(p))),
-      requestedTotal: answer.requested.total,
+      ...(answer.requested.more ? { requestedMore: answer.requested.more } : {}),
       repos,
       errors,
     };

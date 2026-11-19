@@ -21,5 +21,6 @@ export function reviewPosted(mark: Pick<ReviewMark, "url" | "at"> | undefined, r
   return Number.isFinite(posted) && posted >= review.at - CLOCK_SLACK_MS;
 }
 
-/** A session that has ended its turn, with nothing waiting to be typed into it. */
-export const atRest = (s: { status: string; pendingInputs?: number }): boolean => s.status === "idle" && (s.pendingInputs ?? 0) === 0;
+/** A session that has ended its turn, with nothing waiting to be typed into it and no work running in the background. */
+export const atRest = (s: { status: string; pendingInputs?: number; background?: readonly unknown[] }): boolean =>
+  s.status === "idle" && (s.pendingInputs ?? 0) === 0 && (s.background?.length ?? 0) === 0;

@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PluginError, type DaemonStartContext } from "@gasho/plugin-sdk/daemon";
-import type { Created, PrWorktree, Removed, RepoOption } from "../types.ts";
+import { PROJECT_FILES, type Created, type ProjectFiles, type PrWorktree, type Removed, type RepoOption } from "../types.ts";
 
 export type Exec = DaemonStartContext["exec"];
 
@@ -309,6 +309,16 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { 
   await track();
   await step("worktree を作ることが", git(exec, clone.path, ["worktree", "add", dest, branch], w));
   return made("", branch);
+}
+
+/** Which of PROJECT_FILES the review worktree of a pull request has at its top, as Claude Code would find them now. */
+export async function projectFiles(clone: Clone, number: number): Promise<ProjectFiles> {
+  const dir = reviewPaths(clone, number).find((p) => clone.worktrees.some((w) => w.path === p));
+  if (!dir) throw new ReviewError(`Pull request #${number} のレビュー用の worktree（${reviewName(clone.github, number)}）はありません。`);
+  if (!(await succeeds(fs.stat(dir)))) throw new ReviewError(`${dir} がありません。`);
+  const files: string[] = [];
+  for (const f of PROJECT_FILES) if (await succeeds(fs.lstat(path.join(dir, f.replace(/\/$/, ""))))) files.push(f);
+  return { path: dir, files };
 }
 
 /**

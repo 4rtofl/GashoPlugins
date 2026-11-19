@@ -46,6 +46,33 @@ const once = (prs: PrRow[]): PrRow[] => {
   return prs.filter((p) => !seen.has(p.url) && Boolean(seen.add(p.url)));
 };
 
+/**
+ * Lists each in order, as one list in that order: of those ranked the same, or without a rank to compare, the earlier
+ * list's comes first.
+ */
+export function mergeOrdered<T>(lists: readonly (readonly T[])[], rank: (x: T) => number | undefined): T[] {
+  const at = lists.map(() => 0);
+  const out: T[] = [];
+  for (;;) {
+    let from = -1;
+    let best: T | undefined;
+    for (const [k, list] of lists.entries()) {
+      const i = at[k] ?? 0;
+      if (i >= list.length) continue;
+      const x = list[i] as T;
+      const r = rank(x);
+      const b = best === undefined ? undefined : rank(best);
+      if (from < 0 || (r !== undefined && b !== undefined && r < b)) {
+        from = k;
+        best = x;
+      }
+    }
+    if (from < 0) return out;
+    out.push(best as T);
+    at[from] = (at[from] ?? 0) + 1;
+  }
+}
+
 /** The page's rows; `words` are the search words, whose order the lower part keeps. */
 export function pageItems<M>(lists: { machine: M; listing: Listing }[], words: string): PageItems<M> {
   // Every working server's spot of a pull request, whichever part of the page listed it there.
@@ -61,10 +88,10 @@ export function pageItems<M>(lists: { machine: M; listing: Listing }[], words: s
   const item = ({ place: _, ...pr }: PrRow): Item<M> => ({ pr, spots: spots.get(pr.url) ?? [] });
   const placed = (prs: PrRow[]): Item<M>[] => prs.map(item).filter((i) => i.spots.length > 0);
 
-  // Every working server reads the same search for the upper part.
-  const read = once(lists.flatMap((l) => l.listing.requested));
-  const requested = placed(read);
-  const requestedTotal = Math.max(0, ...lists.map((l) => l.listing.requestedTotal));
+  // Working servers watch different repositories, so each lists some of mine the others do not.
+  const read = once(mergeOrdered(lists.map((l) => l.listing.requested), (p) => p.order));
+  const first = read.slice(0, SEARCH_LIMIT);
+  const requested = placed(first);
 
   const groups = new Map<string, { repo: string; watched: boolean; prs: PrRow[]; kept: PrRow[]; total: number }>();
   for (const { listing } of lists) {
@@ -85,8 +112,8 @@ export function pageItems<M>(lists: { machine: M; listing: Listing }[], words: s
   const foundUrls = new Set(ordered.flatMap((g) => g.prs.map((p) => p.url)));
   return {
     requested,
-    requestedNoClone: read.length - requested.length,
-    requestedMore: Math.max(0, requestedTotal - read.length),
+    requestedNoClone: first.length - requested.length,
+    requestedMore: Math.max(0, ...lists.map((l) => l.listing.requestedMore ?? 0)) + Math.max(0, read.length - SEARCH_LIMIT),
     groups: ordered.map((g) => {
       const key = g.repo.toLowerCase();
       return {
