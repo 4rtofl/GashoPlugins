@@ -20,8 +20,11 @@ const READ_CHARS = 1024 * 1024;
 /** Times a `run` that got no answer is sent again by itself. */
 const RUN_RESENDS = 2;
 
-/** The call may have reached the daemon part, and its answer did not come back (Gasho's server, gasho-daemon, the SDK). */
-const unknownResult = (error: string): boolean => /応答がありません|結果が分かりません/.test(error);
+/**
+ * The call may have reached the daemon part, and its answer did not come back: it took too long, or the working server
+ * or Gasho's server went away meanwhile (Gasho's server, gasho-daemon, the SDK).
+ */
+const unknownResult = (error: string): boolean => /応答がありません|結果が分かりません|接続が切れました/.test(error);
 
 /** A name for a `run` (types.ts RUN_REQUEST). getRandomValues, since randomUUID needs https. */
 function newRequest(): string {
@@ -121,7 +124,8 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
     }
     if (resent > 0) setNotice(undefined);
     if (!r.ok) {
-      setError(unknownResult(r.error) ? `${r.error}実行されたかは分かりません。もう一度実行すると、実行されていればその記録を出します（二重には実行しません）。` : r.error);
+      // Sent again at once after the working server went away, it is often refused as offline: still not known.
+      setError(resent > 0 || unknownResult(r.error) ? `${r.error}実行されたかは分かりません。もう一度実行すると、実行されていればその記録を出します（二重には実行しません）。` : r.error);
       return false;
     }
     if (unanswered.current?.request === request) unanswered.current = undefined;
