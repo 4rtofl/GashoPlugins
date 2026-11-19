@@ -178,6 +178,8 @@ export interface Packages {
   missing?: MissingScope;
   /** Kinds that could not be read, and why. */
   errors?: string[];
+  /** Packages past those whose newest version is read: they have no publishedAt and come last. */
+  undated?: number;
 }
 
 export interface PackageVersion {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { installCommand, listPackages, PACKAGE_PAGES, packageNameArg, packagesBase, parsePackages, parseVersions, readPackage, VERSIONS_MAX } from "../src/daemon/packages.ts";
+import { installCommand, listPackages, PACKAGE_PAGES, packageNameArg, packagesBase, parsePackages, parseVersions, PUBLISHED_MAX, readPackage, VERSIONS_MAX } from "../src/daemon/packages.ts";
 
 const fixture = (name: string) => readFileSync(new URL(`fixtures/${name}`, import.meta.url), "utf8");
 const json = (name: string) => JSON.parse(fixture(name)) as unknown;
@@ -132,6 +132,28 @@ test("an owner's packages are read page by page until a page is not full", async
   pages.length = 0;
   await listPackages(ctx(true) as never, "4rtofl/Gasho", { maxAgeSeconds: 60 });
   assert.equal(pages.length, PACKAGE_PAGES);
+});
+
+test("past the packages whose newest version is read, the rest have no time, come last, and are counted", async () => {
+  const many = Array.from({ length: PUBLISHED_MAX + 2 }, (_, i) => ({ ...(json("packages-org-npm.json") as Record<string, unknown>[])[0], name: `p-${i}`, repository: { full_name: "4rtofl/Gasho" } }));
+  const read: string[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        const path = args[1] ?? "";
+        if (path === "graphql") return { stdout: ownerAnswer("Organization", "4rtofl", "4rtofl/Gasho", "someone"), stderr: "" };
+        if (path.endsWith("/versions?per_page=1")) {
+          read.push(path);
+          return { stdout: fixture("versions-npm.json"), stderr: "" };
+        }
+        return { stdout: path.includes("package_type=npm") ? JSON.stringify(many) : "[]", stderr: "" };
+      },
+    },
+  };
+  const list = await listPackages(ctx as never, "4rtofl/Gasho", { maxAgeSeconds: 60 });
+  assert.equal(read.length, PUBLISHED_MAX);
+  assert.equal(list.undated, 2);
+  assert.deepEqual(list.packages.slice(-2).map((p) => [p.name, p.publishedAt]), [["p-30", undefined], ["p-31", undefined]]);
 });
 
 test("without read:packages, the answer says how to add it; a package of another repository is not read", async () => {

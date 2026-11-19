@@ -183,14 +183,16 @@ export async function listPackages(ctx: Gh, repo: string, o: { maxAgeSeconds: nu
       }
     }),
   );
+  const found = lists.flat();
   const packages = await Promise.all(
-    lists.flat().map(async (pkg, i) => {
+    found.map(async (pkg, i) => {
       const at = i < PUBLISHED_MAX ? await publishedAt(ctx, base, pkg, { repo, maxAgeSeconds: o.maxAgeSeconds }) : undefined;
       return at ? { ...pkg, publishedAt: at } : pkg;
     }),
   );
   packages.sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
-  return { packages, ...(missing ? { missing } : {}), ...(errors.length ? { errors } : {}) };
+  const undated = Math.max(0, found.length - PUBLISHED_MAX);
+  return { packages, ...(missing ? { missing } : {}), ...(errors.length ? { errors } : {}), ...(undated ? { undated } : {}) };
 }
 
 /** Package `type`/`name` of `repo`'s owner with its versions; undefined when it is not there or not the repository's. */
