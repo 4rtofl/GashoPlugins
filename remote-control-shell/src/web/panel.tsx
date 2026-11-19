@@ -21,10 +21,11 @@ const READ_CHARS = 1024 * 1024;
 const RUN_RESENDS = 2;
 
 /**
- * The call may have reached the daemon part, and its answer did not come back: it took too long, or the working server
- * or Gasho's server went away meanwhile (Gasho's server, gasho-daemon, the SDK).
+ * The call may have reached the daemon part, and its answer did not come back: it took too long, the daemon part's
+ * process ended meanwhile (gasho-daemon stopping, a crash), or the working server or Gasho's server went away (Gasho's
+ * server, gasho-daemon, the SDK).
  */
-const unknownResult = (error: string): boolean => /応答がありません|結果が分かりません|接続が切れました/.test(error);
+const unknownResult = (error: string): boolean => /応答がありません|結果が分かりません|接続が切れました|途中で止まりました/.test(error);
 
 /** A name for a `run` (types.ts RUN_REQUEST). getRandomValues, since randomUUID needs https. */
 function newRequest(): string {

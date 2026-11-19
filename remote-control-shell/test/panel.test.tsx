@@ -89,8 +89,9 @@ describe("ShellPanel", () => {
     expect(requests[4]).not.toBe(requests[0]);
   });
 
-  it("sends a run again when the working server went away before its answer, and says it is not known whether it ran", async () => {
+  it("sends a run again when the working server or the daemon part went away before its answer, and says it is not known whether it ran", async () => {
     const answers: CallResult<unknown>[] = [
+      { ok: false, error: "プラグインの処理が途中で止まりました。" },
       { ok: false, error: "working server との接続が切れました。" },
       { ok: false, error: "この working server はオフラインです。" },
     ];
@@ -100,8 +101,8 @@ describe("ShellPanel", () => {
     await user.type(box(), "npm test{Enter}");
     expect(await screen.findByText(/^この working server はオフラインです。実行されたかは分かりません/)).toBeTruthy();
     const requests = callsOf("run").map((p) => (p as { request: string }).request);
-    expect(requests).toHaveLength(2);
-    expect(requests[1]).toBe(requests[0]);
+    expect(requests).toHaveLength(3);
+    expect(new Set(requests).size).toBe(1);
   });
 
   it("stops a running command with SIGINT, and with SIGKILL once it has not stopped for 3 seconds", async () => {
