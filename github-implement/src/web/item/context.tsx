@@ -59,18 +59,23 @@ export function useItem(): ItemScope {
 
 /**
  * The tab of the screen that shows, of `ids`: the URL's first, so that reloading the page and the browser's back show
- * the tab it was; else the one last chosen, as the item's worktree tab has no tab in its URL. Choosing one puts it in the
+ * the tab it was; else the one shown last when the screen opened, as the item's worktree tab has no tab in its URL.
+ * That one stays while the screen is open, so that going back to the URL without a tab shows it again: Gasho keeps the
+ * screen while only its params change, and pressing the worktree tab again shows it too. Choosing one puts it in the
  * URL, beside the params of the worktree tab, as Gasho shows that tab as chosen while the URL has them all.
  */
 export function useChosenTab(ids: string[]): [string | undefined, (id: string) => void] {
   const { where, params } = useItem();
   const nav = useNavigation();
-  const [remembered, remember] = usePluginState<string>(`tab:${where.repo}#${where.number}`, ids[0] ?? "");
-  const chosen = [params.tab, remembered].find((id): id is string => id !== undefined && ids.includes(id)) ?? ids[0];
-  const choose = (id: string) => {
-    remember(id);
-    nav.openWorktreeView("item", { ...params, tab: id });
-  };
+  const [shownLast, remember] = usePluginState<string>(`tab:${where.repo}#${where.number}`, ids[0] ?? "");
+  // The screen is made anew for every number (view.tsx), and both parts that use this are made with it.
+  const opened = useRef(shownLast);
+  const chosen = [params.tab, opened.current].find((id): id is string => id !== undefined && ids.includes(id)) ?? ids[0];
+  // Not on remember, which is made anew on every drawing.
+  useEffect(() => {
+    if (chosen) remember(chosen);
+  }, [chosen]);
+  const choose = (id: string) => nav.openWorktreeView("item", { ...params, tab: id });
   return [chosen, choose];
 }
 

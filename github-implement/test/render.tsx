@@ -3,7 +3,7 @@
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import type { RequestState, WorktreeInfo } from "@gasho/plugin-sdk";
+import type { Params, RequestState, WorktreeInfo } from "@gasho/plugin-sdk";
 import { callsOf, machine, NOW, respond } from "../../test/sdk.tsx";
 import { ItemProvider, useChanges } from "../src/web/item/context.tsx";
 import { ToastProvider } from "../src/web/ui/toast.tsx";
@@ -31,23 +31,26 @@ export const detail = (over: Partial<GitHubItemDetail> = {}): GitHubItemDetail =
   };
 };
 
-function Scope({ item, worktree, children }: { item: GitHubItemDetail; worktree: WorktreeInfo; children: ReactNode }) {
+function Scope({ item, worktree, params, children }: { item: GitHubItemDetail; worktree: WorktreeInfo; params: Params; children: ReactNode }) {
   const where = { repo: REPO, kind: item.kind, number: item.number };
   const { busy, run, revision, changed } = useChanges("m1", where, () => {});
-  const params = { kind: item.kind, number: String(item.number) };
   return <ItemProvider value={{ machine: "m1", machineInfo: machine(), worktree, params, where, item, now: NOW, busy, run, revision, reload: changed }}>{children}</ItemProvider>;
 }
 
 /** Draws `part` with the toasts it may show. */
 export const renderWithToasts = (part: ReactNode) => render(<ToastProvider>{part}</ToastProvider>);
 
-/** Draws `part` (a tab's or a section's View) in the screen of `item`, in a worktree of REPO. */
-export const renderItem = (item: GitHubItemDetail, part: ReactNode, worktree: WorktreeInfo = { path: "/work/app", github, sessions: [] }) =>
-  renderWithToasts(
-    <Scope item={item} worktree={worktree}>
+/** `part` (a tab's or a section's View) in the screen of `item`, in a worktree of REPO, opened from the item's worktree tab and `extra` params of its URL. */
+export const itemScreen = (item: GitHubItemDetail, part: ReactNode, extra: Params = {}, worktree: WorktreeInfo = { path: "/work/app", github, sessions: [] }) => (
+  <ToastProvider>
+    <Scope item={item} worktree={worktree} params={{ kind: item.kind, number: String(item.number), ...extra }}>
       {part}
-    </Scope>,
-  );
+    </Scope>
+  </ToastProvider>
+);
+
+/** Draws itemScreen. */
+export const renderItem = (item: GitHubItemDetail, part: ReactNode, worktree?: WorktreeInfo) => render(itemScreen(item, part, {}, worktree));
 
 /** Every read of the daemon part goes to the method "read", with the operation in its params: what each op gives. */
 export const reads = (byOp: Record<string, Partial<RequestState<unknown>> | undefined>) => respond({ read: (p: { op: string }) => byOp[p.op] });
