@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import { test } from "node:test";
 import type { DaemonContext } from "@gasho/plugin-sdk/daemon";
 import reviewers from "../src/daemon/detail/reviewers.ts";
@@ -49,15 +50,21 @@ const fakeGitHub = () => {
   return { writes, ctx };
 };
 
-test("a review goes to gh with its body as the value of --body, and one that needs a body never goes without", async () => {
-  const { writes, ctx } = fakeGitHub();
+test("a review goes to gh with its body in the file of --body-file, and one that needs a body never goes without", async () => {
+  const writes: string[][] = [];
+  // What the file held while gh ran, in place of its path.
+  const write = async (args: string[]) => {
+    writes.push(await Promise.all(args.map(async (a) => (a.startsWith("--body-file=") ? `--body-file:${await fs.readFile(a.slice("--body-file=".length), "utf8")}` : a))));
+    return { stdout: "", stderr: "" };
+  };
+  const ctx = { github: { write }, log() {} } as unknown as DaemonContext;
   await review.run({ repo: "o/r", number: 7, event: "approve" }, ctx);
   await review.run({ repo: "o/r", number: 7, event: "request_changes", body: "--repo x/y" }, ctx);
   await assert.rejects(review.run({ repo: "o/r", number: 7, event: "comment", body: " \n" }, ctx));
   await assert.rejects(review.run({ repo: "o/r", number: 7, event: "toString", body: "x" }, ctx));
   assert.deepEqual(writes, [
     ["pr", "review", "7", "--repo", "o/r", "--approve"],
-    ["pr", "review", "7", "--repo", "o/r", "--request-changes", "--body=--repo x/y"],
+    ["pr", "review", "7", "--repo", "o/r", "--request-changes", "--body-file:--repo x/y"],
   ]);
 });
 

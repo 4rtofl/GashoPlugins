@@ -7,7 +7,7 @@ import { Badge } from "../../ui/badge.tsx";
 import { Button } from "../../ui/button.tsx";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
-import { Picker } from "../picker.tsx";
+import { assignableSearch, Picker, type Choice } from "../picker.tsx";
 import { Row } from "../row.tsx";
 
 function Assignees() {
@@ -25,6 +25,7 @@ function Assignees() {
       done: `担当に ${who} を足しました`,
       undo: { op: "edit", params: { removeAssignees: [as] }, summary: `${id} の担当から ${who} を外す` },
     });
+  const choice = (a: string): Choice | undefined => (item.assignees.includes(a) ? undefined : { key: a, name: a, text: <span>{a}</span>, pick: () => add(a) });
   return (
     <Row label="担当">
       {item.assignees.map((a) => (
@@ -57,7 +58,8 @@ function Assignees() {
         label="担当を足す"
         error={meta.error}
         disabled={busy !== undefined}
-        choices={meta.data?.assignable.filter((a) => !item.assignees.includes(a)).map((a) => ({ key: a, name: a, text: <span>{a}</span>, pick: () => add(a) }))}
+        choices={meta.data?.assignable.flatMap((a) => choice(a) ?? [])}
+        {...(meta.data?.assignableMore && { search: assignableSearch(machine, where.repo, choice) })}
       />
     </Row>
   );

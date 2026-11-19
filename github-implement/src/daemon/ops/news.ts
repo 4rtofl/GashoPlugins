@@ -22,7 +22,7 @@ export default {
     const repo = repoArg(p.repo);
     const items = itemsArg(p.items);
     if (refreshSeconds() === 0) return {};
-    const store = seenStore(ctx.dataDir);
+    const store = seenStore(ctx.dataDir, ctx.log);
     const news: Record<string, ItemNews> = {};
     await Promise.all(
       items.map(async ({ kind, number }) => {
