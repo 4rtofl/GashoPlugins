@@ -1,0 +1,11 @@
+{
+  "paths": [
+    "**/src/web/**/*.tsx",
+    "**/src/web/**/*.ts",
+    "**/src/web/**/*.css",
+    "ayu-dark/gasho-plugin.json",
+    "vscode-dark-2026/gasho-plugin.json"
+  ],
+  "exclude": ["**/node_modules/**", "**/dist/**", "**/test/**", "**/*.test.*", "**/env.d.ts"],
+  "inventory": ["*/src/web/ui/*.tsx"]
+}
