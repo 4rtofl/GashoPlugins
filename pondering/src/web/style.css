@@ -3,12 +3,14 @@
 @import "@gasho/plugin-sdk/plugin.css";
 @source "../";
 
-/* Claude's orange: darker on a light screen, to be read there; the shine is a lighter orange. */
+/* Claude's orange: darker on a light screen, to be read there; the shine is a lighter orange. Gasho puts each rule in
+   the plugin's elements, so `.dark .pondering` would ask for .dark inside them: <html> has it, so the element itself is
+   asked to be in it (as the SDK's dark: variant does). */
 .pondering {
   --pondering-ink: #b5502f;
   --pondering-shine: #f0a383;
 }
-.dark .pondering {
+.pondering:is(.dark *) {
   --pondering-ink: #d77757;
   --pondering-shine: #f6cbb7;
 }
