@@ -1,0 +1,95 @@
+2026-11-18T05:24:51.1649406Z 
+2026-11-18T05:24:51.1649672Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+2026-11-18T05:24:52.4157796Z ##[end-action id=__self_4.__run;outcome=success;conclusion=success;duration_ms=74244]
+2026-11-18T05:24:52.4194880Z ##[group]Run pnpm run e2e:playwright --shard=3/8 --reporter=dot,blob --output=playwright-test-results
+2026-11-18T05:24:52.4195623Z [36;1mpnpm run e2e:playwright --shard=3/8 --reporter=dot,blob --output=playwright-test-results[0m
+2026-11-18T05:24:52.4227804Z shell: /usr/bin/bash -e {0}
+2026-11-18T05:24:52.4228122Z env:
+2026-11-18T05:24:52.4235991Z   pnpm_config_store_dir: /opt/actions-runner/_work/_temp/pnpm-store
+2026-11-18T05:24:52.4236391Z   PNPM_HOME: /home/ubuntu/setup-pnpm
+2026-11-18T05:24:52.4236725Z   GRAFANA_URL: http://localhost:3001
+2026-11-18T05:24:52.4237029Z   CI: true
+2026-11-18T05:24:52.4237269Z ##[endgroup]
+2026-11-18T05:24:52.4737468Z $ NODE_OPTIONS='-C @grafana-app/source' playwright test --shard=3/8 --reporter=dot,blob --output=playwright-test-results
+2026-11-18T05:24:57.1141290Z 
+2026-11-18T05:24:57.1142497Z Running 105 tests using 4 workers, shard 3 of 8
+2026-11-18T05:28:48.2486377Z ·························×××F×·····TT··T········································
+2026-11-18T05:30:29.6477133Z ·····························
+2026-11-18T05:30:29.6484696Z 
+2026-11-18T05:30:29.6494161Z   1) [panels] › e2e-playwright/panels-suite/frontend-sandbox-panel.spec.ts:25:9 › Panels test: Panel sandbox › Does not add iframes to body @panels 
+2026-11-18T05:30:29.6494718Z 
+2026-11-18T05:30:29.6494887Z     Test timeout of 30000ms exceeded.
+2026-11-18T05:30:29.6495149Z 
+2026-11-18T05:30:29.6495430Z     Error: locator.click: Test timeout of 30000ms exceeded.
+2026-11-18T05:30:29.6495909Z     Call log:
+2026-11-18T05:30:29.6496264Z       - waiting for locator('[data-testid="button-create-iframes"]')
+2026-11-18T05:30:29.6496544Z 
+2026-11-18T05:30:29.6496552Z 
+2026-11-18T05:30:29.6496671Z       29 |
+2026-11-18T05:30:29.6497103Z       30 |       // this button adds 3 iframes to the body
+2026-11-18T05:30:29.6497758Z     > 31 |       await page.locator('[data-testid="button-create-iframes"]').click();
+2026-11-18T05:30:29.6498408Z          |                                                                   ^
+2026-11-18T05:30:29.6498809Z       32 |
+2026-11-18T05:30:29.6499064Z       33 |       const iframeIds = [
+2026-11-18T05:30:29.6499385Z       34 |         'createElementIframe',
+2026-11-18T05:30:29.6500088Z         at /opt/actions-runner/_work/grafana/grafana/e2e-playwright/panels-suite/frontend-sandbox-panel.spec.ts:31:67
+2026-11-18T05:30:29.6500538Z 
+2026-11-18T05:30:29.6500996Z     attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+2026-11-18T05:30:29.6501851Z     playwright-test-results/frontend-sandbox-panel-Pan-76387-oes-not-add-iframes-to-body-panels/test-failed-1.png
+2026-11-18T05:30:29.6502630Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+2026-11-18T05:30:29.6502893Z 
+2026-11-18T05:30:29.6503247Z     attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────
+2026-11-18T05:30:29.6504346Z     playwright-test-results/frontend-sandbox-panel-Pan-76387-oes-not-add-iframes-to-body-panels/test-failed-2.png
+2026-11-18T05:30:29.6505097Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+2026-11-18T05:30:29.6505446Z 
+2026-11-18T05:30:29.6611894Z     playwright-test-results/frontend-sandbox-panel-Pan-61ea6-fic-window-global-variables-panels-retry1/trace.zip
+2026-11-18T05:30:29.6612416Z     Usage:
+2026-11-18T05:30:29.6612544Z 
+2026-11-18T05:30:29.6613041Z         pnpm exec playwright show-trace playwright-test-results/frontend-sandbox-panel-Pan-61ea6-fic-window-global-variables-panels-retry1/trace.zip
+2026-11-18T05:30:29.6613564Z 
+2026-11-18T05:30:29.6613902Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+2026-11-18T05:30:29.6614183Z 
+2026-11-18T05:30:29.6614284Z   4 failed
+2026-11-18T05:30:29.6614937Z     [panels] › e2e-playwright/panels-suite/frontend-sandbox-panel.spec.ts:25:9 › Panels test: Panel sandbox › Does not add iframes to body @panels 
+2026-11-18T05:30:29.6615933Z     [panels] › e2e-playwright/panels-suite/frontend-sandbox-panel.spec.ts:51:9 › Panels test: Panel sandbox › Does not reaches out of panel div @panels 
+2026-11-18T05:30:29.6616940Z     [panels] › e2e-playwright/panels-suite/frontend-sandbox-panel.spec.ts:61:9 › Panels test: Panel sandbox › Does not Reaches out of the panel editor @panels 
+2026-11-18T05:30:29.6617972Z     [panels] › e2e-playwright/panels-suite/frontend-sandbox-panel.spec.ts:74:9 › Panels test: Panel sandbox › Can access specific window global variables @panels 
+2026-11-18T05:30:29.6618562Z   101 passed (5.6m)
+2026-11-18T05:30:31.7395061Z [ELIFECYCLE] Command failed with exit code 1.
+2026-11-18T05:30:31.7435090Z ##[error]Process completed with exit code 1.
+2026-11-18T05:30:31.7484460Z ##[group]Run echo "Tests in this shard failed."
+2026-11-18T05:30:31.7485007Z [36;1mecho "Tests in this shard failed."[0m
+2026-11-18T05:30:31.7485444Z [36;1mecho ""[0m
+2026-11-18T05:30:31.7486010Z [36;1mecho "View combined logs and HTML report in the 'Playwright test report' job once all tests finish."[0m
+2026-11-18T05:30:31.7486449Z [36;1mexit 1[0m
+2026-11-18T05:30:31.7512105Z shell: /usr/bin/bash -e {0}
+2026-11-18T05:30:31.7512416Z env:
+2026-11-18T05:30:31.7519763Z   pnpm_config_store_dir: /opt/actions-runner/_work/_temp/pnpm-store
+2026-11-18T05:30:31.7520143Z   PNPM_HOME: /home/ubuntu/setup-pnpm
+2026-11-18T05:30:31.7520694Z ##[endgroup]
+2026-11-18T05:30:31.7570720Z Tests in this shard failed.
+2026-11-18T05:30:31.7570926Z 
+2026-11-18T05:30:31.7571258Z View combined logs and HTML report in the 'Playwright test report' job once all tests finish.
+2026-11-18T05:30:31.7573854Z ##[error]Process completed with exit code 1.
+2026-11-18T05:30:31.7620423Z ##[group]Run actions/upload-artifact@v7
+2026-11-18T05:30:31.7620894Z with:
+2026-11-18T05:30:31.7621213Z   name: grafana-server-log-3
+2026-11-18T05:30:31.7621726Z   path: grafana-server/grafana.log
+2026-11-18T05:30:31.7622066Z   retention-days: 7
+2026-11-18T05:30:31.7622354Z   if-no-files-found: warn
+2026-11-18T05:30:31.7622667Z   compression-level: 6
+2026-11-18T05:30:31.7622957Z   overwrite: false
+2026-11-18T05:30:31.7623245Z   include-hidden-files: false
+2026-11-18T05:30:31.7623549Z   archive: true
+2026-11-18T05:30:31.7623819Z env:
+2026-11-18T05:30:31.7632239Z   pnpm_config_store_dir: /opt/actions-runner/_work/_temp/pnpm-store
+2026-11-18T05:30:31.7632674Z   PNPM_HOME: /home/ubuntu/setup-pnpm
+2026-11-18T05:30:31.7633001Z ##[endgroup]
+2026-11-18T05:30:31.9078302Z With the provided path, there will be 1 file uploaded
+2026-11-18T05:30:31.9084087Z Artifact name is valid!
+2026-11-18T05:30:31.9084719Z Root directory input is valid!
+2026-11-18T05:30:32.1469734Z Uploading artifact: grafana-server-log-3.zip
+2026-11-18T05:30:32.1502802Z Beginning upload of artifact content to blob storage
+2026-11-18T05:30:32.2794955Z Uploaded bytes 3500
+2026-11-18T05:30:32.3143594Z Finished uploading artifact content to blob storage!
+2026-11-18T05:30:32.3145443Z SHA256 digest of uploaded artifact is ca961a7b7225772cbe433ce76c09d2cba5e680953804d1a88ea56a1a593beb40

@@ -1,6 +1,7 @@
 // Open issues and pull requests of a GitHub repository, read with the GitHub CLI (`gh`) of the working server (moved
 // here from gasho-daemon's github.ts). It uses the login of whoever runs gasho-daemon, so Gasho never handles a GitHub
-// token itself. gh runs through the daemon part's context (ctx.exec): no shell, no terminal, no prompts.
+// token itself. gasho-daemon runs gh for the plugins (ctx.github.read, plugin API 1.3), and answers a read from what gh
+// said for the same arguments recently: the home screen's tile and the panels of every browser share one gh.
 import type { DaemonContext } from "@gasho/plugin-sdk/daemon";
 import type {
   GitHubCheck,
@@ -14,8 +15,7 @@ import type {
   GitHubReview,
 } from "../types.ts";
 
-/** The GitHub CLI: as gasho-daemon is told (GASHO_GH_BIN), or gh. */
-const GH = process.env.GASHO_GH_BIN || "gh";
+type Gh = Pick<DaemonContext, "github">;
 
 /** Items sent per list. */
 export const GITHUB_LIST_LIMIT = 50;
@@ -109,12 +109,11 @@ export function ghError(e: unknown): string {
   return `GitHub から読み込めませんでした：${cut(first ?? "原因が分かりません", 200, "")}`;
 }
 
-/** The open issues or pull requests of `repo`, newest first. */
-export async function listGitHub(ctx: Pick<DaemonContext, "exec">, repo: GitHubRepo, kind: GitHubListKind): Promise<GitHubList> {
+/** The open issues or pull requests of `repo`, newest first, from what gh said up to `maxAgeSeconds` ago. */
+export async function listGitHub(ctx: Gh, repo: GitHubRepo, kind: GitHubListKind, maxAgeSeconds: number): Promise<GitHubList> {
   let stdout: string;
   try {
-    ({ stdout } = await ctx.exec(
-      GH,
+    ({ stdout } = await ctx.github.read(
       [
         kind === "issues" ? "issue" : "pr",
         "list",
@@ -127,7 +126,7 @@ export async function listGitHub(ctx: Pick<DaemonContext, "exec">, repo: GitHubR
         "--json",
         kind === "issues" ? ISSUE_FIELDS : PULL_FIELDS,
       ],
-      { timeoutMs: 20_000, maxBuffer: 8 * 1024 * 1024 },
+      { maxAgeSeconds, timeoutMs: 20_000, maxBuffer: 8 * 1024 * 1024 },
     ));
   } catch (e) {
     // gh: "the 'owner/name' repository has disabled issues"
@@ -148,6 +147,10 @@ const PULL_DETAIL_FIELDS =
   "headRefName,baseRefName,reviewDecision,additions,deletions,changedFiles,files,commits,statusCheckRollup";
 /** Text sent per body or comment, comments per item, and files per pull request. */
 const TEXT_MAX = 60_000;
+/** The commits `gh pr view --json commits` gives at most; a pull request of more is counted with the REST API. */
+export const COMMITS_LISTED = 100;
+/** What reading one item may take in all, within the item read's 25 seconds (gasho-plugin.json). */
+const ITEM_MS = 23_000;
 const COMMENTS_MAX = 200;
 const FILES_MAX = 300;
 
@@ -255,10 +258,13 @@ export function parseGhItemDetail(json: string, kind: GitHubListKind): GitHubIte
   return item;
 }
 
-/** One issue or pull request of `repo` with its text, comments and (pull requests) reviews, changes and checks. */
-export async function viewGitHub(ctx: Pick<DaemonContext, "exec">, repo: GitHubRepo, kind: GitHubListKind, number: number): Promise<GitHubItemDetail> {
-  const { stdout } = await ctx.exec(
-    GH,
+/**
+ * One issue or pull request of `repo` with its text, comments and (pull requests) reviews, changes and checks, from
+ * what gh said up to `maxAgeSeconds` ago.
+ */
+export async function viewGitHub(ctx: Gh, repo: GitHubRepo, kind: GitHubListKind, number: number, maxAgeSeconds: number): Promise<GitHubItemDetail> {
+  const began = Date.now();
+  const { stdout } = await ctx.github.read(
     [
       kind === "issues" ? "issue" : "pr",
       "view",
@@ -268,9 +274,19 @@ export async function viewGitHub(ctx: Pick<DaemonContext, "exec">, repo: GitHubR
       "--json",
       kind === "issues" ? ISSUE_DETAIL_FIELDS : PULL_DETAIL_FIELDS,
     ],
-    { timeoutMs: 20_000, maxBuffer: 32 * 1024 * 1024 },
+    { maxAgeSeconds, timeoutMs: 20_000, maxBuffer: 32 * 1024 * 1024 },
   );
   const item = parseGhItemDetail(stdout, kind);
   if (!item) throw new Error(`gh returned no ${kind === "issues" ? "issue" : "pull request"} #${number}`);
+  const left = ITEM_MS - (Date.now() - began);
+  if ((item.commits ?? 0) >= COMMITS_LISTED && left >= 1_000) {
+    try {
+      const pull = await ctx.github.read(["api", `repos/${repo.owner}/${repo.name}/pulls/${number}`], { maxAgeSeconds, timeoutMs: left });
+      const commits = num((JSON.parse(pull.stdout) as { commits?: unknown } | null)?.commits);
+      if (commits !== undefined) item.commits = commits;
+    } catch {
+      // The count is all it adds: the pull request is shown with the commits gh listed.
+    }
+  }
   return item;
 }

@@ -1,7 +1,7 @@
 // What the panels of the GitHub plugin share: the repository a panel is about (tabs in a folder of several), the
 // request with a reload that makes gh read again, the header's buttons, the notes for a missing scope or an offline
 // working server, and the marks and durations of Actions.
-import { Check, CircleCheck, CircleDashed, CircleMinus, CircleSlash, CircleX, Clock, Copy, ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, CircleDashed, CircleMinus, CircleSlash, CircleX, Clock, Copy, ExternalLink, LoaderCircle, RefreshCw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
   cn,
@@ -28,7 +28,9 @@ export function usePanelRepo(session: SessionInfo, params: Params) {
   const github: GitHubRepo | undefined = selected ? selected.github : session.github;
   // A session in a repository may also list none inside it (repos: []): what counts is the repository found.
   const noRepo = !github;
-  const branch = selected ? selected.branch : session.gitBranch;
+  // At a detached HEAD, gasho-daemon leaves the branch out, and Claude Code's transcript names it "HEAD".
+  const named = selected ? selected.branch : session.worktree ? session.worktree.branch : session.gitBranch;
+  const branch = named === "HEAD" ? undefined : named;
   return { repos, selected, noRepo, where, github, branch };
 }
 
@@ -160,6 +162,7 @@ export const RUN_STATE: Record<RunState, string> = {
   in_progress: "実行中",
   queued: "待ち",
   waiting: "承認待ち",
+  action_required: "承認が必要",
 };
 
 export function RunStateIcon({ state, className }: { state: RunState; className?: string }) {
@@ -179,6 +182,8 @@ export function RunStateIcon({ state, className }: { state: RunState; className?
       return <LoaderCircle aria-label={label} className={cn(c, "animate-spin text-amber-400")} />;
     case "waiting":
       return <Clock aria-label={label} className={cn(c, "text-amber-400")} />;
+    case "action_required":
+      return <CircleAlert aria-label={label} className={cn(c, "text-amber-400")} />;
     default:
       return <CircleDashed aria-label={label} className={cn(c, "text-amber-400")} />;
   }
@@ -186,10 +191,10 @@ export function RunStateIcon({ state, className }: { state: RunState; className?
 
 export const isRunning = (state: RunState): boolean => state === "in_progress" || state === "queued" || state === "waiting";
 
-/** "1分23秒", "45秒", "2時間5分": from `from` to `to` (or now while it runs). */
-export function duration(from: string | undefined, to: string | undefined, now: number): string | undefined {
+/** "1分23秒", "45秒", "2時間5分": from `from` to `to`, or to now while it runs. */
+export function duration(from: string | undefined, to: string | undefined, now: number, running: boolean): string | undefined {
   const a = Date.parse(from ?? "");
-  const b = to ? Date.parse(to) : now;
+  const b = to ? Date.parse(to) : running ? now : Number.NaN;
   if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return undefined;
   const s = Math.round((b - a) / 1000);
   if (s < 60) return `${s}秒`;
