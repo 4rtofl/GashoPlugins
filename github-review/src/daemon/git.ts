@@ -185,9 +185,10 @@ export async function repoOptions(exec: Exec, folders: readonly string[]): Promi
 
 /**
  * What `git worktree list` of a clone depends on, read without starting git (which takes seconds for a few dozen
- * clones on a busy working server): each worktree's HEAD (the branch it is on), and the files of the linked worktrees
- * (one added, removed or moved). Git writes each anew, so a change changes the file. Undefined when the clone's .git
- * is not a folder (a submodule, --separate-git-dir): git is asked every time.
+ * clones on a busy working server): each worktree's HEAD (the branch it is on), the files of the linked worktrees
+ * (one added, removed or moved), and whether the folder each gitdir points to is there (git lists one removed by hand
+ * as prunable, and writes nothing then). Git writes each file anew, so a change changes the file. Undefined when the
+ * clone's .git is not a folder (a submodule, --separate-git-dir): git is asked every time.
  */
 export async function worktreesStamp(primary: string): Promise<string | undefined> {
   const dir = path.join(primary, ".git");
@@ -195,7 +196,16 @@ export async function worktreesStamp(primary: string): Promise<string | undefine
   const stat = (p: string) => fs.stat(p).then((s) => `${s.ino}:${s.mtimeMs}:${s.size}`, () => "-");
   const linked = path.join(dir, "worktrees");
   const names = (await fs.readdir(linked).catch(() => [] as string[])).sort();
-  const parts = await Promise.all([stat(path.join(dir, "HEAD")), stat(linked), ...names.flatMap((n) => [stat(path.join(linked, n, "HEAD")), stat(path.join(linked, n, "gitdir"))])]);
+  // gitdir holds the worktree's .git file, relative to its own folder with worktree.useRelativePaths.
+  const there = async (n: string) => {
+    const to = await fs.readFile(path.join(linked, n, "gitdir"), "utf8").then((s) => s.trim(), () => "");
+    return to && (await succeeds(fs.lstat(path.resolve(linked, n, to)))) ? "+" : "-";
+  };
+  const parts = await Promise.all([
+    stat(path.join(dir, "HEAD")),
+    stat(linked),
+    ...names.flatMap((n) => [stat(path.join(linked, n, "HEAD")), stat(path.join(linked, n, "gitdir")), there(n)]),
+  ]);
   return [names.join("/"), ...parts].join("|");
 }
 

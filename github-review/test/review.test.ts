@@ -421,6 +421,36 @@ test("list: the worktrees of a clone are read with git again only when they chan
   assert.equal(reads, first + 1);
 });
 
+test("list, create and remove: a review worktree whose folder is removed by hand after a list is missing at the next one, made again, and removed", async () => {
+  const s = await setup();
+  // origin is the bare repository here, and o/r on GitHub to the plugin.
+  const onGitHub: Exec = (command, args, o) => (args.includes("get-url") ? Promise.resolve({ stdout: "https://github.com/o/r.git\n", stderr: "" }) : exec(command, args, o));
+  const pr = (number: number) => ({ number, title: `t${number}`, url: `https://github.com/o/r/pull/${number}`, state: "MERGED", headRefName: `feat/${number}-${number === 5 ? "a" : "b"}`, repository: { nameWithOwner: "o/r" } });
+  const github: GitHubRead = async (args) => {
+    const query = args[args.indexOf("-f") + 1] ?? "";
+    if (!query.includes("search(")) return { stdout: JSON.stringify({ data: { r0: { nameWithOwner: "o/r" } } }) };
+    return { stdout: JSON.stringify({ data: { req: { issueCount: 0, nodes: [] }, l0: { p5: pr(5), p6: pr(6) } } }) };
+  };
+  const reviewer = new Reviewer({ exec: onGitHub, folders: () => [s.primary], file: path.join(s.root, "watched.json"), log: () => {} });
+  const ref = (number: number) => ({ number, branch: number === 5 ? "feat/5-a" : "feat/6-b", fork: false });
+  const cloneOf = async (number: number) => {
+    const clone = await reviewer.cloneOf(github, "o/r", { pr: ref(number), wait: true });
+    assert.ok(clone);
+    return clone;
+  };
+  const worktrees = async () => Object.fromEntries((await reviewer.list(github, "", false)).repos.flatMap((r) => r.kept).map((p) => [p.number, p.place?.worktree]));
+  const dest = (number: number) => path.join(s.root, "r", `review-r-${number}`);
+  for (const n of [5, 6]) await createWorktree(onGitHub, await cloneOf(n), ref(n));
+  assert.deepEqual(await worktrees(), { 5: { path: dest(5), branch: "feat/5-a", review: true }, 6: { path: dest(6), branch: "feat/6-b", review: true } });
+
+  for (const n of [5, 6]) await fs.rm(dest(n), { recursive: true });
+  assert.deepEqual(await worktrees(), { 5: { path: dest(5), branch: "feat/5-a", review: true, missing: true }, 6: { path: dest(6), branch: "feat/6-b", review: true, missing: true } });
+  assert.deepEqual(await createWorktree(onGitHub, await cloneOf(5), ref(5)), { path: dest(5), created: true, branch: "feat/5-a" });
+  assert.deepEqual(await removeWorktree(onGitHub, await cloneOf(6), ref(6)), { path: dest(6), branch: "feat/6-b", files: [], fileCount: 0, removed: true });
+  assert.deepEqual(await worktrees(), { 5: { path: dest(5), branch: "feat/5-a", review: true } });
+  assert.doesNotMatch(await git(s.primary, "worktree", "list"), /review-r-6/);
+});
+
 test("list: with nothing to search for or read, GitHub is not asked, and the page is empty", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "github-review-"));
   roots.push(root);
