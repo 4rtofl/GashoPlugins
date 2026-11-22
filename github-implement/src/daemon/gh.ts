@@ -99,13 +99,6 @@ export const cmd = (kind: GitHubKind): "issue" | "pr" => (kind === "issues" ? "i
 
 // ---- a worktree's issues and pull requests: one GraphQL query (1 point of the hourly 5000) ----
 
-/** The issue or pull request a branch is named after: feat/17-… and fix/17-… are #17. */
-export function branchNumber(branch: string | undefined): number | undefined {
-  const m = /^[a-z]+\/(\d+)-/.exec(branch ?? "");
-  const n = m ? Number(m[1]) : NaN;
-  return Number.isInteger(n) && n >= 1 && n <= 1e9 ? n : undefined;
-}
-
 export const SUMMARY = "__typename ... on Issue { number title state stateReason url } ... on PullRequest { number title state isDraft url }";
 
 /**
@@ -323,7 +316,21 @@ export function fitDetail(item: GitHubItemDetail, max = DETAIL_MAX_BYTES): GitHu
   };
 }
 
+/** The kind an item's URL says it is: gh issue view answers a pull request's number with the pull request. */
+export function urlKind(url: string): GitHubKind | undefined {
+  const m = /\/(issues|pull)\/\d+$/.exec(url);
+  return m ? (m[1] === "pull" ? "pulls" : "issues") : undefined;
+}
+
 // ---- errors ----
+
+const errorText = (e: unknown): string => {
+  const err = (e ?? {}) as { stderr?: unknown; message?: unknown };
+  return [err.stderr, err.message].filter((t): t is string => typeof t === "string").join("\n");
+};
+
+/** gh pr view failed because the number is an issue's (or nothing's). */
+export const notAPull = (e: unknown): boolean => /Could not resolve to a PullRequest/i.test(errorText(e));
 
 /** Why a gh call failed, for the person looking at the screen. */
 export function ghError(e: unknown): string {
@@ -333,7 +340,7 @@ export function ghError(e: unknown): string {
     return "この working server に GitHub CLI（gh）がありません。gh を入れて、gh auth login でログインしてください。";
   }
   if (err.killed === true) return "GitHub からの応答が遅く、読み込めませんでした。";
-  const text = [err.stderr, err.message].filter((t): t is string => typeof t === "string").join("\n");
+  const text = errorText(e);
   if (/gh auth login|not logged in|authentication/i.test(text)) {
     return "この working server の GitHub CLI（gh）がログインしていません。working server で gh auth login を実行してください。";
   }
