@@ -178,7 +178,7 @@ export interface Packages {
   missing?: MissingScope;
   /** Kinds that could not be read, and why. */
   errors?: string[];
-  /** Packages past those whose newest version is read: they have no publishedAt and come last. */
+  /** Packages without publishedAt (past those whose newest version is read, or whose version could not be read): they come last. */
   undated?: number;
 }
 

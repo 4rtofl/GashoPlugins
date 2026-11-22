@@ -193,7 +193,7 @@ export async function listPackages(ctx: Gh, repo: string, o: { maxAgeSeconds: nu
     }),
   );
   packages.sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
-  const undated = Math.max(0, found.length - PUBLISHED_MAX);
+  const undated = packages.filter((p) => !p.publishedAt).length;
   return { packages, ...(missing ? { missing } : {}), ...(errors.length ? { errors } : {}), ...(undated ? { undated } : {}) };
 }
 

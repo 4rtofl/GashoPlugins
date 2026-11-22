@@ -134,7 +134,7 @@ test("an owner's packages are read page by page until a page is not full", async
   assert.equal(pages.length, PACKAGE_PAGES);
 });
 
-test("past the packages whose newest version is read, the rest have no time, come last, and are counted", async () => {
+test("past the packages whose newest version is read, the rest have no time, come last, and are counted with those whose version could not be read", async () => {
   const many = Array.from({ length: PUBLISHED_MAX + 2 }, (_, i) => ({ ...(json("packages-org-npm.json") as Record<string, unknown>[])[0], name: `p-${i}`, repository: { full_name: "4rtofl/Gasho" } }));
   const read: string[] = [];
   const ctx = {
@@ -144,6 +144,7 @@ test("past the packages whose newest version is read, the rest have no time, com
         if (path === "graphql") return { stdout: ownerAnswer("Organization", "4rtofl", "4rtofl/Gasho", "someone"), stderr: "" };
         if (path.endsWith("/versions?per_page=1")) {
           read.push(path);
+          if (path.includes("/p-1/")) throw new Error("gh: HTTP 502");
           return { stdout: fixture("versions-npm.json"), stderr: "" };
         }
         return { stdout: path.includes("package_type=npm") ? JSON.stringify(many) : "[]", stderr: "" };
@@ -152,8 +153,8 @@ test("past the packages whose newest version is read, the rest have no time, com
   };
   const list = await listPackages(ctx as never, "4rtofl/Gasho", { maxAgeSeconds: 60 });
   assert.equal(read.length, PUBLISHED_MAX);
-  assert.equal(list.undated, 2);
-  assert.deepEqual(list.packages.slice(-2).map((p) => [p.name, p.publishedAt]), [["p-30", undefined], ["p-31", undefined]]);
+  assert.equal(list.undated, 3);
+  assert.deepEqual(list.packages.slice(-3).map((p) => [p.name, p.publishedAt]), [["p-1", undefined], ["p-30", undefined], ["p-31", undefined]]);
 });
 
 test("without read:packages, the answer says how to add it; a package of another repository is not read", async () => {

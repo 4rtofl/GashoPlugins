@@ -73,7 +73,7 @@ export function PackagesPanel({ machine, session, params }: PanelProps) {
           ))}
         {data?.undated ? (
           <p className="text-xs text-muted-foreground">
-            更新の時刻を読んだのは {data.packages.length - data.undated} 件です。ほかの {data.undated} 件は時刻を出さず、後ろに並べています。
+            更新の時刻を読めたのは {data.packages.length - data.undated} 件です。ほかの {data.undated} 件は時刻を出さず、後ろに並べています。
           </p>
         ) : null}
         {data?.errors && <p className="text-xs text-muted-foreground">{data.errors.map((t) => TYPE[t as PackageType] ?? t).join("、")} のパッケージは読めませんでした。</p>}
