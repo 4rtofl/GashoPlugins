@@ -141,6 +141,38 @@ test("SIGINT stops a command, sent from here or not, and SIGKILL one that ignore
   }
 });
 
+test("SIGKILL stops a command whose shell ended first while what it left in the background kept its output open", async () => {
+  const { folder, dataDir, shells } = setup();
+  /** Waits until the shell (the group's leader) has ended, leaving `sleep` in its group. */
+  const shellGone = async (id: string) => {
+    await shells.idle();
+    const pid = (await new Store(dataDir).readJob(folderKey(folder), id))!.pgid!;
+    for (const until = Date.now() + 5000; Date.now() < until; await sleep(50)) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return;
+      }
+    }
+    throw new Error(`the shell of ${id} did not end`);
+  };
+  try {
+    // The shell ends with 0, 3, and, after SIGINT (which a command in the background ignores), 130.
+    for (const [command, int] of [["sleep 30 & echo ready", false], ["sleep 30 & echo ready; exit 3", false], ["sleep 30 & echo ready; wait", true]] as const) {
+      const job = await shells.run(folder, { command }, SH);
+      await said(shells, folder, job.id, "ready");
+      if (int) await shells.signal(folder, job.id, "INT");
+      await shellGone(job.id);
+      assert.equal((await shells.status(folder)).running, 1, command);
+      await shells.signal(folder, job.id, "KILL");
+      const { job: ended } = await settle(shells, folder, job.id);
+      assert.deepEqual([ended.state, ended.signal, ended.exitCode], ["stopped", "SIGKILL", undefined], command);
+    }
+  } finally {
+    await shells.stop();
+  }
+});
+
 test("output beyond the limit is dropped from its start, at a line's start", async () => {
   const { folder, shells } = setup();
   try {

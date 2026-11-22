@@ -105,8 +105,11 @@ function killGroup(pgid: number | undefined, signal: NodeJS.Signals): boolean {
  * The signal that ended a command, from its shell's status (128 + the signal's number, shell.ts): the one sent from
  * here, or, when none was (another process of the plugin sent it, or someone with kill), one the trap catches. A command
  * that ends with such a status by itself (`exit 130`) counts as stopped too: the status alone cannot tell.
+ * After SIGKILL, which nothing catches, it counts as stopped whatever the status: the shell may have ended before with
+ * a status of its own (`sleep 60 &`, `sleep 60 & exit 3`) while what it left in the background kept its output open.
  */
 function stoppedBy(sent: NodeJS.Signals | undefined, code: number | null | undefined): NodeJS.Signals | undefined {
+  if (sent === "SIGKILL") return sent;
   return (sent ? [sent] : CAUGHT).find((s) => code === 128 + (os.constants.signals[s] ?? 0));
 }
 
