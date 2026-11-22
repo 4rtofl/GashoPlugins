@@ -185,14 +185,17 @@ test("without read:packages, the answer says how to add it; a package of another
   assert.match(read?.install ?? "", /^npm install @4rtofl\/gasho-hub@1\.10\.0 /);
 });
 
-test("a package of exactly 100 versions has no more; one of more says so", async () => {
+test("a package of exactly 100 versions has no more; one of more, or whose next page cannot be read, says so", async () => {
   const full = Array.from({ length: VERSIONS_MAX }, (_, i) => ({ id: i + 1, name: `1.0.${i}`, created_at: `2026-11-01T00:00:${String(i % 60).padStart(2, "0")}Z` }));
-  const ctx = (after: unknown[]) => ({
+  const ctx = (after: unknown[] | Error) => ({
     github: {
       read: async (args: string[]) => {
         const path = args[1] ?? "";
         if (path === "graphql") return { stdout: ownerAnswer("Organization", "4rtofl", "4rtofl/Gasho", "someone"), stderr: "" };
-        if (path.endsWith(`/versions?per_page=1&page=${VERSIONS_MAX + 1}`)) return { stdout: JSON.stringify(after), stderr: "" };
+        if (path.endsWith(`/versions?per_page=1&page=${VERSIONS_MAX + 1}`)) {
+          if (after instanceof Error) throw after;
+          return { stdout: JSON.stringify(after), stderr: "" };
+        }
         if (path.endsWith("/versions?per_page=100")) return { stdout: JSON.stringify(full), stderr: "" };
         return { stdout: JSON.stringify((json("packages-org-npm.json") as { name: string }[]).find((p) => p.name === "gasho-hub")), stderr: "" };
       },
@@ -200,6 +203,9 @@ test("a package of exactly 100 versions has no more; one of more says so", async
   });
   assert.equal((await readPackage(ctx([]) as never, "4rtofl/Gasho", "npm", "gasho-hub", { maxAgeSeconds: 60 }))?.truncated, false);
   assert.equal((await readPackage(ctx([{ id: 999, name: "0.0.1" }]) as never, "4rtofl/Gasho", "npm", "gasho-hub", { maxAgeSeconds: 60 }))?.truncated, true);
+  const failed = await readPackage(ctx(new Error("gh: HTTP 502")) as never, "4rtofl/Gasho", "npm", "gasho-hub", { maxAgeSeconds: 60 });
+  assert.equal(failed?.versions.length, VERSIONS_MAX);
+  assert.equal(failed?.truncated, true);
 });
 
 test("a package's name is checked before it reaches gh", () => {

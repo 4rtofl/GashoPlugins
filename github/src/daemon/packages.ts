@@ -10,6 +10,8 @@ import { arr, githubUrl, missingScope, num, parseJson, rec, str, type Gh } from 
 
 export const PACKAGE_TYPES: readonly PackageType[] = ["npm", "container", "maven", "rubygems", "nuget", "docker"];
 export const VERSIONS_MAX = 100;
+/** What reading one package may take in all, within the package read's 30 seconds (gasho-plugin.json). */
+const PACKAGE_MS = 28_000;
 /** Packages of the list whose newest version is read (one gh each). */
 export const PUBLISHED_MAX = 30;
 /** Tags that sign or attest an image rather than name it: "sha256-<its digest>", maybe with ".sig", ".att", …. */
@@ -197,6 +199,7 @@ export async function listPackages(ctx: Gh, repo: string, o: { maxAgeSeconds: nu
 
 /** Package `type`/`name` of `repo`'s owner with its versions; undefined when it is not there or not the repository's. */
 export async function readPackage(ctx: Gh, repo: string, type: PackageType, name: string, o: { maxAgeSeconds: number }): Promise<Omit<PackageDetail, "repo"> | undefined> {
+  const began = Date.now();
   const owner = await ownerOf(ctx, repo, o);
   const path = `${packagesBase(owner.login, owner.kind)}/${type}/${encodeURIComponent(name)}`;
   const read = { repo, maxAgeSeconds: o.maxAgeSeconds, timeoutMs: 25_000 };
@@ -207,8 +210,20 @@ export async function readPackage(ctx: Gh, repo: string, type: PackageType, name
   const pkg = parsePackage(parseJson(info.stdout), owner.repo);
   if (!pkg) return undefined;
   const list = parseVersions(versions.stdout);
-  // A full page may be all there is: there are more only when a version comes after it.
-  const more = list.length >= VERSIONS_MAX ? arr(parseJson((await ctx.github.read(["api", `${path}/versions?per_page=1&page=${VERSIONS_MAX + 1}`], read)).stdout)) : [];
+  const truncated = list.length >= VERSIONS_MAX && (await moreVersions(ctx, path, { ...read, timeoutMs: PACKAGE_MS - (Date.now() - began) }));
   const install = installCommand(pkg, owner.login, owner.repo.split("/")[1] ?? "", list);
-  return { package: pkg, versions: list, truncated: more.length > 0, ...(install ? { install } : {}) };
+  return { package: pkg, versions: list, truncated, ...(install ? { install } : {}) };
+}
+
+/**
+ * Whether the package at `path` has versions after its first full page, which may be all there is. When that cannot
+ * be read in time, it may have: the versions read are shown all the same.
+ */
+async function moreVersions(ctx: Gh, path: string, read: { repo: string; maxAgeSeconds: number; timeoutMs: number }): Promise<boolean> {
+  if (read.timeoutMs < 1_000) return true;
+  try {
+    return arr(parseJson((await ctx.github.read(["api", `${path}/versions?per_page=1&page=${VERSIONS_MAX + 1}`], read)).stdout)).length > 0;
+  } catch {
+    return true;
+  }
 }
