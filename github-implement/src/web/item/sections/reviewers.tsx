@@ -10,7 +10,7 @@ import type { RepoMeta } from "../../../types.ts";
 import { readOp } from "../../daemon.ts";
 import { Badge, type BadgeTone } from "../../ui/badge.tsx";
 import { Button } from "../../ui/button.tsx";
-import { INPUT, leftAfter } from "../../ui/input.ts";
+import { INPUT, isComposing, leftAfter } from "../../ui/input.ts";
 import { useDraft, useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 import { assignableSearch, Picker, type Choice } from "../picker.tsx";
@@ -137,7 +137,7 @@ function ReviewForm({ own, review, onChange }: { own: boolean; review: Review; o
         value={body}
         onChange={(e) => onChange({ ...review, body: e.target.value })}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && ready) {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isComposing(e) && ready) {
             e.preventDefault();
             void send();
           }

@@ -1,6 +1,6 @@
 // The box for a new comment, right under the body.
 import { Button } from "../../ui/button.tsx";
-import { INPUT, leftAfter } from "../../ui/input.ts";
+import { INPUT, isComposing, leftAfter } from "../../ui/input.ts";
 import { useDraft, useItem } from "../context.tsx";
 import type { ConversationPart } from "../parts.ts";
 
@@ -19,7 +19,7 @@ function NewComment() {
         value={text}
         onChange={(e) => setDraft(e.target.value || undefined)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && busy === undefined) {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isComposing(e) && text.trim() && busy === undefined) {
             e.preventDefault();
             void send();
           }

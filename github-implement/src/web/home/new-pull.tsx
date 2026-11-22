@@ -201,7 +201,7 @@ export function NewPullBox({
             readOnly={busy}
             onChange={(e) => setForm({ ...form, body: e.target.value })}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && form.title.trim() && !busy && !nothing) {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isComposing(e) && form.title.trim() && !busy && !nothing) {
                 e.preventDefault();
                 void create();
               }

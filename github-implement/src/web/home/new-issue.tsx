@@ -121,7 +121,7 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
         value={form.body}
         onChange={(e) => setForm({ ...form, body: e.target.value })}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && form.title.trim() && !busy) {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isComposing(e) && form.title.trim() && !busy) {
             e.preventDefault();
             void create();
           }

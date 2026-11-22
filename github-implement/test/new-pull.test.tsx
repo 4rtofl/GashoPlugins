@@ -1,4 +1,4 @@
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { answerCalls, callsOf, lastRequest, respond, sdk, session } from "../../test/sdk.tsx";
@@ -138,6 +138,17 @@ describe("NewPullBox", () => {
     await userEvent.click(screen.getByRole("button", { name: "Pull request を作る" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Pull request の本文" }), "本文{Meta>}{Enter}{/Meta}");
     expect(callsOf("write")).toEqual([expect.objectContaining({ op: "create-pull", body: "本文", draft: true })]);
+  });
+
+  it("makes none on ⌘Enter in the body while Japanese text is being composed", async () => {
+    newPull({ "": pushed() });
+    show({ title: "題" });
+    await userEvent.click(screen.getByRole("button", { name: "Pull request を作る" }));
+    const body = screen.getByRole("textbox", { name: "Pull request の本文" });
+    // Chrome sends the keys of a composition with isComposing, Safari the Enter that ends one with keyCode 229.
+    fireEvent.keyDown(body, { key: "Enter", metaKey: true, isComposing: true });
+    fireEvent.keyDown(body, { key: "Enter", ctrlKey: true, keyCode: 229 });
+    expect(callsOf("write")).toEqual([]);
   });
 
   it("keeps the form while another base is read, and compares with the base chosen", async () => {
