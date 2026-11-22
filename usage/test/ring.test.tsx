@@ -75,6 +75,14 @@ describe("UsageRing", () => {
     expect(sdk.reload.mock.calls).toEqual([["limits"], ["limits"]]);
   });
 
+  it("reads the limits again on a press of 読み直す after a read failed", async () => {
+    respond({ limits: { loading: false, error: "Claude Code の get_usage を読めませんでした。" } });
+    render(<UsageRing machine={machine()} session={s} />);
+    await openPopover();
+    await userEvent.click(screen.getByRole("button", { name: "読み直す" }));
+    expect(sdk.reload.mock.calls).toEqual([["limits"], ["limits"]]);
+  });
+
   it("does not read the limits again while they are read, nor once they were", async () => {
     render(<UsageRing machine={machine()} session={s} />);
     await openPopover();

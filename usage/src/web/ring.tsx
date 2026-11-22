@@ -164,10 +164,21 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
           </>
         )}
         {problem && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            {problem}
-            {view && view.source !== "none" && !hasUsage ? " モデルごとの週の上限は出せません。" : ""}
-          </p>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              {problem}
+              {view && view.source !== "none" && !hasUsage ? " モデルごとの週の上限は出せません。" : ""}
+            </p>
+            {read.error && (
+              <button
+                type="button"
+                onClick={() => read.reload()}
+                className="h-6 shrink-0 cursor-pointer rounded-md border border-border bg-surface px-2 text-xs font-medium text-foreground outline-none hover:border-border-hover hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
+                読み直す
+              </button>
+            )}
+          </div>
         )}
         {!machine.connected && <p className="text-xs text-muted-foreground">working server がオフラインです。最後に受け取った値を出しています。</p>}
       </section>
