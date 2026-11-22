@@ -109,8 +109,24 @@ test("worktree: a pull request from a fork is checked out at its head, detached,
   assert.deepEqual(await projectFiles(await s.clone(), 7), { path: dest, files: [".claude/", ".mcp.json"] });
   await assert.rejects(projectFiles(await s.clone(), 8), (e: unknown) => e instanceof ReviewError && /review-r-8/.test(e.message));
 
-  await fs.mkdir(path.join(s.root, "r", "review-r-9"));
-  await assert.rejects(createWorktree(exec, await s.clone(), { number: 9, branch: "feat/6-b", fork: false }), (e: unknown) => e instanceof ReviewError && /がもうあります/.test(e.message));
+  for (const name of ["review-r-9", "review-o-r-9"]) await fs.mkdir(path.join(s.root, "r", name));
+  await assert.rejects(createWorktree(exec, await s.clone(), { number: 9, branch: "feat/6-b", fork: false }), (e: unknown) => e instanceof ReviewError && /review-r-9 と .*review-o-r-9 がもうあります/.test(e.message));
+});
+
+test("worktree: a clone of another owner's repository of the same name beside this one gets review-<owner>-<repository>-<number> for the same number, found and removed as its own", async () => {
+  const s = await setup();
+  const other = path.join(s.root, "r", "other");
+  await run("git", ["clone", path.join(s.root, "origin.git"), other]);
+  const clone = () => readClone(exec, { path: other, github: "x/r" });
+  const pr = { number: 5, branch: "feat/5-a", fork: false };
+  assert.equal((await createWorktree(exec, await s.clone(), pr)).path, path.join(s.root, "r", "review-r-5"));
+  const dest = path.join(s.root, "r", "review-x-r-5");
+  assert.deepEqual(await createWorktree(exec, await clone(), pr), { path: dest, created: true, branch: "feat/5-a" });
+  assert.deepEqual(await createWorktree(exec, await clone(), pr), { path: dest, created: false, branch: "feat/5-a" });
+  assert.deepEqual([reviewNumbers(await clone()), reviewNumbers(await s.clone())], [[5], [5]]);
+  assert.deepEqual(await projectFiles(await clone(), 5), { path: dest, files: [] });
+  assert.deepEqual(await removeWorktree(exec, await clone(), pr), { path: dest, branch: "feat/5-a", files: [], fileCount: 0, removed: true });
+  assert.equal(prWorktree(await s.clone(), pr)?.path, path.join(s.root, "r", "review-r-5"));
 });
 
 test("worktree: a local branch of the pull request's name is moved up to origin's; one with commits origin lacks stays, and the worktree is detached", async () => {

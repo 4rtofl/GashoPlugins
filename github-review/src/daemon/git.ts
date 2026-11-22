@@ -1,6 +1,7 @@
 // git for github-review, run with ctx.exec (no shell, no terminal, no prompts), and only in the clones found in the
 // folders Gasho can start sessions in: a path from a browser never reaches git. A review worktree is
-// review-<repository>-<number> beside the primary checkout (review-<number> before, still taken as one). A pull
+// review-<repository>-<number> beside the primary checkout (review-<owner>-<repository>-<number> when that name is
+// taken; review-<number> before, still taken as one). A pull
 // request of the same repository gets a local branch of its name that tracks origin's, so the reviewer can push to
 // it; one from a fork is checked out at its head, detached, to read and test.
 import { createHash } from "node:crypto";
@@ -72,11 +73,25 @@ export const reviewName = (github: string, number: number): string => {
 /** The review worktree a pull request gets now: review-<repository>-<number> in the folder that holds the primary checkout. */
 export const reviewPath = (clone: Pick<Clone, "path" | "github">, number: number): string => path.join(path.dirname(clone.path), reviewName(clone.github, number));
 
+/**
+ * The review worktree a pull request gets when review-<repository>-<number> is taken, as by a clone of another owner's
+ * repository of the same name beside this one: review-<owner>-<repository>-<number>, the owner kept to what GitHub
+ * allows in one (letters, digits, "-").
+ */
+export const ownedReviewPath = (clone: Pick<Clone, "path" | "github">, number: number): string | undefined => {
+  const owner = (clone.github.split("/")[0] ?? "").replace(/[^A-Za-z0-9-]/g, "");
+  const repo = repoName(clone.github);
+  return owner && repo ? path.join(path.dirname(clone.path), `review-${owner}-${repo}-${number}`) : undefined;
+};
+
 /** The review worktree of a pull request made before the name held the repository's: review-<number>. */
 export const legacyReviewPath = (primary: string, number: number): string => path.join(path.dirname(primary), `review-${number}`);
 
-/** Where a pull request's review worktree may be: the name it gets now first, then the one from before. */
-export const reviewPaths = (clone: Pick<Clone, "path" | "github">, number: number): string[] => [reviewPath(clone, number), legacyReviewPath(clone.path, number)];
+/** Where a pull request's review worktree may be: the name it gets now first, then the one with the owner, then the one from before. */
+export const reviewPaths = (clone: Pick<Clone, "path" | "github">, number: number): string[] => {
+  const owned = ownedReviewPath(clone, number);
+  return [reviewPath(clone, number), ...(owned ? [owned] : []), legacyReviewPath(clone.path, number)];
+};
 
 /** The pull requests that have a review worktree in a clone, under either name. */
 export function reviewNumbers(clone: Clone): number[] {
@@ -258,9 +273,12 @@ export async function createWorktree(exec: Exec, clone: Clone, pr: PrHead, o: { 
       throw e instanceof ReviewError ? new ReviewError(`${found.path} のフォルダーは消えていますが、git に残っているものを片付けられないので、作り直しません。${e.message}`) : e;
     }
   };
-  const dest = reviewPath(clone, pr.number);
-  if (await succeeds(fs.lstat(dest))) {
-    throw new ReviewError(`${dest} がもうあります。この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
+  // Not a worktree of this clone's (else it was found above): the owner goes in the name, rather than using it.
+  const names = [reviewPath(clone, pr.number), ownedReviewPath(clone, pr.number)].filter((p): p is string => p !== undefined);
+  const taken = await Promise.all(names.map((p) => succeeds(fs.lstat(p))));
+  const dest = names.find((_, i) => !taken[i]);
+  if (!dest) {
+    throw new ReviewError(`${names.join(" と ")} がもうあります。この repo の worktree ではないので、使いません。名前を変えるか消してから、もう一度作ってください。`);
   }
   const w = { write: true, timeoutMs: 60_000 };
   const made = async (note: string, branch?: string): Promise<Created> => {
