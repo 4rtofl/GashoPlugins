@@ -49,9 +49,10 @@ export function NewPullBox({
   const toast = useToast();
   const [form, setForm] = usePluginState<Form | undefined>(kept, undefined);
   const bodyBox = useRef<HTMLTextAreaElement>(null);
-  // Kept like the form: made anew while the pull request is being made, the form still shows it so and stays read-only.
+  // Kept like the form: made anew while the pull request is being made, the form still shows it so and stays read-only,
+  // and then why GitHub refused it.
   const [busy, setBusy] = usePluginState(`${kept}:busy`, false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = usePluginState<string | undefined>(`${kept}:error`, undefined);
   // What was read before stays while another base is read, so that the form does not go away meanwhile.
   const last = useRef<NewPull>(undefined);
   if (r.data) last.current = r.data;

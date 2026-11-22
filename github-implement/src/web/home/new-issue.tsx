@@ -2,7 +2,7 @@
 // item's screen), and whether to add it to the worktree, which makes it a tab beside the sessions. What is typed stays
 // while the page is open (another tab of the worktree chosen in between), until the issue is made or the form closed.
 import { CirclePlus } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { usePluginState, useRequest, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { RepoMeta } from "../../types.ts";
 import { readOp, useWriteOp } from "../daemon.ts";
@@ -32,9 +32,10 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
   const meta = useRequest<RepoMeta>(form ? readOp(machine, "meta", { repo }) : undefined, { staleSeconds: 300 });
   const write = useWriteOp();
   const toast = useToast();
-  // Kept like the form: made anew while the issue is being made, the form still shows it so and makes no second one.
+  // Kept like the form: made anew while the issue is being made, the form still shows it so and makes no second one, and
+  // then why GitHub refused it.
   const [busy, setBusy] = usePluginState(`${kept}:busy`, false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = usePluginState<string | undefined>(`${kept}:error`, undefined);
 
   if (!form) {
     return (

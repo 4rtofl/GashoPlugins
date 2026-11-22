@@ -123,6 +123,20 @@ describe("NewPullBox", () => {
     expect(screen.queryByRole("textbox", { name: "Pull request の題" })).toBeNull();
   });
 
+  it("says why GitHub refused it when the box was drawn anew while it was being made", async () => {
+    let made: (r: CallResult<unknown>) => void = () => {};
+    answerCalls({ write: new Promise<CallResult<unknown>>((r) => (made = r)) });
+    newPull({ "": pushed() });
+    const first = show({ title: "題" });
+    await userEvent.click(screen.getByRole("button", { name: "Pull request を作る" }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft の Pull request を作る" }));
+    first.unmount();
+
+    show({ title: "題" });
+    await act(async () => made({ ok: false, error: "A pull request already exists" }));
+    expect(screen.getByRole("alert").textContent).toContain("A pull request already exists");
+  });
+
   it("makes none on Enter in the checkbox, which submits a form otherwise", async () => {
     newPull({ "": pushed() });
     show({ title: "題" });
