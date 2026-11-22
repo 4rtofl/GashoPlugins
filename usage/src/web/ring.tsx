@@ -121,6 +121,16 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
   const problem = machine.connected && !daemon.ready && daemon.reason ? `使用量の上限を読めません（${daemon.reason.replace(/。$/, "")}）。` : read.error;
   const hasUsage = view !== undefined && view.source !== "none" && (view.source === "usage" || view.rows.some((r) => r.at !== undefined));
   const modelsNote = hasUsage || problem ? undefined : data && !data.available ? "この working server の Claude Code のログインでは、モデルごとの週の上限を読めません。" : read.loading ? "モデルごとの週の上限を読んでいます…" : undefined;
+  const note =
+    view === undefined
+      ? problem
+        ? undefined
+        : read.loading
+          ? "使用量の上限を読んでいます…"
+          : "使用量の上限は、Claude.ai のプランで使っているとき、最初の返答のあとに出ます。"
+      : view.source === "none"
+        ? "この working server の Claude Code は Claude.ai のプランで使っていないので、使用量の上限はありません。"
+        : modelsNote;
   const context = session.context;
   return (
     <div className="flex flex-col gap-3">
@@ -135,15 +145,7 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
         </section>
       )}
       <section className="flex flex-col gap-2 border-t border-border pt-3">
-        {view === undefined ? (
-          !problem && (
-            <p className="text-xs text-muted-foreground">
-              {read.loading ? "使用量の上限を読んでいます…" : "使用量の上限は、Claude.ai のプランで使っているとき、最初の返答のあとに出ます。"}
-            </p>
-          )
-        ) : view.source === "none" ? (
-          <p className="text-xs text-muted-foreground">この working server の Claude Code は Claude.ai のプランで使っていないので、使用量の上限はありません。</p>
-        ) : (
+        {view && view.source !== "none" && (
           <>
             {view.rows.map((row) => {
               const percent = shownPercent(row.window, now);
@@ -160,26 +162,30 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
             <p className="text-xs text-muted-foreground">
               {view.source === "usage" ? `Claude.ai から読んだ値（${relativeTime(view.at, now)}）` : `最後の返答の時点（${relativeTime(view.at, now)}）`}
             </p>
-            {modelsNote && <p className="text-xs text-muted-foreground">{modelsNote}</p>}
           </>
         )}
-        {problem && (
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              {problem}
-              {view && view.source !== "none" && !hasUsage ? " モデルごとの週の上限は出せません。" : ""}
-            </p>
-            {read.error && (
-              <button
-                type="button"
-                onClick={() => read.reload()}
-                className="h-6 shrink-0 cursor-pointer rounded-md border border-border bg-surface px-2 text-xs font-medium text-foreground outline-none hover:border-border-hover hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/50"
-              >
-                読み直す
-              </button>
-            )}
-          </div>
-        )}
+        {/* What came of a read, which takes up to a minute, is read out by a screen reader. The region stays while empty,
+            as only what comes into one already there is read out; -mt-2 then takes back the gap before it. */}
+        <div aria-live="polite" className="flex flex-col gap-2 empty:-mt-2">
+          {note && <p className="text-xs text-muted-foreground">{note}</p>}
+          {problem && (
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                {problem}
+                {view && view.source !== "none" && !hasUsage ? " モデルごとの週の上限は出せません。" : ""}
+              </p>
+              {read.error && (
+                <button
+                  type="button"
+                  onClick={() => read.reload()}
+                  className="h-6 shrink-0 cursor-pointer rounded-md border border-border bg-surface px-2 text-xs font-medium text-foreground outline-none hover:border-border-hover hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring/50"
+                >
+                  読み直す
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         {!machine.connected && <p className="text-xs text-muted-foreground">working server がオフラインです。最後に受け取った値を出しています。</p>}
       </section>
     </div>

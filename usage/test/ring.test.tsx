@@ -83,6 +83,15 @@ describe("UsageRing", () => {
     expect(sdk.reload.mock.calls).toEqual([["limits"], ["limits"]]);
   });
 
+  it("says what came of a read in a live region that is there from the popover's opening", async () => {
+    render(<UsageRing machine={machine()} session={s} />);
+    await openPopover();
+    const live = screen.getByText("使用量の上限を読んでいます…").closest("[aria-live]");
+    expect(live?.getAttribute("aria-live")).toBe("polite");
+    act(() => respond({ limits: { loading: false, error: "Claude Code の get_usage を読めませんでした。" } }));
+    expect(screen.getByText("Claude Code の get_usage を読めませんでした。").closest("[aria-live]")).toBe(live);
+  });
+
   it("does not read the limits again while they are read, nor once they were", async () => {
     render(<UsageRing machine={machine()} session={s} />);
     await openPopover();
