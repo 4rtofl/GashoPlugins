@@ -6,9 +6,9 @@ import { test } from "node:test";
 import comments from "../src/daemon/detail/comments.ts";
 import commits from "../src/daemon/detail/commits.ts";
 import type { DaemonContext, GitHubReadOptions } from "@gasho/plugin-sdk/daemon";
-import { askFresh, begin, end, itemRead, readAgain, readItems, type Ctx } from "../src/daemon/core.ts";
+import { addDetailParts, askFresh, begin, end, itemRead, readAgain, readDetail, readItems, type Ctx } from "../src/daemon/core.ts";
 import itemsOp from "../src/daemon/ops/items.ts";
-import { branchArg, branchNumber, detailArgs, fitDetail, ghError, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
+import { branchArg, detailArgs, fitDetail, ghError, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
 import { worktreeHeads } from "../src/daemon/head.ts";
 import { parseLocked } from "../src/daemon/ops/locked.ts";
 import type { GitHubItemDetail, WorktreeItems } from "../src/types.ts";
@@ -16,7 +16,7 @@ import { commentArgs } from "../src/daemon/ops/comment.ts";
 import edit, { editArgs } from "../src/daemon/ops/edit.ts";
 import { bodyEditParams } from "../src/edit-was.ts";
 import { stateArgs } from "../src/daemon/ops/state.ts";
-import { numberFrom } from "../src/web/number.ts";
+import { branchNumber, numberFrom, typedItem } from "../src/number.ts";
 
 test("a branch is named after the issue in its number", () => {
   assert.equal(branchNumber("feat/17-resume-outside"), 17);
@@ -136,8 +136,13 @@ test("what the browser sends never becomes a flag of gh", () => {
 test("a number is taken from 17, #17, or a URL of the same repository only", () => {
   assert.equal(numberFrom(" #17 ", "4rtofl/Gasho"), 17);
   assert.equal(numberFrom("https://github.com/4rtofl/Gasho/pull/36/files", "4rtofl/Gasho"), 36);
+  assert.deepEqual(typedItem("http://github.com/4rtofl/Gasho/issues/3", "4rtofl/Gasho"), { number: 3 });
   assert.equal(numberFrom("https://github.com/4rtofl/GashoPlugins/issues/4", "4rtofl/Gasho"), undefined);
   assert.equal(numberFrom("abc", "4rtofl/Gasho"), undefined);
+  // Neither is searched: GitHub reads "-1" as "without 1", and another repository's number is not this one's.
+  assert.ok(typedItem("-1", "4rtofl/Gasho") && "wrong" in typedItem("-1", "4rtofl/Gasho")!);
+  assert.match((typedItem("https://github.com/4rtofl/GashoPlugins/issues/4", "4rtofl/Gasho") as { wrong: string }).wrong, /4rtofl\/GashoPlugins の URL/);
+  assert.equal(typedItem("ログイン 画面", "4rtofl/Gasho"), undefined);
 });
 
 test("a body comes whole, as the edit box starts from it and saves it back", () => {
@@ -170,7 +175,8 @@ test("an edit that started from another title or body than GitHub's now is refus
   await assert.rejects(edit.run({ repo: "o/r", kind: "issues", number: 3, title: "u", was: { title: "😀".repeat(200) } }, ctx), /題が変わりました/);
   // Assignees and labels start from nothing typed: they are written without a read.
   await edit.run({ repo: "o/r", kind: "issues", number: 3, addLabels: ["bug"] }, ctx);
-  assert.equal(calls.length, 4);
+  // Each title edit reads #3 twice: its URL says it is a pull request, which readDetail reads again as one.
+  assert.equal(calls.length, 6);
   assert.deepEqual(
     writes.map((w) => w.map((a) => (a.startsWith("--body-file=") ? "--body-file=…" : a))),
     [
@@ -266,6 +272,27 @@ test("the reads of an item use what gasho-daemon kept since its version was read
   await maxAgeOfRead();
   tick(10);
   assert.equal(await maxAgeOfRead(), 10);
+});
+
+test("an item asked for as the wrong kind is read as the kind it is", async () => {
+  const asked: string[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        const [cmd, , n] = args;
+        asked.push(`${cmd} ${n}`);
+        // gh issue view gives a pull request for its number; gh pr view fails on an issue's.
+        if (cmd === "pr" && n === "5") throw Object.assign(new Error("Command failed"), { stderr: "GraphQL: Could not resolve to a PullRequest with the number of 5. (repository.pullRequest)" });
+        const url = n === "5" ? "https://github.com/o/k/issues/5" : "https://github.com/o/k/pull/6";
+        return { stdout: JSON.stringify({ number: Number(n), title: "t", url, state: n === "5" ? "OPEN" : "MERGED", headRefName: "feat/6-x" }), stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as Ctx;
+  const pull = await readDetail(ctx, "o/k", "issues", 6);
+  assert.deepEqual([pull.kind, pull.state, pull.head], ["pulls", "merged", "feat/6-x"]);
+  assert.equal((await readDetail(ctx, "o/k", "pulls", 5)).kind, "issues");
+  assert.deepEqual(asked, ["issue 6", "pr 6", "pr 5", "issue 5"]);
 });
 
 /** gh failing as it does on a GraphQL read with errors: the answer on stdout, the message on stderr. */
@@ -383,7 +410,7 @@ test("the background reads the rest of a worktree when one of its items cannot b
         if (args[0] === "api") return { stdout: JSON.stringify({ data: { repository: { pulls: { nodes: [pull(8), pull(9)] }, n7: { __typename: "Issue", number: 7, title: "i", state: "OPEN", url: "https://github.com/o/again/issues/7" } } } }), stderr: "" };
         read.push(args[2] ?? "");
         if (args[2] === "8") throw new Error("gh: HTTP 502");
-        return { stdout: JSON.stringify({ number: Number(args[2]), title: "t", url: `https://github.com/o/again/pull/${args[2]}`, state: "OPEN" }), stderr: "" };
+        return { stdout: JSON.stringify({ number: Number(args[2]), title: "t", url: `https://github.com/o/again/${args[0] === "issue" ? "issues" : "pull"}/${args[2]}`, state: "OPEN" }), stderr: "" };
       },
     },
     log: (...a: unknown[]) => void logged.push(a),
@@ -399,4 +426,29 @@ test("the reason a conversation was locked for, as GitHub's REST API names it, i
   assert.equal(reason("too heated"), "too_heated");
   assert.equal(reason("resolved"), "resolved");
   assert.equal(reason("constructor"), undefined);
+});
+
+// Last: the part of the commits stays in readDetail's parts for the rest of this file.
+test("a pull request of which gh gave its 100 oldest commits is told how many it has", async () => {
+  addDetailParts([commits]);
+  const asked: string[] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        if (args[0] === "api") {
+          asked.push("count");
+          return { stdout: JSON.stringify({ data: { repository: { pullRequest: { commits: { totalCount: 456 } } } } }), stderr: "" };
+        }
+        const n = Number(args[2]);
+        asked.push(`pr ${n}`);
+        const oids = Array.from({ length: n === 8 ? 100 : 99 }, (_, i) => ({ oid: i.toString(16).padStart(40, "0") }));
+        return { stdout: JSON.stringify({ number: n, title: "t", url: `https://github.com/o/k/pull/${n}`, state: "OPEN", commits: oids }), stderr: "" };
+      },
+    },
+    log: () => undefined,
+  } as unknown as Ctx;
+  const many = await readDetail(ctx, "o/k", "pulls", 8);
+  assert.deepEqual([many.commits?.length, many.commitsTotal], [100, 456]);
+  assert.equal((await readDetail(ctx, "o/k", "pulls", 9)).commitsTotal, undefined);
+  assert.deepEqual(asked, ["pr 8", "count", "pr 9"]);
 });
