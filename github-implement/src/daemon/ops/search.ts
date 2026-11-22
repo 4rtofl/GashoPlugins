@@ -6,10 +6,23 @@ import { gh, maxAge } from "../core.ts";
 import { repoArg, summary, SUMMARY } from "../gh.ts";
 import type { Op } from "../op.ts";
 
+/**
+ * Each word quoted: GitHub's search reads -word as "without word" and word:value as a qualifier, which the title the
+ * person types is not. Undefined when no word is left.
+ */
+export function searchTerms(words: string): string | undefined {
+  const terms = words
+    .split(/\s+/)
+    .map((w) => w.replaceAll('"', ""))
+    .filter(Boolean)
+    .map((w) => `"${w}"`);
+  return terms.length ? terms.join(" ") : undefined;
+}
+
 /** The words go into a variable of the query, never into the query itself. */
-export function searchArgs(repo: string, words: string): string[] {
+export function searchArgs(repo: string, terms: string): string[] {
   const query = `query($q: String!) { search(query: $q, type: ISSUE, first: 10) { nodes { ${SUMMARY} } } }`;
-  return ["api", "graphql", "-f", `query=${query}`, "-f", `q=repo:${repo} in:title ${words}`];
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `q=repo:${repo} in:title ${terms}`];
 }
 
 /** Only `repo`'s: the words may name other repositories (repo:…), and a number is added to the worktree as one of `repo`. */
@@ -28,6 +41,8 @@ export default {
     const repo = repoArg(p.repo);
     const words = typeof p.query === "string" ? p.query.trim() : "";
     if (!words || words.length > 200 || /[\r\n]/.test(words)) throw new PluginError("探す語が正しくありません。");
-    return gh("search issues and pull requests", async () => parseSearch((await ctx.github.read(searchArgs(repo, words), { repo, maxAgeSeconds: maxAge(p) })).stdout, repo), ctx);
+    const terms = searchTerms(words);
+    if (!terms) return [];
+    return gh("search issues and pull requests", async () => parseSearch((await ctx.github.read(searchArgs(repo, terms), { repo, maxAgeSeconds: maxAge(p) })).stdout, repo), ctx);
   },
 } satisfies Op;

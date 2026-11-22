@@ -5,7 +5,8 @@ import { respond, sdk } from "../../test/sdk.tsx";
 import type { WorktreeInfo } from "@gasho/plugin-sdk";
 import { HomePalette, Palette, useWorktreeCommands, type PaletteGroup } from "../src/web/palette.tsx";
 import type { ItemSummary, WorktreeItems } from "../src/types.ts";
-import { github } from "./render.tsx";
+import { useChosenTab } from "../src/web/item/context.tsx";
+import { detail, github, itemScreen } from "./render.tsx";
 
 const worktree: WorktreeInfo = { path: "/work/app", branch: "feat/7-x", github, sessions: [] };
 
@@ -111,5 +112,36 @@ describe("the palettes of the worktree's screens", () => {
     expect(options()).toEqual(["#7 不具合Issue", "GitHub（一覧と、番号で足す欄）タブ"]);
     await userEvent.click(screen.getByRole("option", { name: /GitHub（一覧/ }));
     expect(sdk.nav.openWorktreeView).toHaveBeenCalledWith("home", undefined, undefined);
+  });
+});
+
+describe("the tab of an item's screen, which ⌘K opens too", () => {
+  function Tabs() {
+    const [chosen, choose] = useChosenTab(["conversation", "commits"]);
+    return (
+      <button type="button" onClick={() => choose("commits")}>
+        {chosen}
+      </button>
+    );
+  }
+  const shown = () => screen.getByRole("button").textContent;
+
+  it("goes back to the one the screen opened with on the browser's back, and shows the one shown last when opened again", async () => {
+    const item = detail({ kind: "pulls" });
+    const view = render(itemScreen(item, <Tabs />));
+    expect(shown()).toBe("conversation");
+    await userEvent.click(screen.getByRole("button"));
+    expect(sdk.nav.openWorktreeView).toHaveBeenCalledWith("item", { kind: "pulls", number: "12", tab: "commits" }, undefined);
+    view.rerender(itemScreen(item, <Tabs />, { tab: "commits" }));
+    expect(shown()).toBe("commits");
+    // Back: the URL of the worktree tab, without a tab.
+    view.rerender(itemScreen(item, <Tabs />));
+    expect(shown()).toBe("conversation");
+
+    // Opened again after another screen (a session's), from the worktree tab.
+    view.rerender(itemScreen(item, <Tabs />, { tab: "commits" }));
+    view.unmount();
+    render(itemScreen(item, <Tabs />));
+    expect(shown()).toBe("commits");
   });
 });

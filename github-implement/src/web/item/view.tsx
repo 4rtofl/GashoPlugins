@@ -4,7 +4,7 @@
 // a change, gasho-daemon drops what it kept of the repository, so reading again shows GitHub as it is now.
 import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
 import { useRef } from "react";
-import { cn, RelativeTime, useDaemonReady, useNow, usePluginState, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
+import { cn, RelativeTime, useDaemonReady, useNow, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
 import { readOp, useFreshReload } from "../daemon.ts";
 import { itemsTarget, OfflineContext, useRefreshOptions } from "../tabs.ts";
@@ -14,7 +14,7 @@ import { INPUT, isComposing, useComposingEscape } from "../ui/input.ts";
 import { Skeleton, SkeletonText } from "../ui/skeleton.tsx";
 import { AnimatedTabs } from "../ui/tabs.tsx";
 import { ToastProvider } from "../ui/toast.tsx";
-import { ItemProvider, useChanges, useDraft, useDraftsOf, useItem, type Where } from "./context.tsx";
+import { ItemProvider, useChanges, useChosenTab, useDraft, useDraftsOf, useItem, type Where } from "./context.tsx";
 import { ItemPalette } from "./palette.tsx";
 import { partsOf, type ItemSection, type ItemTab } from "./parts.ts";
 import { Rows } from "./row.tsx";
@@ -37,7 +37,7 @@ export function ItemView(props: WorktreeViewProps) {
 }
 
 function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
-  const kind: GitHubKind = params.kind === "pulls" ? "pulls" : "issues";
+  const asked: GitHubKind = params.kind === "pulls" ? "pulls" : "issues";
   const number = Number(params.number);
   const valid = Number.isInteger(number) && number >= 1 && number <= 1e9;
   const daemon = useDaemonReady(machine.id);
@@ -49,9 +49,17 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
   const repo = github ? `${github.owner}/${github.name}` : undefined;
   const clock = useNow(60_000);
   const options = useRefreshOptions();
+  const r = useRequest<GitHubItemDetail>(daemon.ready && repo && valid ? readOp(machine.id, "item", { repo, kind: asked, number }) : undefined, options);
+  // While the daemon part is not ready (the working server offline for a while), nothing is read and r.data is none: the
+  // item read before stays on the screen, and with it what is being typed.
+  const last = useRef<GitHubItemDetail>(undefined);
+  if (r.data?.number === number) last.current = r.data;
+  const item = last.current;
+  // A link or a typed number may name a pull request as an issue or the other way round: the daemon part reads it as
+  // the kind it is, and the changes go to that kind.
+  const kind = item?.kind ?? asked;
   const where: Where | undefined = repo && valid ? { repo, kind, number } : undefined;
   useDraftsOf(machine.id, worktree, where);
-  const r = useRequest<GitHubItemDetail>(daemon.ready && where ? readOp(machine.id, "item", { ...where }) : undefined, options);
   // The worktree's tabs show the title and the state: they are read again after a change too.
   const tabs = useRequest<WorktreeItems>(itemsTarget(machine.id, worktree, daemon.ready), options);
   const changes = useChanges(machine.id, where, () => {
@@ -61,11 +69,6 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
   const reload = useFreshReload(machine.id, repo, changes.changed);
   // Not before the read: what GitHub changed since the clock last ticked would read as "in 1 minute".
   const now = Math.max(clock, r.at ?? 0);
-  // While the daemon part is not ready (the working server offline for a while), nothing is read and r.data is none: the
-  // item read before stays on the screen, and with it what is being typed.
-  const last = useRef<GitHubItemDetail>(undefined);
-  if (r.data) last.current = r.data;
-  const item = r.data ?? last.current;
   const url = item?.url ?? (github && valid ? `${github.url}/${kind === "issues" ? "issues" : "pull"}/${number}` : undefined);
 
   return (
@@ -101,10 +104,15 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
           {r.error}
         </Alert>
       )}
+      {item && item.kind !== asked && (
+        <Alert>
+          #{number} は {NAME[item.kind]} なので、{NAME[item.kind]} として出しています。
+        </Alert>
+      )}
       {!item && r.loading && <DetailSkeleton />}
       {item && where && (
         <OfflineContext.Provider value={!daemon.ready}>
-          <ItemProvider value={{ machine: machine.id, machineInfo: machine, worktree, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision, reload }}>
+          <ItemProvider value={{ machine: machine.id, machineInfo: machine, worktree, params, where, item, now, busy: changes.busy, run: changes.run, revision: changes.revision, reload }}>
             <Detail />
             <ItemPalette worktree={worktree} />
           </ItemProvider>
@@ -132,10 +140,10 @@ function DetailSkeleton() {
 }
 
 function Detail() {
-  const { item, where, now } = useItem();
+  const { item, now } = useItem();
   const tabs = TABS.filter((t) => t.kinds.includes(item.kind));
-  const [chosen, setChosen] = usePluginState<string>(`tab:${where.repo}#${where.number}`, tabs[0]?.id ?? "");
-  const tab = tabs.find((t) => t.id === chosen) ?? tabs[0];
+  const [chosen, choose] = useChosenTab(tabs.map((t) => t.id));
+  const tab = tabs.find((t) => t.id === chosen);
   const sections = SECTIONS.filter((s) => s.kinds.includes(item.kind));
   const at = (place: ItemSection["place"]) => sections.filter((s) => s.place === place).map((s, i) => <s.View key={i} />);
   return (
@@ -165,7 +173,7 @@ function Detail() {
             return { id: t.id, label: t.label, ...(Icon ? { icon: <Icon /> } : {}), ...(badge !== undefined ? { badge } : {}) };
           })}
           value={tab.id}
-          onChange={setChosen}
+          onChange={choose}
         >
           <tab.View />
         </AnimatedTabs>

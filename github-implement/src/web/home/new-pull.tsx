@@ -20,7 +20,24 @@ interface Form {
   draft: boolean;
 }
 
-export function NewPullBox({ machine, worktree, branch, repo, title, onCreated }: { machine: string; worktree: WorktreeInfo; branch: string; repo: string; title?: string; onCreated: () => void }) {
+export function NewPullBox({
+  machine,
+  worktree,
+  branch,
+  repo,
+  title,
+  closed,
+  onCreated,
+}: {
+  machine: string;
+  worktree: WorktreeInfo;
+  branch: string;
+  repo: string;
+  title?: string;
+  /** The branch's pull requests that were closed without being merged. */
+  closed: number[];
+  onCreated: () => void;
+}) {
   const kept = `new-pull:${machine}:${worktree.path}:${branch}`;
   const [base, setBase] = usePluginState<string | undefined>(`${kept}:base`, undefined);
   // A press of "読み直す" asks GitHub again (after a push); gasho-daemon would answer from what it kept otherwise.
@@ -75,7 +92,8 @@ export function NewPullBox({ machine, worktree, branch, repo, title, onCreated }
       <div className="flex flex-wrap items-center gap-2">
         <GitPullRequest className="size-4 shrink-0 text-muted-foreground" />
         <p className="min-w-0 flex-1 text-sm">
-          <span className="font-mono break-all">{branch}</span> の Pull request はまだありません
+          <span className="font-mono break-all">{branch}</span>
+          {closed.length > 0 ? ` の Pull request は、閉じたもの（${closed.map((n) => `#${n}`).join("、")}）だけです` : " の Pull request はまだありません"}
         </p>
         <Button variant="ghost" size="icon" onClick={reload} disabled={r.loading} aria-label="ブランチを読み直す" title="ブランチを読み直す">
           <RefreshCw className={cn(r.loading && "animate-spin")} />

@@ -29,7 +29,7 @@ const newPull = (byBase: Record<string, NewPull | undefined>) =>
 const show = (over: { title?: string; branch?: string } = {}) => {
   const onCreated = vi.fn();
   const view = renderWithToasts(
-    <NewPullBox machine="m1" worktree={worktree} branch={over.branch ?? "feat/7-x"} repo="4rtofl/app" {...(over.title ? { title: over.title } : {})} onCreated={onCreated} />,
+    <NewPullBox machine="m1" worktree={worktree} branch={over.branch ?? "feat/7-x"} repo="4rtofl/app" {...(over.title ? { title: over.title } : {})} closed={[]} onCreated={onCreated} />,
   );
   return { ...view, onCreated };
 };

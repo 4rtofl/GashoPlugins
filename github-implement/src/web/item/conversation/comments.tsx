@@ -93,7 +93,8 @@ function useComments(): ConversationEntry[] {
       <p className="text-sm text-muted-foreground">（本文なし）</p>
     );
     entries.push({
-      key: `comment${i}`,
+      // Not its place in the list: a comment deleted would hand its folding and its mark to the next one.
+      key: c.url ?? `comment${c.createdAt}${i}`,
       at: c.createdAt,
       icon: m?.bot ? Bot : MessageSquare,
       title: (

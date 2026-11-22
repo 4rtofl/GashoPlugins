@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { numberFrom } from "../src/web/number.ts";
+import { numberFrom } from "../src/number.ts";
 import { leftAfter, withDraft } from "../src/web/ui/input.ts";
 
 test("a number typed in full-width (a Japanese input method) is the same number", () => {

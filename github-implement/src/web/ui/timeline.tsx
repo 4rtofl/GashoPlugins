@@ -7,6 +7,7 @@ import { Check, ChevronDown, Copy, GitCommit, type LucideIcon } from "lucide-rea
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { cn } from "@gasho/plugin-sdk";
 import { motionTransitions } from "./motion.ts";
+import { useToast } from "./toast.tsx";
 
 export type TimelineTone = "neutral" | "success" | "danger" | "warning" | "merged";
 
@@ -124,6 +125,17 @@ export function Timeline({ entries, label, className }: { entries: TimelineEntry
 /** A commit's short hash; pressing it copies the whole one. */
 export function CopyHash({ hash }: { hash: string }) {
   const [copied, setCopied] = useState(false);
+  const toast = useToast();
+  // The browser may refuse (the page not focused, a permission), and has no clipboard outside https and localhost.
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error("no clipboard");
+      await navigator.clipboard.writeText(hash);
+      setCopied(true);
+    } catch {
+      toast({ title: "ハッシュをコピーできませんでした", description: `ブラウザがクリップボードに書かせませんでした。ハッシュ：${hash}`, tone: "error" });
+    }
+  };
   useEffect(() => {
     if (!copied) return;
     const t = setTimeout(() => setCopied(false), 2000);
@@ -132,7 +144,7 @@ export function CopyHash({ hash }: { hash: string }) {
   return (
     <button
       type="button"
-      onClick={() => void navigator.clipboard?.writeText(hash).then(() => setCopied(true), () => undefined)}
+      onClick={() => void copy()}
       title="コミットのハッシュをコピーする"
       aria-label={`コミット ${hash.slice(0, 7)} のハッシュをコピーする`}
       className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors outline-none hover:border-border-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
