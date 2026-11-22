@@ -220,7 +220,8 @@ function Title() {
         value={draft}
         onChange={(e) => setEdit({ ...edit, draft: e.target.value })}
         onKeyDown={(e) => {
-          if (e.key === "Escape" && !isComposing(e)) {
+          // Not while it is being saved, as "やめる": the title typed would go if the save then failed.
+          if (e.key === "Escape" && !isComposing(e) && busy !== "title") {
             e.preventDefault();
             setEdit(undefined);
           }
