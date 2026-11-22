@@ -117,20 +117,26 @@ test("headings of the same name on a working server tell the folder they are in"
     ["GashoPlugins …/Project", "GashoPlugins …/GashoPlugins", "Gasho -"],
   );
 
-  // Clones side by side in one folder, both named after the repository on GitHub: their own folders' names.
-  const side = worktree(mac, "/home/u/repos/Gasho", { repo: "/home/u/repos/Gasho", repoName: "Gasho" });
-  const sideFork = worktree(mac, "/home/u/repos/Gasho-fork", { repo: "/home/u/repos/Gasho-fork", repoName: "Gasho" });
+  // Clones side by side in one folder, both named after the repository on GitHub: their own folders' names, without
+  // the start they share: Gasho cuts the description at its end, and on a phone only its start shows.
+  const descriptions = (folders: string[], name: string) => {
+    const ws = folders.map((f) => worktree(mac, f, { repo: f, repoName: name }));
+    return categories(context([mac], ws, ws.map((w, i): [string, SessionListWorktree, number] => [`s${i}`, w, 10 - i]))).map((c) => c.description);
+  };
+  assert.deepEqual(descriptions(["/home/u/repos/Gasho", "/home/u/repos/Gasho-fork"], "Gasho"), ["…/Gasho", "…-fork"]);
+  assert.deepEqual(descriptions(["/home/u/repos/GashoPlugins", "/home/u/repos/GashoPlugins-fork"], "GashoPlugins"), ["…/GashoPlugins", "…-fork"]);
   assert.deepEqual(
-    categories(context([mac], [side, sideFork], [["a", side, 2], ["b", sideFork, 1]])).map((c) => c.description),
-    ["…/Gasho", "…/Gasho-fork"],
+    descriptions(["/home/u/repos/better-worktree-list", "/home/u/repos/better-worktree-list-fork"], "better-worktree-list"),
+    ["…/better-worktree-list", "…-fork"],
   );
 
-  // On two working servers, the server's name comes first; the same name on another server is told by it alone.
+  // On two working servers, the server's name goes after the folder, which is what tells them apart; the same name on
+  // another server is told by it alone.
   const ubuntu = machine("ubuntu");
   const there = worktree(ubuntu, "/u/Project/GashoPlugins/GashoPlugins", { repo: "/u/Project/GashoPlugins/GashoPlugins", repoName: "GashoPlugins" });
   assert.deepEqual(
     categories(context([mac, ubuntu], [container, inner, there], [["a", container, 3], ["b", inner, 2], ["c", there, 1]])).map((c) => c.description),
-    ["mac · …/Project", "mac · …/GashoPlugins", "ubuntu"],
+    ["…/Project · mac", "…/GashoPlugins · mac", "ubuntu"],
   );
 });
 

@@ -26,16 +26,47 @@ function pathEnds(paths: readonly string[][]): string[] {
   }
 }
 
+/** Whether a word starts at k: at a mark (/, -, _, . or a space), where small letters turn to a capital, or letters to
+ * digits and back. */
+function wordStart(s: string, k: number): boolean {
+  const c = s[k]!;
+  const b = s[k - 1];
+  if (!/[\p{L}\p{N}]/u.test(c)) return true;
+  if (b === undefined || !/[\p{L}\p{N}]/u.test(b)) return false;
+  return (/\p{Lu}/u.test(c) && /\p{Ll}/u.test(b)) || /\p{N}/u.test(c) !== /\p{N}/u.test(b);
+}
+
 /**
- * For folders of the same name, the end of the path of the folder each is in, as far up as it takes to tell them apart:
- * …/Project and …/GashoPlugins for /u/Project/GashoPlugins and /u/Project/GashoPlugins/GashoPlugins. When the folders
- * they are in do not tell them apart (clones side by side, both named after the repository on GitHub), the end of their
- * own paths: …/Gasho and …/Gasho-fork for /u/repos/Gasho and /u/repos/Gasho-fork.
+ * The labels without the start they share with another, from the word where they differ: …/GashoPlugins and …-fork
+ * for …/GashoPlugins and …/GashoPlugins-fork. Gasho cuts a heading's description at its end, so on a phone only its
+ * start shows. A label the start of another stays whole, and so does one whose rest another path ends with.
+ */
+function shorten(labels: readonly string[], paths: readonly string[]): string[] {
+  return labels.map((l, i) => {
+    const same = Math.max(0, ...labels.map((m, j) => {
+      let n = 0;
+      while (i !== j && n < l.length && l[n] === m[n]) n++;
+      return n;
+    }));
+    if (same >= l.length) return l;
+    let k = same;
+    while (k > 1 && !wordStart(l, k)) k--;
+    const rest = l.slice(k);
+    return k > 1 && !paths.some((p, j) => j !== i && p.endsWith(rest)) ? `…${rest}` : l;
+  });
+}
+
+/**
+ * For folders of the same name, where each is: the end of the path of the folder it is in, as far up as it takes to
+ * tell them apart (…/Project and …/GashoPlugins for /u/Project/GashoPlugins and /u/Project/GashoPlugins/GashoPlugins).
+ * When two are in one folder (clones side by side, both named after the repository on GitHub), the end of its own path
+ * (…/Gasho and …-fork for /u/repos/Gasho and /u/repos/Gasho-fork).
  */
 function folderLabels(folders: readonly string[]): string[] {
   const paths = folders.map((f) => f.split("/").filter(Boolean));
-  const parents = pathEnds(paths.map((p) => p.slice(0, -1)));
-  return new Set(parents).size === parents.length ? parents : pathEnds(paths);
+  const parents = paths.map((p) => p.slice(0, -1));
+  const by = new Set(parents.map((p) => p.join("/"))).size === parents.length ? parents : paths;
+  return shorten(pathEnds(by), by.map((p) => `/${p.join("/")}`));
 }
 
 export function repoCategories(ctx: WorktreeListContext): WorktreeCategory[] {
@@ -94,7 +125,8 @@ export function repoCategories(ctx: WorktreeListContext): WorktreeCategory[] {
   }
 
   return categories.map((c) => {
-    const description = [several ? c.machine.name : undefined, where.get(c.id)].filter(Boolean).join(" · ");
+    // The folder goes before the server's name: on a phone, only the start of the description shows.
+    const description = [where.get(c.id), several ? c.machine.name : undefined].filter(Boolean).join(" · ");
     // "＋" starts in the repository's main worktree; without it here (a bare repository, or only its name known), in
     // the one used last.
     const launch = c.outside ? undefined : (c.worktrees.find((w) => w.path === c.folder) ?? c.worktrees[0]);

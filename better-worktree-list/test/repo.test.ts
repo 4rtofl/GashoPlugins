@@ -128,26 +128,33 @@ test("headings of the same name on a working server tell the folder they are in,
     ["…/a/x", "…/b/x", "/"],
   );
 
-  // Clones side by side in one folder, both named after the repository on GitHub: their own folders' names.
-  const side = worktree(mac, "/home/u/repos/Gasho", { repo: "/home/u/repos/Gasho", repoName: "Gasho" });
-  const sideFork = worktree(mac, "/home/u/repos/Gasho-fork", { repo: "/home/u/repos/Gasho-fork", repoName: "Gasho" });
+  // Clones side by side in one folder, both named after the repository on GitHub: their own folders' names, without
+  // the start they share: Gasho cuts the description at its end, and on a phone only its start shows.
+  const descriptions = (folders: string[], name: string) =>
+    repoCategories(context([mac], folders.map((f, i) => used(worktree(mac, f, { repo: f, repoName: name }), 300 - i)))).map((c) => c.description);
+  assert.deepEqual(descriptions(["/home/u/repos/Gasho", "/home/u/repos/Gasho-fork"], "Gasho"), ["…/Gasho", "…-fork"]);
+  assert.deepEqual(descriptions(["/home/u/repos/GashoPlugins", "/home/u/repos/GashoPlugins-fork"], "GashoPlugins"), ["…/GashoPlugins", "…-fork"]);
   assert.deepEqual(
-    repoCategories(context([mac], [used(side, 300), used(sideFork, 200)])).map((c) => c.description),
-    ["…/Gasho", "…/Gasho-fork"],
+    descriptions(["/home/u/repos/better-worktree-list", "/home/u/repos/better-worktree-list-fork"], "better-worktree-list"),
+    ["…/better-worktree-list", "…-fork"],
   );
-  // With another in a folder of its own, as far up as it takes for all of them.
-  const other = worktree(mac, "/home/u/other/Gasho", { repo: "/home/u/other/Gasho", repoName: "Gasho" });
+  // From the word where they differ: at a mark, a capital or a digit.
+  assert.deepEqual(descriptions(["/u/repos/Gasho-main", "/u/repos/Gasho-fork"], "Gasho"), ["…-main", "…-fork"]);
+  assert.deepEqual(descriptions(["/u/repos/GashoMain", "/u/repos/GashoFork"], "Gasho"), ["…Main", "…Fork"]);
+  // With another in a folder of its own, as far up as it takes for all of them, and the fork from where it differs.
   assert.deepEqual(
-    repoCategories(context([mac], [used(side, 300), used(sideFork, 200), used(other, 100)])).map((c) => c.description),
-    ["…/repos/Gasho", "…/repos/Gasho-fork", "…/other/Gasho"],
+    descriptions(["/home/u/repos/Gasho", "/home/u/repos/Gasho-fork", "/home/u/other/Gasho"], "Gasho"),
+    ["…/repos/Gasho", "…-fork", "…/other/Gasho"],
   );
+  // The folders they are in, side by side, are told the same way.
+  assert.deepEqual(descriptions(["/u/Project/GashoPlugins/Gasho", "/u/Project/GashoPlugins-fork/Gasho"], "Gasho"), ["…/GashoPlugins", "…-fork"]);
 
-  // On two working servers, the server's name comes first.
+  // On two working servers, the server's name goes after the folder, which is what tells them apart.
   const pc = machine("pc");
   const forkPc = worktree(pc, "/u/fork/Gasho", { repo: "/u/fork/Gasho", repoName: "Gasho" });
   assert.deepEqual(
     repoCategories(context([mac, pc], [used(upstream, 300), used(fork, 200), used(forkPc, 100)])).map((c) => c.description),
-    ["mac · …/src", "mac · …/fork", "pc"],
+    ["…/src · mac", "…/fork · mac", "pc"],
   );
 });
 
