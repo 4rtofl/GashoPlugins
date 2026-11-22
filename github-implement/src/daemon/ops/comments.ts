@@ -42,6 +42,9 @@ export interface ReviewMeta {
   /** As GitHubReview's id. */
   id: string;
   reactions: Reaction[];
+  /** Its comments on lines of the code, which the conversation does not show but links to. */
+  lineComments: number;
+  url?: string;
 }
 
 export interface ConversationMeta {
@@ -67,7 +70,7 @@ const GROUPS = `reactionGroups { content viewerHasReacted reactors(first: ${REAC
 const COMMENT = `id url author { __typename } viewerDidAuthor viewerCanUpdate viewerCanDelete ${GROUPS}`;
 const SUBJECT = `id ${GROUPS} comments(last: ${PAGE}, before: $before) { pageInfo { hasPreviousPage startCursor } nodes { ${COMMENT} } }`;
 // GitHub counts the points of a query before it runs, so the reviews cost a point even of an issue unless left out.
-const REVIEWS = `reviews(last: ${PAGE}) @include(if: $reviews) { nodes { id ${GROUPS} } }`;
+const REVIEWS = `reviews(last: ${PAGE}) @include(if: $reviews) { nodes { id url comments { totalCount } ${GROUPS} } }`;
 
 /** A page of the latest comments, before `before` (a cursor of the page after it), with the reviews when `reviews`. */
 export function commentsQueryArgs(repo: string, number: number, before?: string, reviews = false): string[] {
@@ -121,7 +124,9 @@ export function parseComments(json: string): { meta: ConversationMeta; before?: 
   const reviews = (((subject.reviews ?? {}) as { nodes?: unknown[] }).nodes ?? []).flatMap((raw): ReviewMeta[] => {
     const r = (raw ?? {}) as Record<string, unknown>;
     const rid = str(r.id);
-    return rid ? [{ id: rid, reactions: reactionsOf(r.reactionGroups) }] : [];
+    const url = str(r.url);
+    const lineComments = num((r.comments as Record<string, unknown> | null)?.totalCount) ?? 0;
+    return rid ? [{ id: rid, reactions: reactionsOf(r.reactionGroups), lineComments, ...(url ? { url } : {}) }] : [];
   });
   const before = page.pageInfo?.hasPreviousPage === true ? str(page.pageInfo.startCursor) : undefined;
   return { meta: { id, reactions: reactionsOf(subject.reactionGroups), comments, reviews }, ...(before ? { before } : {}) };

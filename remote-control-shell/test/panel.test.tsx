@@ -200,4 +200,25 @@ describe("ShellPanel", () => {
     expect(callsOf("output")).toEqual([{ job: ended.id, from: 0, limit: head.length }]);
     await waitFor(() => expect(screen.getByText("line 1")).toBeTruthy());
   });
+
+  it("copies the output of a running command up to where it was when pressed, though more comes than is read", async () => {
+    const running = job({ size: 100 });
+    let size = 100;
+    let answered = 0;
+    // Each answer has 10 characters, and the command has written 100 more by the next one.
+    const output = (p: { from: number; limit: number }): CallResult<OutputAnswer> => {
+      if (++answered > 50) return { ok: false, error: "読み続けた" };
+      const data = { from: p.from, text: "x".repeat(Math.min(10, p.limit)), size, dropped: 0 };
+      size += 100;
+      return { ok: true, data };
+    };
+    daemon({ jobs: [running] }, { output });
+    draw();
+    const record = await screen.findByRole("region", { name: "$ npm test" });
+    await user.click(within(record).getByRole("button", { name: "この記録のメニュー" }));
+    await user.click(screen.getByRole("menuitem", { name: "出力をコピー" }));
+    await screen.findByText(/出力をコピーしました。|出力を読み込みました。/);
+    expect(callsOf("output")).toHaveLength(10);
+    expect(callsOf("output").at(-1)).toEqual({ job: running.id, from: 90, limit: 10 });
+  });
 });

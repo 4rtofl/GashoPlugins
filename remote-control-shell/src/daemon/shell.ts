@@ -1,5 +1,5 @@
 // How a command is started (README.md「コマンドの起動」): which shell, with which switches and environment, and the short
-// script that runs the command with `eval` and, as the shell ends, writes down the folder it ended in.
+// script before the command that, as the shell ends, writes down the folder it ended in.
 import path from "node:path";
 
 export type ShellChoice = "auto" | "bash" | "zsh" | "sh";
@@ -24,10 +24,11 @@ export function startupArgs(startup: Startup): string[] {
 }
 
 /**
- * What the shell runs: `<shell> -c SCRIPT gasho-shell <cwd file> <command>`. The command runs as written, with eval,
- * so that it may span lines; however the shell then ends (also by `exit` in the command), the EXIT trap writes the
- * folder it is in to <cwd file>, for the next command (README.md「作業フォルダー」). The trap keeps the command's exit
- * status.
+ * What the shell runs: `<shell> -c "SCRIPT_START<command>" <shell's name> <cwd file>`. The command is the rest of the
+ * script, from its first line on, so that the shell reports its errors as a terminal does ("zsh:2: command not found:
+ * x", "bash: line 2: …") with the command's own line numbers, and it may span lines. The cwd file is shifted off before
+ * the command runs; however the shell then ends (also by `exit` in the command), the EXIT trap writes the folder it is in
+ * to it, for the next command (README.md「作業フォルダー」). The trap keeps the command's exit status.
  *
  * `set +m`: an interactive bash 3.2 (macOS's /bin/bash and /bin/sh) puts each command in a process group of its own,
  * which the signals sent to the shell's group would miss. On SIGINT or SIGTERM the shell ends once the command has, with
@@ -38,18 +39,10 @@ export function startupArgs(startup: Startup): string[] {
 /** The signals the script's trap catches: the shell ends with 128 + the number of the one that ended the command. */
 export const CAUGHT: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
-export const SCRIPT = [
-  "set +m",
-  "trap 'exit $?' INT TERM",
-  "__gasho_cwd_file=$1",
-  "__gasho_command=$2",
-  "shift 2",
-  "trap 'pwd > \"$__gasho_cwd_file\" 2>/dev/null' EXIT",
-  'eval "$__gasho_command"',
-].join("\n");
+export const SCRIPT_START = `set +m; trap 'exit $?' INT TERM; __gasho_cwd_file=$1; shift; trap 'pwd > "$__gasho_cwd_file" 2>/dev/null' EXIT; `;
 
-export function shellArgs(startup: Startup, cwdFile: string, command: string): string[] {
-  return [...startupArgs(startup), "-c", SCRIPT, "gasho-shell", cwdFile, command];
+export function shellArgs(startup: Startup, shell: string, cwdFile: string, command: string): string[] {
+  return [...startupArgs(startup), "-c", SCRIPT_START + command, path.basename(shell), cwdFile];
 }
 
 /** What a command inherits from gasho-daemon: what gasho-daemon gives the terminals of sessions (its cleanEnv). */

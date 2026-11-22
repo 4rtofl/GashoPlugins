@@ -3,10 +3,14 @@
 @import "@gasho/plugin-sdk/plugin.css";
 @source "../";
 
-/* The 16 colors of the ANSI palette, readable on Gasho's light theme… */
+/* The 16 colors of the ANSI palette, each 4.5:1 or more against the output's background in Gasho's light theme…
+   --rcs-ink and --rcs-paper are Gasho's text and the output's background as hex, for the panel to work out text on a
+   colored background (panel.tsx). */
 .rcs {
   --rcs-fg: var(--foreground);
   --rcs-bg: var(--background);
+  --rcs-ink: #0a0a0a;
+  --rcs-paper: #fcfcfc;
   --rcs-0: #1f2328;
   --rcs-1: #c4262e;
   --rcs-2: #1a7f37;
@@ -15,18 +19,21 @@
   --rcs-5: #9a2ba3;
   --rcs-6: #0e7c86;
   --rcs-7: #57606a;
-  --rcs-8: #6e7781;
-  --rcs-9: #d93a3a;
-  --rcs-10: #2a8f45;
-  --rcs-11: #9a7b00;
+  --rcs-8: #6b737d;
+  --rcs-9: #d23838;
+  --rcs-10: #26823f;
+  --rcs-11: #8c7000;
   --rcs-12: #2f6fd1;
   --rcs-13: #b03cb8;
-  --rcs-14: #12909c;
+  --rcs-14: #107f89;
   --rcs-15: #24292f;
 }
-/* …and on its dark theme. */
-.dark .rcs {
-  --rcs-0: #6e7681;
+/* …and in its dark theme. Gasho's screen applies this sheet only inside the plugin's parts, under <html class="dark">:
+   `.dark .rcs` would look for .dark inside them. */
+.rcs:is(.dark *) {
+  --rcs-ink: #fafafa;
+  --rcs-paper: #0f0f0f;
+  --rcs-0: #757d87;
   --rcs-1: #ff7b72;
   --rcs-2: #56d364;
   --rcs-3: #e3b341;

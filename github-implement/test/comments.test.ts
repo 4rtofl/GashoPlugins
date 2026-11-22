@@ -36,7 +36,7 @@ const page = (ids: number[], before?: string) =>
               reactionGroups: groups({}),
             })),
           },
-          reviews: { nodes: [{ id: "PRR_1", reactionGroups: groups({ HEART: [1, false, ["4rna-y"]] }) }] },
+          reviews: { nodes: [{ id: "PRR_1", url: "https://github.com/o/r/pull/1#pullrequestreview-1", comments: { totalCount: 3 }, reactionGroups: groups({ HEART: [1, false, ["4rna-y"]] }) }] },
         },
       },
     },
@@ -50,7 +50,8 @@ test("the comments' read tells bots, gh's own comments it may change, and the re
     { content: "THUMBS_UP", count: 12, users: named, mine: true },
     { content: "EYES", count: 1, users: ["hubot"], mine: false },
   ]);
-  assert.deepEqual(read.meta.reviews, [{ id: "PRR_1", reactions: [{ content: "HEART", count: 1, users: ["4rna-y"], mine: false }] }]);
+  // gh reads no comments on lines of the code; the conversation says how many a review has and links to them.
+  assert.deepEqual(read.meta.reviews, [{ id: "PRR_1", reactions: [{ content: "HEART", count: 1, users: ["4rna-y"], mine: false }], lineComments: 3, url: "https://github.com/o/r/pull/1#pullrequestreview-1" }]);
   assert.deepEqual(
     read.meta.comments.map((c) => [c.id, c.bot, c.editable, c.deletable, c.reactions.length]),
     [
