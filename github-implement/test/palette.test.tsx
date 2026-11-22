@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { respond, sdk } from "../../test/sdk.tsx";
 import type { WorktreeInfo } from "@gasho/plugin-sdk";
 import { HomePalette, Palette, useWorktreeCommands, type PaletteGroup } from "../src/web/palette.tsx";
@@ -76,11 +76,67 @@ describe("Palette", () => {
     expect(box()).toBeTruthy();
   });
 
+  it("opens with the first command that writes nothing chosen, and chooses the first found once words are typed", async () => {
+    const run = { close: vi.fn(), reload: vi.fn() };
+    render(
+      <Palette
+        label="操作"
+        groups={[
+          {
+            label: "この画面の操作",
+            commands: [
+              { id: "close", label: "閉じる", writes: true, run: run.close },
+              { id: "reload", label: "再読み込み", run: run.reload },
+            ],
+          },
+        ]}
+      />,
+    );
+    await open();
+    expect(screen.getByRole("option", { selected: true }).textContent).toBe("再読み込み");
+    await userEvent.keyboard("{Enter}");
+    expect(run.reload).toHaveBeenCalledOnce();
+    expect(run.close).not.toHaveBeenCalled();
+
+    await open();
+    await userEvent.type(box()!, "る");
+    expect(screen.getByRole("option", { selected: true }).textContent).toBe("閉じる");
+  });
+
+  it("closes on a press that begins and ends on the backdrop, and not on one that begins inside (selecting the words typed)", async () => {
+    commands();
+    await open();
+    // A press on the backdrop is a press on the dialog itself.
+    const dialog = screen.getByRole("dialog", { name: "操作" });
+    fireEvent.pointerDown(box()!);
+    fireEvent.click(dialog);
+    expect(box()).toBeTruthy();
+    fireEvent.pointerDown(dialog);
+    fireEvent.click(dialog);
+    expect(box()).toBeNull();
+  });
+
   it("runs nothing on the Enter that ends the composition of Japanese text", async () => {
     const run = commands();
     await open();
     fireEvent.keyDown(box()!, { key: "Enter", keyCode: 229 });
     expect(run.reload).not.toHaveBeenCalled();
+    expect(box()).toBeTruthy();
+  });
+});
+
+describe("Palette on a Mac", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("opens on ⌘K only, as Ctrl+K in a text box deletes to the end of the line", async () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    // The platform is read once, when the module is.
+    vi.resetModules();
+    const onMac = await import("../src/web/palette.tsx");
+    render(<onMac.Palette label="操作" groups={[]} />);
+    await open();
+    expect(box()).toBeNull();
+    await userEvent.keyboard("{Meta>}k{/Meta}");
     expect(box()).toBeTruthy();
   });
 });

@@ -16,6 +16,14 @@ const title = () => screen.getByRole("textbox", { name: "Issue の題" });
 const body = () => screen.getByRole("textbox", { name: "Issue の本文" });
 
 describe("NewIssueBox", () => {
+  it("goes on to the body on Enter in the title, and makes none", async () => {
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Issue を起票する" }));
+    await userEvent.type(title(), "題{Enter}");
+    expect(callsOf("write")).toEqual([]);
+    expect(document.activeElement).toBe(body());
+  });
+
   it("makes none on ⌘ + Enter in the body while Japanese text is being composed, and makes it after", async () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Issue を起票する" }));

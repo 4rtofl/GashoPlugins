@@ -137,6 +137,15 @@ describe("NewPullBox", () => {
     expect(screen.getByRole("alert").textContent).toContain("A pull request already exists");
   });
 
+  it("goes on to the body on Enter in the title, and makes none", async () => {
+    newPull({ "": pushed() });
+    show({ title: "題" });
+    await userEvent.click(screen.getByRole("button", { name: "Pull request を作る" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Pull request の題" }), "{Enter}");
+    expect(callsOf("write")).toEqual([]);
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Pull request の本文" }));
+  });
+
   it("makes none on Enter in the checkbox, which submits a form otherwise", async () => {
     newPull({ "": pushed() });
     show({ title: "題" });
