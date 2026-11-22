@@ -1,12 +1,12 @@
 // How Pondering writes the time, the tokens and the tool, after Claude Code's spinner: "1m 5s · ↓ 1.2k tokens".
 
-/** "12s", "1m 5s", "1h 2m". A time before the start (the clocks of the browser and the working server differ) is 0s. */
+/** "12s", "1m 5s", "1h 2m 5s". A time before the start (the clocks of the browser and the working server differ) is 0s. */
 export function elapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m ${s % 60}s`;
 }
 
 /**

@@ -18,6 +18,8 @@ test("the ring is as the text around it below 70%, amber from 70%, and red from 
   assert.equal(toneOf(100), "danger");
   assert.equal(clampPercent(-3), 0);
   assert.equal(clampPercent(36.4), 36);
+  // Cut as /usage cuts it: a limit is not shown used up before it is.
+  assert.equal(clampPercent(99.7), 99);
   assert.equal(clampPercent(140), 100);
 });
 
@@ -35,21 +37,38 @@ test("the status line's limits come from the session that replied last on the wo
   assert.equal(latestStatusLineLimits({ sessions: [session("a", older), session("b"), session("c", newer)] }), newer);
 });
 
+const READ: UsageLimits = {
+  at: 500,
+  available: true,
+  fiveHour: { percent: 0 },
+  sevenDay: WEEK,
+  sevenDaySonnet: { percent: 4, resetsAt: WEEK.resetsAt },
+  models: [{ name: "Fable", percent: 0, resetsAt: WEEK.resetsAt }],
+};
+
 test("the popover shows get_usage's limits, with the 5-hour one first and the models' last", () => {
-  const read: UsageLimits = {
-    at: 500,
-    available: true,
-    fiveHour: { percent: 12, resetsAt: 1 },
-    sevenDay: WEEK,
-    models: [{ name: "Fable", percent: 0, resetsAt: WEEK.resetsAt }],
-  };
-  assert.deepEqual(limitsView(read, { sevenDay: { ...WEEK, percent: 35 }, at: 600 }), {
+  assert.deepEqual(limitsView(READ, { sevenDay: { ...WEEK, percent: 35 }, at: 400 }), {
     source: "usage",
     at: 500,
     rows: [
-      { key: "five-hour", label: "5時間の上限", window: { percent: 12, resetsAt: 1 } },
+      { key: "five-hour", label: "5時間の上限", window: { percent: 0 } },
       { key: "seven-day", label: "週の上限（すべてのモデル）", window: WEEK },
+      { key: "seven-day-sonnet", label: "週の上限（Sonnet）", window: { percent: 4, resetsAt: WEEK.resetsAt } },
       { key: "model:Fable", label: "週の上限（Fable）", window: { name: "Fable", percent: 0, resetsAt: WEEK.resetsAt } },
+    ],
+  });
+});
+
+test("a reply after get_usage's read brings the status line's limits; get_usage's stay where it has none, as of their read", () => {
+  const newer = { sevenDay: { ...WEEK, percent: 40 }, at: 9_000_000 };
+  assert.deepEqual(limitsView(READ, newer), {
+    source: "statusline",
+    at: 9_000_000,
+    rows: [
+      { key: "five-hour", label: "5時間の上限", window: { percent: 0 }, at: 500 },
+      { key: "seven-day", label: "週の上限（すべてのモデル）", window: { ...WEEK, percent: 40 } },
+      { key: "seven-day-sonnet", label: "週の上限（Sonnet）", window: { percent: 4, resetsAt: WEEK.resetsAt }, at: 500 },
+      { key: "model:Fable", label: "週の上限（Fable）", window: { name: "Fable", percent: 0, resetsAt: WEEK.resetsAt }, at: 500 },
     ],
   });
 });
@@ -61,7 +80,13 @@ test("without get_usage's limits, the popover shows the status line's; without e
     rows: [{ key: "seven-day", label: "週の上限（すべてのモデル）", window: WEEK }],
   });
   assert.equal(limitsView(undefined, undefined), undefined);
-  assert.deepEqual(limitsView({ at: 1, available: false, models: [] }, { sevenDay: WEEK, at: 600 }), { source: "none" });
+  assert.deepEqual(limitsView({ at: 1, available: false, models: [] }, undefined), { source: "none" });
+  // A login get_usage cannot read with (claude setup-token) still gets the limits through the status line.
+  assert.deepEqual(limitsView({ at: 700, available: false, models: [] }, { sevenDay: WEEK, at: 600 }), {
+    source: "statusline",
+    at: 600,
+    rows: [{ key: "seven-day", label: "週の上限（すべてのモデル）", window: WEEK }],
+  });
 });
 
 test("a reset is written as a time today, with the date and the day of the week after, and as done once it has passed", () => {
@@ -70,14 +95,18 @@ test("a reset is written as a time today, with the date and the day of the week 
   assert.equal(resetLabel(Date.parse("2026-11-15T08:00:00Z"), now), "17:00 にリセット");
   assert.equal(resetLabel(WEEK.resetsAt, now), "11月18日（水）17:00 にリセット");
   assert.equal(resetLabel(Date.parse("2026-11-15T00:05:00Z"), now), "9:05 にリセット");
+  // Claude.ai gives the weekly limit 13:59:59.7 and the model's 14:00:00: both are 23:00.
+  assert.equal(resetLabel(Date.parse("2026-11-21T13:59:59.707Z"), now), "11月21日（土）23:00 にリセット");
+  assert.equal(resetLabel(Date.parse("2026-11-21T14:00:00Z"), now), "11月21日（土）23:00 にリセット");
   assert.equal(resetLabel(now - 1, now), "リセット済み");
   assert.equal(resetLabel(now, now), "リセット済み");
 });
 
 test("a limit shows its share until it is reset, and none from then on, as its reset reads 「リセット済み」", () => {
   const now = Date.parse("2026-11-14T15:00:00Z");
-  assert.equal(shownPercent({ percent: 36.6, resetsAt: now + 1 }, now), 37);
+  assert.equal(shownPercent({ percent: 36.6, resetsAt: now + 1 }, now), 36);
   assert.equal(shownPercent({ percent: 104, resetsAt: now + 1 }, now), 100);
+  assert.equal(shownPercent({ percent: 36.6 }, now), 36);
   for (const resetsAt of [now, now - 1]) {
     assert.equal(shownPercent({ percent: 36, resetsAt }, now), undefined);
     assert.equal(resetLabel(resetsAt, now), "リセット済み");
