@@ -1,16 +1,16 @@
-// The #numbers in the conversation's cards (the body, comments, reviews), as GitHub shows them: in the color of a link,
-// opening the issue or pull request on GitHub when clicked, and with a card that GitHub calls a hovercard (the
-// repository and the day it was made, the title, the state, the start of the body, the labels, and how gh's login is
-// related to it), read once the pointer has stayed on one a moment (ops/card.ts). Gasho's Markdown leaves #numbers as
-// text, and the text React drew is not changed: the color is a CSS highlight (style.css), and the number under the
-// pointer is found in the text where the browser would put a caret. It draws nothing else; what it listens to is the
-// screen it is drawn in.
+// The #numbers and the commits' hashes in the conversation's cards (the body, comments, reviews), as GitHub shows them
+// (refs.ts): in the color of a link, opening the issue, pull request or commit on GitHub when clicked, and for a number
+// a card that GitHub calls a hovercard (the repository and the day it was made, the title, the state, the start of the
+// body, the labels, and how gh's login is related to it), read once the pointer has stayed on one a moment
+// (ops/card.ts). Gasho's Markdown leaves them as text, and the text React drew is not changed: the color is a CSS
+// highlight (style.css), and the reference under the pointer is found in the text where the browser would put a caret.
+// It draws nothing else; what it listens to is the screen it is drawn in.
 import { UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRequest } from "@gasho/plugin-sdk";
 import type { ItemCard } from "../../../daemon/ops/card.ts";
 import { readOp } from "../../daemon.ts";
-import { refAt, refsIn } from "../../refs.ts";
+import { refAt, refsIn, refUrl, type TextRef } from "../../refs.ts";
 import { Badge } from "../../ui/badge.tsx";
 import { SkeletonText } from "../../ui/skeleton.tsx";
 import { useItem } from "../context.tsx";
@@ -24,11 +24,11 @@ const WIDTH = 320;
 const HEIGHT = 240;
 /** The name style.css colors the #numbers by. */
 const HIGHLIGHT = "github-implement-ref";
-/** Text that is code, or that a person types: its #numbers are not GitHub's. */
+/** Text that is code, or that a person types: its #numbers and hashes are not GitHub's. */
 const NOT_PROSE = "code, pre, textarea, input";
 
 interface Hovered {
-  number: number;
+  ref: TextRef;
   rect: DOMRect;
   /** In a link of the Markdown, which goes where it says when clicked. */
   linked: boolean;
@@ -51,7 +51,7 @@ function caretAt(x: number, y: number): { node: Node; offset: number } | undefin
 
 const inConversation = (scope: HTMLElement, el: Element | null): el is Element => Boolean(el && scope.contains(el) && el.closest("article") && !el.closest(NOT_PROSE));
 
-/** The #number under the point, in a card of the conversation's timeline, and where it is. */
+/** The reference under the point, in a card of the conversation's timeline, and where it is. */
 function hoveredAt(scope: HTMLElement, x: number, y: number): Hovered | undefined {
   const caret = caretAt(x, y);
   const node = caret?.node;
@@ -63,16 +63,17 @@ function hoveredAt(scope: HTMLElement, x: number, y: number): Hovered | undefine
   range.setStart(node, ref.start);
   range.setEnd(node, ref.end);
   const rect = [...range.getClientRects()].find((r) => x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1);
-  return rect ? { number: ref.number, rect, linked: Boolean(node.parentElement?.closest("a")) } : undefined;
+  return rect ? { ref, rect, linked: Boolean(node.parentElement?.closest("a")) } : undefined;
 }
 
-/** The #numbers of the conversation that are not in a link already. */
+/** The references of the conversation that are not in a link already. */
 function refRanges(scope: HTMLElement): Range[] {
   const ranges: Range[] = [];
   const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = node as Text;
-    if (!text.data.includes("#") || !inConversation(scope, text.parentElement) || text.parentElement.closest("a")) continue;
+    // Every reference has a digit.
+    if (!/\d/.test(text.data) || !inConversation(scope, text.parentElement) || text.parentElement.closest("a")) continue;
     for (const ref of refsIn(text.data)) {
       const range = document.createRange();
       range.setStart(text, ref.start);
@@ -135,8 +136,8 @@ function CardBody({ card, repo }: { card: ItemCard; repo: string }) {
   );
 }
 
-function Card({ machine, repo, at }: { machine: string; repo: string; at: Hovered }) {
-  const r = useRequest<ItemCard | null>(readOp(machine, "card", { repo, number: at.number }), { staleSeconds: 300 });
+function Card({ machine, repo, number, at }: { machine: string; repo: string; number: number; at: Hovered }) {
+  const r = useRequest<ItemCard | null>(readOp(machine, "card", { repo, number }), { staleSeconds: 300 });
   const card = r.data;
   // Below the #number, or above it when the window's bottom is near; within the window's width.
   const left = Math.max(8, Math.min(at.rect.left, window.innerWidth - WIDTH - 8));
@@ -146,9 +147,13 @@ function Card({ machine, repo, at }: { machine: string; repo: string; at: Hovere
       {card ? (
         <CardBody card={card} repo={repo} />
       ) : card === null ? (
-        <p className="text-muted-foreground">#{at.number} は、このリポジトリの Issue にも Pull request にもありません。</p>
+        <p className="text-muted-foreground">
+          #{number} は、{repo} の Issue にも Pull request にもありません。
+        </p>
       ) : r.error ? (
-        <p className="text-red-600 dark:text-red-400">#{at.number} を読めませんでした：{r.error}</p>
+        <p className="text-red-600 dark:text-red-400">
+          #{number} を読めませんでした：{r.error}
+        </p>
       ) : (
         <div role="status" aria-label="読み込み中">
           <SkeletonText lines={3} />
@@ -184,7 +189,7 @@ function Hovercard() {
       frame = requestAnimationFrame(() => {
         const found = hoveredAt(scope, x, y);
         scope.style.cursor = found && !found.linked ? "pointer" : "";
-        const key = found && `${found.number}@${Math.round(found.rect.left)},${Math.round(found.rect.top)}`;
+        const key = found && `${found.ref.repo ?? ""}${found.ref.number ?? found.ref.sha}@${Math.round(found.rect.left)},${Math.round(found.rect.top)}`;
         if (key === current) return;
         current = key;
         clearTimeout(timer);
@@ -198,8 +203,7 @@ function Hovercard() {
       const found = hoveredAt(scope, e.clientX, e.clientY);
       if (!found || found.linked) return;
       e.preventDefault();
-      // GitHub opens a pull request's page from its number's issue page.
-      window.open(`https://github.com/${repo}/issues/${found.number}`, "_blank", "noopener,noreferrer");
+      window.open(refUrl(found.ref, repo), "_blank", "noopener,noreferrer");
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && hide();
 
@@ -243,7 +247,7 @@ function Hovercard() {
   return (
     <>
       <span ref={anchor} hidden />
-      {hovered && <Card machine={machine} repo={repo} at={hovered} />}
+      {hovered?.ref.number !== undefined && <Card machine={machine} repo={hovered.ref.repo ?? repo} number={hovered.ref.number} at={hovered} />}
     </>
   );
 }

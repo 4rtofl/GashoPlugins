@@ -251,7 +251,7 @@ export function askSteps(kind: CleanupKind, pr: Item["pr"], merge: { method: Mer
     canPush(pr) ? "base とのコンフリクトがあれば取り込んで解決し、push します。解決で中身が変わったときは、マージせずにコメントします" : "base とのコンフリクトがあれば、マージせずに止めます（head に push できないため）",
     "チェックが通るのを待ちます",
     pr.own ? "自分の Pull request なので、approve はしません" : "レビューの結果を元に approve します",
-    `${METHOD_TEXT[merge.method]} でマージします`,
+    pr.own ? `${METHOD_TEXT[merge.method]} で、ブランチのルール（approve が要る）を迂回して（--admin）マージします` : `${METHOD_TEXT[merge.method]} でマージします`,
     ...(merge.deleteBranch && !pr.fork ? [`GitHub の head のブランチ（${pr.branch}）を消します`] : []),
   ];
 }

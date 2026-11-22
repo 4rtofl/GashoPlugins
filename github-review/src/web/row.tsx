@@ -3,7 +3,7 @@
 // worktrees it has on the working servers, and its buttons: "マージしてもらう", "差し戻す" or "修正してもらう" for the
 // verdict, "worktree を作る" (with the template to send) when it has none, "開く" (or, in the lower part of the page,
 // "新たにセッションを作成する") and "片付ける" when it has one, and "レビューする" (with the template to send) on my own
-// open one with a worktree. A review worktree whose folder is gone does not open: it is made again or removed.
+// open one with a worktree, unless "修正してもらう" is there. A review worktree whose folder is gone does not open: it is made again or removed.
 // Pressing the row opens its side panel (a page on a phone).
 import {
   Check,
@@ -273,14 +273,15 @@ const canReview = ({ pr, spots }: Item, shared: RowShared | undefined): boolean 
 
 /**
  * "レビューする" on my own open pull request with a worktree (the one I made it in, so "worktree を作る" is not there):
- * a new session in it gets the template. Not there while a session in the worktree works, as AgentAsk says then.
+ * a new session in it gets the template. Not there while a session in the worktree works, as AgentAsk says then, nor
+ * while the verdict calls for "修正してもらう": the review to act on is there already.
  */
 export function ReviewMenu({ item, reading }: { item: Item; reading?: OwnReading | undefined }) {
   const shared = useContext(RowContext);
-  const { shown } = useWork(item, reading);
+  const { ask, shown } = useWork(item, reading);
   const { pr, spots } = item;
   const placed = spots.filter((s) => s.worktree && !s.worktree.missing);
-  if (!shared || !canReview(item, shared) || shown) return null;
+  if (!shared || !canReview(item, shared) || shown || ask?.kind === "fix") return null;
   const { tools, run } = shared;
   return (
     <TemplateMenu
