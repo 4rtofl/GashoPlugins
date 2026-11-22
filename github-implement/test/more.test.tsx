@@ -33,6 +33,20 @@ describe("locking the conversation", () => {
     expect(writes()[1]).toMatchObject({ op: "lock", lock: true, reason: "too_heated" });
   });
 
+  it("puts the focus back where it was before F8 when the toast's Undo is pressed from the keys", async () => {
+    reads({ locked: { data: { locked: true, reason: "too_heated" } } });
+    show();
+    const unlock = screen.getByRole("button", { name: "ロックを外す" });
+    unlock.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{F8}");
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "元に戻す" }));
+    // The button goes away as it is pressed.
+    await userEvent.keyboard("{Enter}");
+    expect(writes()[1]).toMatchObject({ op: "lock", lock: true });
+    expect(document.activeElement).toBe(unlock);
+  });
+
   it("offers no lock when its state could not be read", () => {
     reads({ locked: { error: "gh: HTTP 404" } });
     show();

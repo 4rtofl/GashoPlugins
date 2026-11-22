@@ -1,8 +1,7 @@
 // ⌘K: another tab of the screen (コミット, チェック, …), and the box for a new comment under the body.
 import { MessageSquarePlus } from "lucide-react";
-import { usePluginState } from "@gasho/plugin-sdk";
 import type { PaletteCommand } from "../../palette.tsx";
-import { useItem } from "../context.tsx";
+import { useChosenTab, useItem } from "../context.tsx";
 import type { ItemCommands } from "../palette.tsx";
 import { partsOf, type ItemTab } from "../parts.ts";
 
@@ -22,11 +21,10 @@ function focusWhenShown(selector: string): void {
 }
 
 function useTabCommands(): PaletteCommand[] {
-  const { item, where } = useItem();
+  const { item } = useItem();
   const tabs = TABS.filter((t) => t.kinds.includes(item.kind));
-  // The key and the first value of view.tsx, which shows the tab chosen.
-  const [chosen, setChosen] = usePluginState<string>(`tab:${where.repo}#${where.number}`, tabs[0]?.id ?? "");
-  const shown = tabs.find((t) => t.id === chosen) ?? tabs[0];
+  const [chosen, setChosen] = useChosenTab(tabs.map((t) => t.id));
+  const shown = tabs.find((t) => t.id === chosen);
   return [
     {
       id: "comment",

@@ -3,15 +3,17 @@
 // on a phone it takes the screen, with a row of keys that are hard to type there.
 import { ArrowUp, CircleCheck, CircleStop, CircleX, CornerDownLeft, Ellipsis, LoaderCircle, Trash2, TriangleAlert, Undo2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type RefObject } from "react";
-import { cn, Panel, PANEL_BUTTON, useCall, useDaemonReady, useNow, useSetting, type PanelProps } from "@gasho/plugin-sdk";
-import type { OutputAnswer, ShellJob } from "../types.ts";
-import { plainText, toLines, type Line, type Style } from "./ansi";
+import { cn, Panel, PANEL_BUTTON, useCall, useDaemonReady, useNow, useRequest, useSetting, type PanelProps } from "@gasho/plugin-sdk";
+import type { OutputAnswer, ShellJob, StatusAnswer } from "../types.ts";
+import { lastLines, linesFrom, plainText, type Line, type Style } from "./ansi";
+import { onBackground, paletteFrom, type Palette } from "./colors";
 import { useShell } from "./follow";
 import { commandHistory, commandSummary, duration, folderLabel, insideFolder } from "./format";
 import { addJob, joinPiece, windowEnd, type OutputWindow } from "./state";
 
-/** Lines of an ended command shown until it is opened, and lines shown per page once it is. */
+/** Lines of an ended command shown until it is opened (characters at most, for a long line), and lines shown per page once it is. */
 const COLLAPSED_LINES = 20;
+const COLLAPSED_CHARS = 4096;
 const PAGE_LINES = 2000;
 /** After "停止", the button offers "強制終了" this long later. */
 const STOP_TO_KILL_MS = 3000;
@@ -37,8 +39,16 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
   const measureRef = useRef<HTMLSpanElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const atBottom = useRef(true);
+  /** Output read whole for "出力をコピー" that could not be copied then: copied at the next press. */
+  const readForCopy = useRef<{ id: string; text: string }>(undefined);
+  const palette = usePalette(rootRef);
 
   const running = state.jobs.filter((j) => j.state === "running");
+  // The header's number (index.tsx) is read every 10 seconds; the panel sees a command start or end at once.
+  const badge = useRequest<StatusAnswer>(enabled ? { machine: machine.id, sessionId: session.sessionId, method: "status" } : undefined);
+  useEffect(() => {
+    if (state.loaded && badge.data && badge.data.running !== running.length) badge.reload();
+  }, [state.loaded, running.length]);
   const now = useNow(running.length > 0 ? 1000 : 60_000);
   const folder = state.folder ?? session.cwd;
   const cwd = state.cwd ?? folder;
@@ -122,7 +132,7 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
   };
   const clear = async (job?: ShellJob) => {
     setError(undefined);
-    const r = await call(target("clear", job ? { job: job.id } : {}, job ? `シェルの記録を消した${said(job.command)}` : "シェルの記録をすべて消した"));
+    const r = await call(target("clear", job ? { job: job.id } : {}, job ? `シェルの記録を消した${said(job.command)}` : "終わったコマンドの記録をすべて消した"));
     if (!r.ok) setError(r.error);
   };
   /** Reads the output before what is here, up to READ_CHARS. */
@@ -143,24 +153,46 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
     });
     return joined;
   };
-  const copyOutput = async (job: ShellJob) => {
-    const w = state.windows[job.id];
-    let text = w?.text ?? "";
-    // All the output that is kept, not only what is shown: read in stretches when it is not all here.
-    if (job.state !== "running" && (!w || w.from > job.dropped || windowEnd(w) < job.size)) {
-      text = "";
-      for (let from = job.dropped; from < job.size; ) {
-        const r = await call<OutputAnswer>(target("output", { job: job.id, from, limit: READ_CHARS }));
-        if (!r.ok) {
-          setError(r.error);
-          return;
-        }
-        if (!r.data.text) break;
-        text += r.data.text;
-        from = r.data.from + r.data.text.length;
-      }
+  /**
+   * All the output that is kept of a command, read in stretches. For one that runs, up to where it was at the first
+   * answer: output that comes faster than it is read would else keep it reading until the command ends.
+   */
+  const readAll = async (job: ShellJob): Promise<string> => {
+    let text = "";
+    let end = Infinity;
+    for (let from = job.dropped; ; ) {
+      const r = await call<OutputAnswer>(target("output", { job: job.id, from, limit: Math.min(READ_CHARS, end - from) }));
+      if (!r.ok) throw new Error(r.error);
+      end = Math.min(end, r.data.size);
+      // Output dropped meanwhile (it runs): what is kept now.
+      text = r.data.from === from ? text + r.data.text : r.data.text;
+      from = r.data.from + r.data.text.length;
+      if (!r.data.text || from >= end) return text;
     }
-    setNotice((await copyText(plainText(text))) ? "出力をコピーしました。" : "コピーできませんでした。");
+  };
+  const copyOutput = (job: ShellJob) => {
+    setError(undefined);
+    const more = job.state === "running";
+    const done = (ok: boolean) => setNotice(ok ? "出力をコピーしました。" : "コピーできませんでした。");
+    const w = state.windows[job.id];
+    const read = readForCopy.current?.id === job.id ? readForCopy.current.text : undefined;
+    readForCopy.current = undefined;
+    const here = w && w.from <= job.dropped && windowEnd(w) >= job.size ? w.text : read;
+    if (here !== undefined) {
+      void copyText(plainText(here, more)).then(done);
+      return;
+    }
+    // Not all here: read from the daemon part. Copying waits for it, which Safari allows only through ClipboardItem;
+    // else the output read is kept, and the next press copies it while the press is being handled.
+    const reading = readAll(job);
+    void copyText(reading.then((t) => plainText(t, more))).then(
+      async (ok) => {
+        if (ok) return done(true);
+        readForCopy.current = { id: job.id, text: await reading };
+        setNotice("出力を読み込みました。もう一度「出力をコピー」を押すとコピーします。");
+      },
+      (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+    );
   };
   const putInput = (command: string) => {
     setInput(command);
@@ -202,6 +234,7 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
               skew={state.skew}
               wrap={wrap !== false}
               shown={opened[job.id]}
+              palette={palette}
               stopAt={stopAt[job.id]}
               enabled={enabled}
               onOpen={async () => {
@@ -215,8 +248,7 @@ export function ShellPanel({ machine, session, docked }: PanelProps) {
                   return rest;
                 })
               }
-              onMore={() => {
-                const lines = state.windows[job.id] ? toLines(state.windows[job.id]!.text).length : 0;
+              onMore={(lines) => {
                 const shown = opened[job.id] ?? PAGE_LINES;
                 if (lines > shown) setOpened((o) => ({ ...o, [job.id]: shown + PAGE_LINES }));
                 else void readEarlier(job).then(() => setOpened((o) => ({ ...o, [job.id]: shown + PAGE_LINES })));
@@ -285,11 +317,13 @@ interface JobBlockProps {
   wrap: boolean;
   /** Lines shown once opened; undefined while it shows its last lines only. */
   shown: number | undefined;
+  palette: Palette | undefined;
   stopAt: number | undefined;
   enabled: boolean;
   onOpen: () => void;
   onClose: () => void;
-  onMore: () => void;
+  /** Shows more before what shows (`lines`: the lines here). */
+  onMore: (lines: number) => void;
   onStop: (signal: "INT" | "KILL") => void;
   onAgain: () => void;
   onPutInput: () => void;
@@ -300,13 +334,17 @@ interface JobBlockProps {
 
 function JobBlock(p: JobBlockProps) {
   const { job, win } = p;
-  const text = win?.text;
-  const lines = useMemo(() => (text !== undefined ? toLines(text) : []), [text]);
   const runningNow = job.state === "running";
+  /** More of the text here may come: the command runs, or the rest of its output is still to be read. */
+  const growing = runningNow || (win !== undefined && windowEnd(win) < job.size);
+  /** The text here starts after the first character kept, maybe inside a line: that line is not shown. */
+  const partial = win !== undefined && win.from > job.dropped;
+  const text = win?.text;
+  const lines = useMemo(() => (text !== undefined ? linesFrom(text, partial, growing) : []), [text, partial, growing]);
+  const short = useMemo(() => lastLines(lines, COLLAPSED_LINES, COLLAPSED_CHARS), [lines]);
   const open = p.shown !== undefined;
-  const limit = open ? (p.shown as number) : COLLAPSED_LINES;
-  const hidden = Math.max(0, lines.length - limit);
-  const visible = hidden > 0 ? lines.slice(-limit) : lines;
+  const hidden = open ? Math.max(0, lines.length - (p.shown as number)) : 0;
+  const visible = open ? (hidden > 0 ? lines.slice(-(p.shown as number)) : lines) : short.lines;
   /** Characters of output kept on the working server but not here. */
   const notHere = (win ? win.from : job.size) - job.dropped;
   const more = hidden > 0 || notHere > 0;
@@ -335,14 +373,14 @@ function JobBlock(p: JobBlockProps) {
             <p className="mb-1.5 text-xs text-muted-foreground">
               {runningNow ? (
                 hidden > 0 ? (
-                  <button type="button" onClick={p.onMore} className="underline-offset-2 hover:text-foreground hover:underline">
+                  <button type="button" onClick={() => p.onMore(lines.length)} className="underline-offset-2 hover:text-foreground hover:underline">
                     前の {Math.min(hidden, PAGE_LINES).toLocaleString("ja-JP")} 行を表示
                   </button>
                 ) : (
                   "これより前の出力は、コマンドが終わってから読めます。"
                 )
               ) : (
-                <button type="button" onClick={p.onMore} className="underline-offset-2 hover:text-foreground hover:underline">
+                <button type="button" onClick={() => p.onMore(lines.length)} className="underline-offset-2 hover:text-foreground hover:underline">
                   前を読む
                 </button>
               )}
@@ -353,10 +391,10 @@ function JobBlock(p: JobBlockProps) {
               先頭の {job.dropped.toLocaleString("ja-JP")} 文字は、残す量の上限を超えたので残っていません。
             </p>
           )}
-          <Output lines={visible} wrap={p.wrap} />
+          <Output lines={visible} wrap={p.wrap} palette={p.palette} />
         </div>
       )}
-      {!runningNow && (open ? lines.length > COLLAPSED_LINES : more) && (
+      {!runningNow && (open ? short.cut : short.cut || notHere > 0) && (
         <div className="mt-1 flex gap-3 text-xs text-muted-foreground">
           {open ? (
             <button type="button" onClick={p.onClose} className="underline-offset-2 hover:text-foreground hover:underline">
@@ -439,7 +477,7 @@ function JobStatus({
   }
 }
 
-function Output({ lines, wrap }: { lines: Line[]; wrap: boolean }) {
+function Output({ lines, wrap, palette }: { lines: Line[]; wrap: boolean; palette: Palette | undefined }) {
   return (
     <div className={cn("rcs-output font-mono text-xs leading-relaxed", wrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "overflow-x-auto whitespace-pre")}>
       {lines.map((line, i) => (
@@ -447,11 +485,14 @@ function Output({ lines, wrap }: { lines: Line[]; wrap: boolean }) {
           {line.length === 0 ? (
             <br />
           ) : (
-            line.map((s, k) => (
-              <span key={k} className={spanClass(s.style)} style={spanStyle(s.style)}>
-                {s.text}
-              </span>
-            ))
+            line.map((s, k) => {
+              const own = palette ? onBackground(s.style, palette) : undefined;
+              return (
+                <span key={k} className={spanClass(s.style, own !== undefined)} style={own ?? spanStyle(s.style)}>
+                  {s.text}
+                </span>
+              );
+            })
           )}
         </div>
       ))}
@@ -465,13 +506,16 @@ function colors(s: Style): { fg?: number | string; bg?: number | string; fgIsBg:
   return { fg: s.bg, bg: s.fg, fgIsBg: s.bg === undefined, bgIsFg: s.fg === undefined };
 }
 
-function spanClass(s: Style): string | undefined {
-  const { fg, bg, fgIsBg, bgIsFg } = colors(s);
+/** `colored`: its colors are set in its style (on a background of its own, colors.ts), so that only the rest is here. */
+function spanClass(s: Style, colored: boolean): string | undefined {
   const c: string[] = [];
-  if (typeof fg === "number") c.push(`rcs-fg-${fg}`);
-  else if (fgIsBg) c.push("rcs-fg-bg");
-  if (typeof bg === "number") c.push(`rcs-bg-${bg}`);
-  else if (bgIsFg) c.push("rcs-bg-fg");
+  if (!colored) {
+    const { fg, bg, fgIsBg, bgIsFg } = colors(s);
+    if (typeof fg === "number") c.push(`rcs-fg-${fg}`);
+    else if (fgIsBg) c.push("rcs-fg-bg");
+    if (typeof bg === "number") c.push(`rcs-bg-${bg}`);
+    else if (bgIsFg) c.push("rcs-bg-fg");
+  }
   if (s.bold) c.push("rcs-b");
   if (s.dim) c.push("rcs-d");
   if (s.italic) c.push("rcs-i");
@@ -484,6 +528,26 @@ function spanStyle(s: Style): CSSProperties | undefined {
   const { fg, bg } = colors(s);
   if (typeof fg !== "string" && typeof bg !== "string") return undefined;
   return { ...(typeof fg === "string" ? { color: fg } : {}), ...(typeof bg === "string" ? { backgroundColor: bg } : {}) };
+}
+
+/** The palette of the theme on screen, as the stylesheet sets it on the panel; read again when the theme changes. */
+function usePalette(root: RefObject<HTMLElement | null>): Palette | undefined {
+  const [palette, setPalette] = useState<Palette>();
+  useLayoutEffect(() => {
+    const read = () => {
+      const el = root.current;
+      if (!el) return;
+      const style = getComputedStyle(el);
+      const next = paletteFrom((name) => style.getPropertyValue(name));
+      setPalette((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    };
+    read();
+    // Gasho's screen is dark while <html> has the class "dark".
+    const watcher = new MutationObserver(read);
+    watcher.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => watcher.disconnect();
+  }, [root]);
+  return palette;
 }
 
 // ---- small parts ----
@@ -616,7 +680,8 @@ function Composer(p: ComposerProps) {
     setSending(true);
     const ok = await p.onRun(command);
     setSending(false);
-    if (!ok) return;
+    // What was typed while it was being sent stays in the box.
+    if (!ok || p.inputRef.current?.value !== command) return;
     p.onChange("");
     setAt(undefined);
     draft.current = "";
@@ -654,7 +719,10 @@ function Composer(p: ComposerProps) {
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const el = e.currentTarget;
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+    // Keys pressed for a Japanese (or other) input method belong to it: ↑ and ↓ pick a candidate, Esc cancels. Safari
+    // sends the Enter that ends a conversion after it has ended, with keyCode 229.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void submit();
       return;
@@ -685,7 +753,8 @@ function Composer(p: ComposerProps) {
   };
 
   return (
-    <div className="sticky bottom-0 -mx-4 -mb-4 space-y-1.5 border-t border-border bg-background px-4 pt-2 pb-3">
+    // The panel's content scrolls with a padding of 1rem; sticking 1rem below its edge keeps nothing showing under the box.
+    <div className="sticky -bottom-4 -mx-4 -mb-4 space-y-1.5 border-t border-border bg-background px-4 pt-2 pb-3">
       <div className="flex min-w-0 items-center gap-2 text-xs">
         <span className={cn("min-w-0 truncate font-mono", p.outside ? "text-amber-400" : "text-muted-foreground")} title={p.cwd}>
           {p.cwdLabel}
@@ -778,23 +847,40 @@ function Composer(p: ComposerProps) {
   );
 }
 
-/** Copies text: with the Clipboard API where the page may use it, else as Gasho over plain http must (execCommand). */
-async function copyText(text: string): Promise<boolean> {
+/**
+ * Copies text: with the Clipboard API where the page may use it, else as Gasho over plain http must (execCommand). Both
+ * work only while a press is being handled, in Safari strictly: text that comes later (read from the daemon part) goes
+ * to the clipboard at once as a ClipboardItem, which waits for it, where there is one. Rejects when `text` does.
+ */
+async function copyText(text: string | Promise<string>): Promise<boolean> {
+  if (typeof text !== "string" && window.isSecureContext && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": text.then((t) => new Blob([t], { type: "text/plain" })) })]);
+      return true;
+    } catch {
+      // falls back below
+    }
+  }
+  const value = await text;
   try {
     if (window.isSecureContext && navigator.clipboard) {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(value);
       return true;
     }
   } catch {
     // falls back below
   }
   const area = document.createElement("textarea");
-  area.value = text;
+  area.value = value;
   area.setAttribute("readonly", "");
   area.style.position = "fixed";
   area.style.opacity = "0";
+  // Under 16px, Safari on an iPhone zooms the page in on it.
+  area.style.fontSize = "16px";
   document.body.appendChild(area);
   area.select();
+  // Safari on an iPhone does not select with select() alone.
+  area.setSelectionRange(0, value.length);
   let ok = false;
   try {
     ok = document.execCommand("copy");

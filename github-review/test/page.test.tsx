@@ -1,7 +1,8 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import { answerCalls, callsOf, lastRequest, machine, respond, sdk, set } from "../../test/sdk.tsx";
+import { answerCalls, callsOf, changed, lastRequest, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
+import { PrPanel } from "../src/web/detail.tsx";
 import { ReviewPage } from "../src/web/page.tsx";
 import type { Listing, PrRow } from "../src/types.ts";
 
@@ -123,5 +124,53 @@ describe("ReviewPage", () => {
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByText("mac に作り、送る指示")).toBeTruthy();
     expect(within(menu).getByText("linux に作り、送る指示")).toBeTruthy();
+  });
+});
+
+describe("the lists of the working servers", () => {
+  it("are asked for as the page opens, without reading GitHub again, and not of a working server that is not connected", () => {
+    set({ machines: [machine({ id: "m1", name: "mac" }), machine({ id: "m2", name: "linux", connected: false })] });
+    respond({ list: listed() });
+    render(<ReviewPage params={{}} />);
+    expect(lastRequest("list")).toMatchObject({ machine: "m1", params: { query: "is:open" } });
+    expect(sdk.request.mock.calls.some(([t]) => t.machine === "m2")).toBe(false);
+    expect(callsOf("list")).toEqual([]);
+  });
+
+  it("are asked for by the panel of a pull request with the page's search words, so that the two get the same answer", async () => {
+    respond({ list: listed({ requested: [pr()] }) });
+    render(
+      <>
+        <ReviewPage params={{}} />
+        <PrPanel params={{ repo: "4rtofl/app", number: "7" }} docked />
+      </>,
+    );
+    const box = screen.getByRole("textbox", { name: "Pull request を探す" });
+    await userEvent.clear(box);
+    await userEvent.type(box, "label:bug{Enter}");
+    sdk.request.mockClear();
+    act(() => changed());
+    const asked = sdk.request.mock.calls.flatMap(([t]) => (t.method === "list" ? [JSON.stringify(t.params)] : []));
+    expect(asked).toEqual([JSON.stringify({ query: "label:bug" }), JSON.stringify({ query: "label:bug" })]);
+  });
+
+  it("are read from GitHub again once the session at work in a pull request's worktree is done, which shows until that list comes", async () => {
+    // A number of its own: what the rows saw end is remembered on the page for a while (asked.ts).
+    const worktree = { path: "/work/review-30", branch: "pr-30", review: true };
+    const at = (status: "busy" | "idle") => [machine({ canLaunch: true, sessions: [session({ cwd: worktree.path, managed: true, status })] })];
+    const mark = { verdict: "mergeable" as const, sha: "abc1234", url: "https://github.com/4rtofl/app/pull/30#issuecomment-1" };
+    const data = listing({ requested: [pr({ number: 30, url: "https://github.com/4rtofl/app/pull/30", head: "abc1234", mark, place: { primary: "/work/app", worktree } })] });
+    let listedAt: number | undefined;
+    respond({ list: () => ({ data, at: listedAt }) });
+    set({ machines: at("busy") });
+    render(<ReviewPage params={{}} />);
+    expect(screen.getByText("セッションが作業しています")).toBeTruthy();
+    act(() => set({ machines: at("idle") }));
+    await waitFor(() => expect(sdk.reload).toHaveBeenCalledWith("list"));
+    expect(callsOf("list")).toEqual([{ query: "is:open", fresh: true }]);
+    expect(screen.getByText("セッションが作業しています")).toBeTruthy();
+    listedAt = Date.now() + 1;
+    act(() => changed());
+    expect(await screen.findByRole("button", { name: "マージしてもらう" })).toBeTruthy();
   });
 });
