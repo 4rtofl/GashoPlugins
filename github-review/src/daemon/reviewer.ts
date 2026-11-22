@@ -13,7 +13,7 @@ import { MAX_QUERY, MAX_REPOS, SEARCH_LIMIT, type Listing, type Place, type PrDe
 import { countQuery, detailArgs, ghError, inScope, listArgs, namesArgs, parseDetail, parseList, parseNames, scopeWords, upperSearches, watchedQueries, type ListAsk, type Lookup, type ParsedPr } from "./gh.ts";
 import type { Cleanups } from "./cleanups.ts";
 import type { SessionRemovals } from "./session-removals.ts";
-import { inParallel, PARALLEL_GIT, prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, worktreesStamp, type Clone, type Exec } from "./git.ts";
+import { inParallel, PARALLEL_GIT, prWorktree, readClone, repoOptions, ReviewError, reviewNumbers, worktreesStamp, type Clone, type Exec, type ReposRead } from "./git.ts";
 
 export type GitHubRead = (args: string[], o?: { maxAgeSeconds?: number; timeoutMs?: number; maxBuffer?: number }) => Promise<{ stdout: string }>;
 
@@ -52,7 +52,10 @@ export class Reviewer {
   /** The file of the watched repositories could not be read as JSON: they start from none, and the page says so. */
   private broken = false;
   private loaded: Promise<void> | undefined;
-  private options: { at: number; folders: string; list: RepoOption[] } | undefined;
+  /** `unread`: the folders git failed in, with nothing read there before. */
+  private options: { at: number; folders: string; list: RepoOption[]; unread: string[] } | undefined;
+  /** What the folders held when they were listed last, for those git fails in the next time. */
+  private reposRead: ReposRead | undefined;
   private listing: Promise<RepoOption[]> | undefined;
   /** By the name an origin says (in lower case), the name GitHub has now, and when it was read. */
   private names = new Map<string, { name: string; at: number }>();
@@ -90,10 +93,12 @@ export class Reviewer {
   /** Lists the repositories in the folders again (once at a time). */
   private relist(): Promise<RepoOption[]> {
     const folders = this.deps.folders();
-    this.listing ??= repoOptions(this.deps.exec, folders)
+    this.listing ??= repoOptions(this.deps.exec, folders, this.reposRead)
       .then(
-        (list) => {
-          this.options = { at: this.now(), folders: JSON.stringify(folders), list };
+        ({ list, read, unread }) => {
+          this.options = { at: this.now(), folders: JSON.stringify(folders), list, unread };
+          this.reposRead = read;
+          if (unread.length > 0) this.deps.log(`github-review: git could not read ${unread.join(", ")}`);
           return list;
         },
         (e: unknown) => {
@@ -279,7 +284,8 @@ export class Reviewer {
     const watchedRepos: string[] = [];
     for (const p of this.watched) {
       const o = options.find((x) => x.path === p);
-      if (!o) errors.push(`${p}：Claude Code が信頼しているフォルダーの repo ではないので、見られません。`);
+      if (!o && this.options?.unread.includes(p)) errors.push(`${p}：git で読めなかったので、見られません。`);
+      else if (!o) errors.push(`${p}：Claude Code が信頼しているフォルダーの repo ではないので、見られません。`);
       else if (!o.github) errors.push(`${p}：origin が GitHub の repo ではないので、見られません。`);
       else if (!watchedRepos.some((r) => sameRepo(r, o.github ?? ""))) watchedRepos.push(o.github);
     }

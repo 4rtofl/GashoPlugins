@@ -130,12 +130,16 @@ const succeeds = (p: Promise<unknown>): Promise<boolean> => p.then(
   () => false,
 );
 
+/** git's words or how it was stopped, raw. */
+const gitText = (e: unknown): string => {
+  const err = (e ?? {}) as { stderr?: unknown; message?: unknown };
+  return [err.stderr, err.message].filter((t): t is string => typeof t === "string").join("\n");
+};
+
 /** git's own words for a failure: its last line that says something. */
 function gitWords(e: unknown): string {
-  const err = (e ?? {}) as { stderr?: unknown; message?: unknown; killed?: unknown };
-  if (err.killed === true) return "git が時間内に終わりませんでした。";
-  const text = [err.stderr, err.message].filter((t): t is string => typeof t === "string").join("\n");
-  const lines = text
+  if ((e as { killed?: unknown } | null)?.killed === true) return "git が時間内に終わりませんでした。";
+  const lines = gitText(e)
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("Command failed") && !l.startsWith("hint:"));
@@ -172,30 +176,65 @@ export async function inParallel<T, R>(items: readonly T[], n: number, fn: (item
   return out;
 }
 
+/** What repoOptions found in the folders, used again where git fails the next time. */
+export interface ReposRead {
+  /** By folder, its repository's common git dir; null when it is in none. */
+  commons: Map<string, string | null>;
+  /** By common git dir, its repository; null when it is bare. */
+  repos: Map<string, RepoOption | null>;
+}
+
+export interface RepoOptions {
+  list: RepoOption[];
+  read: ReposRead;
+  /** The folders (real paths) git failed in, with nothing read there before: what they hold is not known. */
+  unread: string[];
+}
+
 /**
  * The repositories in `folders` (those Gasho can start sessions in), one per repository however many of its worktrees
- * are there, by their primary checkout. Folders that are not in a repository and bare repositories are left out.
+ * are there, by their primary checkout. Folders that are not in a repository and bare repositories are left out. Where
+ * git fails without saying so (too slow on a busy working server, say), what `before` found there is used.
  */
-export async function repoOptions(exec: Exec, folders: readonly string[]): Promise<RepoOption[]> {
-  const commons = await inParallel(folders, PARALLEL_GIT, (dir) =>
-    git(exec, dir, ["rev-parse", "--git-common-dir"]).then((s) => path.resolve(dir, s.trim()), () => undefined),
-  );
-  // One folder of each repository, however many of its worktrees are among the folders.
-  const repos = new Map<string, string>();
-  folders.forEach((dir, i) => {
-    const common = commons[i];
-    if (common && !repos.has(common)) repos.set(common, dir);
+export async function repoOptions(exec: Exec, folders: readonly string[], before?: ReposRead): Promise<RepoOptions> {
+  const read: ReposRead = { commons: new Map(), repos: new Map() };
+  await inParallel(folders, PARALLEL_GIT, async (dir) => {
+    const common = await git(exec, dir, ["rev-parse", "--git-common-dir"]).then(
+      (s): string | null | undefined => path.resolve(dir, s.trim()),
+      // A folder gone is in none either.
+      (e: unknown) => (/not a git repository|cannot change to/.test(gitText(e)) ? null : before?.commons.get(dir)),
+    );
+    if (common !== undefined) read.commons.set(dir, common);
   });
-  const found = await inParallel([...repos.values()], PARALLEL_GIT, async (dir): Promise<RepoOption | undefined> => {
-    const primary = await git(exec, dir, ["worktree", "list", "--porcelain"]).then((s) => parseWorktrees(s)[0], () => undefined);
-    if (!primary || primary.bare) return undefined;
-    const github = await git(exec, primary.path, ["remote", "get-url", "origin"]).then(parseGitHubUrl, () => undefined);
-    return { path: await realPath(primary.path), ...(github ? { github } : {}) };
+  // One folder of each repository, however many of its worktrees are among the folders.
+  const first = new Map<string, string>();
+  for (const dir of folders) {
+    const common = read.commons.get(dir);
+    if (common && !first.has(common)) first.set(common, dir);
+  }
+  await inParallel([...first], PARALLEL_GIT, async ([common, dir]) => {
+    try {
+      const primary = parseWorktrees(await git(exec, dir, ["worktree", "list", "--porcelain"]))[0];
+      if (!primary || primary.bare) return read.repos.set(common, null);
+      const github = await git(exec, primary.path, ["remote", "get-url", "origin"]).then(parseGitHubUrl, (e: unknown) => {
+        if (/No such remote/.test(gitText(e))) return undefined;
+        throw e;
+      });
+      read.repos.set(common, { path: await realPath(primary.path), ...(github ? { github } : {}) });
+    } catch {
+      const was = before?.repos.get(common);
+      if (was !== undefined) read.repos.set(common, was);
+    }
+  });
+  const unknown = folders.filter((dir) => {
+    const common = read.commons.get(dir);
+    return common === undefined || (common !== null && !read.repos.has(common));
   });
   // Those on GitHub first: the others cannot be watched.
-  return found
-    .filter((o): o is RepoOption => o !== undefined)
+  const list = [...read.repos.values()]
+    .filter((o): o is RepoOption => o !== null)
     .sort((a, b) => Number(!a.github) - Number(!b.github) || (a.github ?? a.path).localeCompare(b.github ?? b.path));
+  return { list, read, unread: await Promise.all(unknown.map(realPath)) };
 }
 
 /**

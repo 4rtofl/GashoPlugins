@@ -997,6 +997,37 @@ test("list: the folders listed again do not hold up the answer; a broken watched
   await reviewer.repoOptions();
 });
 
+test("list: a folder git fails in when the folders are listed again keeps what was read there; one never read says git could not read it; one no longer a repository leaves", async () => {
+  const s = await setup();
+  await git(s.primary, "remote", "set-url", "origin", "https://github.com/o/r.git");
+  const file = path.join(s.root, "watched.json");
+  await fs.writeFile(file, JSON.stringify({ paths: [s.primary] }));
+  // git stopped for taking too long, as on a busy working server.
+  let failing: string | undefined = "--git-common-dir";
+  const slow: Exec = (command, args, o) =>
+    failing && args.includes(failing) ? Promise.reject(Object.assign(new Error(`Command failed: git ${args.join(" ")}`), { killed: true, stdout: "", stderr: "" })) : exec(command, args, o);
+  const github: GitHubRead = async () => ({ stdout: JSON.stringify({ data: {} }) });
+  let at = 0;
+  const reviewer = new Reviewer({ exec: slow, folders: () => [s.primary], file, log: () => {}, now: () => at });
+  const listed = async () => {
+    at += 5 * 60_000;
+    await reviewer.repoOptions();
+    const l = await reviewer.list(github, "", false);
+    return [l.repos.map((r) => r.repo), l.errors];
+  };
+  const first = await reviewer.list(github, "", false);
+  assert.deepEqual([first.repos, first.errors], [[], [`${s.primary}：git で読めなかったので、見られません。`]]);
+  failing = undefined;
+  assert.deepEqual(await listed(), [["o/r"], []]);
+  for (const step of ["--git-common-dir", "list", "get-url"]) {
+    failing = step;
+    assert.deepEqual(await listed(), [["o/r"], []], step);
+  }
+  failing = undefined;
+  await fs.rename(path.join(s.primary, ".git"), path.join(s.primary, ".git-moved"));
+  assert.deepEqual(await listed(), [[], [`${s.primary}：Claude Code が信頼しているフォルダーの repo ではないので、見られません。`]]);
+});
+
 test("list and create take the same clone of a repository cloned twice: the one with the pull request's worktree, else the watched one, else the first by path", async () => {
   const s = await setup();
   const second = path.join(s.root, "q", "main");
