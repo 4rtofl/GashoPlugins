@@ -178,11 +178,13 @@ export function logTail(log: string, failed?: Pick<Step, "startedAt" | "complete
     // The step's times are to the second: its lines are those of [start, end + 1 s). Steps that ran in its first second
     // before it, and in its last second after it (one of `if: failure()` that fails too), are inside as well. Those
     // before it succeeded, so its error is the first, and it is the last of the job's steps to start before that.
+    // Its script may print "::group::Run …" too, so only starts in those seconds are taken for those of other steps.
     const inside = lines.filter((l) => l.at >= start && l.at < end + 1000);
     const starts = jobStepStarts(inside);
+    const opening = starts.filter((i) => inside[i]!.at < start + 1000);
     const errorAt = inside.findIndex(isError);
-    const first = errorAt >= 0 ? (starts.findLast((i) => i < errorAt) ?? -1) : (starts[0] ?? -1);
-    const next = starts.find((i) => i > Math.max(errorAt, first));
+    const first = errorAt >= 0 ? (opening.findLast((i) => i < errorAt) ?? -1) : (opening[0] ?? -1);
+    const next = starts.find((i) => i > Math.max(errorAt, first) && inside[i]!.at >= end);
     let part = inside.slice(Math.max(first, 0), next);
     // The steps of a composite action start with "##[group]Run " too, and run until the one that fails: the step ends
     // at the first start after its last error (else after its own start).

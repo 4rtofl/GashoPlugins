@@ -175,6 +175,33 @@ test("a step before the failed one that ran in the same second is left out of it
   ]);
 });
 
+test("groups and errors the failed step's script prints itself before it fails stay in its log", () => {
+  const log = [
+    "2026-11-19T10:00:04.1000000Z ##[group]Run ./ci.sh",
+    "2026-11-19T10:00:04.1100000Z ./ci.sh",
+    "2026-11-19T10:00:04.1200000Z ##[endgroup]",
+    "2026-11-19T10:00:05.0000000Z ##[group]Run lint",
+    "2026-11-19T10:00:07.0000000Z ##[error]src/a.ts:1 unused variable",
+    "2026-11-19T10:00:07.1000000Z ##[endgroup]",
+    "2026-11-19T10:00:07.2000000Z ##[group]Run unit tests",
+    "2026-11-19T10:00:09.0000000Z FAIL test/foo.test.ts",
+    "2026-11-19T10:00:09.1000000Z AssertionError: expected 1 to be 2",
+    "2026-11-19T10:00:09.2000000Z ##[endgroup]",
+    "2026-11-19T10:00:09.3000000Z ##[error]Process completed with exit code 1.",
+    "2026-11-19T10:00:09.5000000Z Post job cleanup.",
+  ].join("\n");
+  assert.deepEqual(logTail(log, { startedAt: "2026-11-19T10:00:04Z", completedAt: "2026-11-19T10:00:09Z" }), [
+    "Run ./ci.sh",
+    "./ci.sh",
+    "Run lint",
+    "Error: src/a.ts:1 unused variable",
+    "Run unit tests",
+    "FAIL test/foo.test.ts",
+    "AssertionError: expected 1 to be 2",
+    "Error: Process completed with exit code 1.",
+  ]);
+});
+
 test("a step after the failed one that fails in the same second is left out of its log (real log)", () => {
   // grafana/grafana, job 134597618775: step 8 (the Playwright tests) fails at 05:30:31, when step 9 (`if: failure()`)
   // runs and fails too. The log is cut down to the lines around those, without the steps' env.
