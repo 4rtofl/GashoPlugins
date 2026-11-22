@@ -4,11 +4,18 @@
 // needs read:packages; without it, the answer says how to add it.
 // The owner is first read as the repository's, by the name its clone's origin says: after an owner was renamed, that
 // name still finds the repository, but /users/{old login} and /orgs/{old login} find no one.
+// A package's updated_at stays when a version is published: the list reads each package's newest version for that.
 import type { Package, PackageDetail, Packages, PackageType, PackageVersion } from "../types.ts";
 import { arr, githubUrl, missingScope, num, parseJson, rec, str, type Gh } from "./gh.ts";
 
 export const PACKAGE_TYPES: readonly PackageType[] = ["npm", "container", "maven", "rubygems", "nuget", "docker"];
-const VERSIONS_MAX = 100;
+export const VERSIONS_MAX = 100;
+/** What reading one package may take in all, within the package read's 30 seconds (gasho-plugin.json). */
+const PACKAGE_MS = 28_000;
+/** Packages of the list whose newest version is read (one gh each). */
+export const PUBLISHED_MAX = 30;
+/** Tags that sign or attest an image rather than name it: "sha256-<its digest>", maybe with ".sig", ".att", …. */
+const SIGNATURE_TAG = /^sha256-[0-9a-f]{64}(?:\.\w+)?$/;
 /** An owner's packages of a kind: read this many a page, and this many pages at most. */
 const PER_PAGE = 100;
 export const PACKAGE_PAGES = 10;
@@ -47,7 +54,6 @@ export function parsePackage(raw: unknown, repo?: string): Package | undefined {
     visibility: str(p.visibility) ?? "",
     ...(num(p.version_count) !== undefined ? { versions: num(p.version_count) } : {}),
     ...(str(p.created_at) ? { createdAt: str(p.created_at) } : {}),
-    ...(str(p.updated_at) ? { updatedAt: str(p.updated_at) } : {}),
     url,
   };
 }
@@ -82,15 +88,24 @@ export function parseVersions(json: string): PackageVersion[] {
     .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
-/** How to install `version` of `pkg` (of `owner`, in `repo`'s name `repoName`); undefined when the name does not tell. */
-export function installCommand(pkg: Pick<Package, "type" | "name">, owner: string, repoName: string, version?: PackageVersion): string | undefined {
+const imageTags = (v: PackageVersion): string[] => (v.tags ?? []).filter((t) => !SIGNATURE_TAG.test(t));
+
+/**
+ * How to install the newest of `versions` (newest first) of `pkg` (of `owner`, in `repo`'s name `repoName`); undefined
+ * when the name does not tell. A container's is its newest version tagged as an image ("latest" among its tags if it has
+ * it), else its newest one without tags, by its digest.
+ */
+export function installCommand(pkg: Pick<Package, "type" | "name">, owner: string, repoName: string, versions: PackageVersion[]): string | undefined {
   const o = owner.toLowerCase();
+  const version = versions[0];
   switch (pkg.type) {
     case "npm":
       return `npm install @${o}/${pkg.name}${version ? `@${version.name}` : ""} --registry=https://npm.pkg.github.com`;
     case "container": {
-      const tag = version?.tags?.[0];
-      const ref = tag ? `:${tag}` : version?.name.startsWith("sha256:") ? `@${version.name}` : "";
+      const tagged = versions.find((v) => imageTags(v).length > 0);
+      const tags = tagged ? imageTags(tagged) : [];
+      const untagged = tagged ? undefined : versions.find((v) => !v.tags?.length && v.name.startsWith("sha256:"));
+      const ref = tags.length ? `:${tags.includes("latest") ? "latest" : tags[0]}` : untagged ? `@${untagged.name}` : "";
       return `docker pull ghcr.io/${o}/${pkg.name.toLowerCase()}${ref}`;
     }
     case "rubygems":
@@ -142,7 +157,17 @@ async function packagesOfKind(ctx: Gh, base: string, type: PackageType, repo: st
   return found;
 }
 
-/** The packages of `repo` (owner/name), newest change first. */
+/** When the newest version of package `pkg` at `base` was published; undefined when it cannot be read. */
+async function publishedAt(ctx: Gh, base: string, pkg: Package, read: { repo: string; maxAgeSeconds: number }): Promise<string | undefined> {
+  try {
+    const { stdout } = await ctx.github.read(["api", `${base}/${pkg.type}/${encodeURIComponent(pkg.name)}/versions?per_page=1`], { ...read, timeoutMs: 25_000 });
+    return parseVersions(stdout)[0]?.createdAt;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The packages of `repo` (owner/name), the newest version published first. */
 export async function listPackages(ctx: Gh, repo: string, o: { maxAgeSeconds: number }): Promise<Omit<Packages, "repo">> {
   const owner = await ownerOf(ctx, repo, o);
   const base = packagesBase(owner.login, owner.kind);
@@ -160,12 +185,21 @@ export async function listPackages(ctx: Gh, repo: string, o: { maxAgeSeconds: nu
       }
     }),
   );
-  const packages = lists.flat().sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
-  return { packages, ...(missing ? { missing } : {}), ...(errors.length ? { errors } : {}) };
+  const found = lists.flat();
+  const packages = await Promise.all(
+    found.map(async (pkg, i) => {
+      const at = i < PUBLISHED_MAX ? await publishedAt(ctx, base, pkg, { repo, maxAgeSeconds: o.maxAgeSeconds }) : undefined;
+      return at ? { ...pkg, publishedAt: at } : pkg;
+    }),
+  );
+  packages.sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
+  const undated = packages.filter((p) => !p.publishedAt).length;
+  return { packages, ...(missing ? { missing } : {}), ...(errors.length ? { errors } : {}), ...(undated ? { undated } : {}) };
 }
 
 /** Package `type`/`name` of `repo`'s owner with its versions; undefined when it is not there or not the repository's. */
 export async function readPackage(ctx: Gh, repo: string, type: PackageType, name: string, o: { maxAgeSeconds: number }): Promise<Omit<PackageDetail, "repo"> | undefined> {
+  const began = Date.now();
   const owner = await ownerOf(ctx, repo, o);
   const path = `${packagesBase(owner.login, owner.kind)}/${type}/${encodeURIComponent(name)}`;
   const read = { repo, maxAgeSeconds: o.maxAgeSeconds, timeoutMs: 25_000 };
@@ -176,6 +210,20 @@ export async function readPackage(ctx: Gh, repo: string, type: PackageType, name
   const pkg = parsePackage(parseJson(info.stdout), owner.repo);
   if (!pkg) return undefined;
   const list = parseVersions(versions.stdout);
-  const install = installCommand(pkg, owner.login, owner.repo.split("/")[1] ?? "", list[0]);
-  return { package: pkg, versions: list, truncated: list.length >= VERSIONS_MAX, ...(install ? { install } : {}) };
+  const truncated = list.length >= VERSIONS_MAX && (await moreVersions(ctx, path, { ...read, timeoutMs: PACKAGE_MS - (Date.now() - began) }));
+  const install = installCommand(pkg, owner.login, owner.repo.split("/")[1] ?? "", list);
+  return { package: pkg, versions: list, truncated, ...(install ? { install } : {}) };
+}
+
+/**
+ * Whether the package at `path` has versions after its first full page, which may be all there is. When that cannot
+ * be read in time, it may have: the versions read are shown all the same.
+ */
+async function moreVersions(ctx: Gh, path: string, read: { repo: string; maxAgeSeconds: number; timeoutMs: number }): Promise<boolean> {
+  if (read.timeoutMs < 1_000) return true;
+  try {
+    return arr(parseJson((await ctx.github.read(["api", `${path}/versions?per_page=1&page=${VERSIONS_MAX + 1}`], read)).stdout)).length > 0;
+  } catch {
+    return true;
+  }
 }

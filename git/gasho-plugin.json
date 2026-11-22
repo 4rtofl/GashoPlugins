@@ -1,10 +1,10 @@
 {
   "id": "git",
   "name": "Git",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "セッションのリポジトリの、開いている Issue と Pull request を読む（working server の gh を使う）",
   "genre": "integration",
-  "api": "1.0",
+  "api": "1.3",
   "web": { "js": "web.js", "css": "web.css" },
   "daemon": { "js": "daemon.js" },
   "methods": {

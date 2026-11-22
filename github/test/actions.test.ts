@@ -25,6 +25,29 @@ test("gh run list's runs are read (real output), and anything odd is left out", 
   });
   assert.deepEqual(parseRuns(JSON.stringify([{ databaseId: 1, url: "javascript:alert(1)" }, { url: "https://github.com/o/r/actions/runs/2" }, null])), []);
   assert.deepEqual(parseRuns("not json"), []);
+  // home-assistant/core, run 44044536578: a workflow whose file GitHub could not read has no name, and never started.
+  const broken = parseRuns(
+    JSON.stringify([
+      {
+        attempt: 1,
+        conclusion: "startup_failure",
+        createdAt: "2026-11-17T08:10:52Z",
+        databaseId: 44044536578,
+        displayTitle: "Remove redundant manager check in Bluetooth config flow (#193043)",
+        event: "push",
+        headBranch: "dev",
+        name: "",
+        number: 15,
+        startedAt: "2026-11-17T08:10:52Z",
+        status: "completed",
+        updatedAt: "2026-11-17T08:10:52Z",
+        url: "https://github.com/home-assistant/core/actions/runs/44044536578",
+        workflowDatabaseId: 1396333,
+        workflowName: "",
+      },
+    ]),
+  )[0];
+  assert.deepEqual([broken?.workflow, broken?.state, broken?.startupFailure], ["", "failure", true]);
 });
 
 test("gh workflow list's workflows are read (real output)", () => {
@@ -39,7 +62,8 @@ test("a run's, job's or step's state comes from its status and conclusion", () =
   assert.equal(runState("completed", "startup_failure"), "failure");
   assert.equal(runState("completed", "cancelled"), "cancelled");
   assert.equal(runState("completed", "skipped"), "skipped");
-  assert.equal(runState("completed", "action_required"), "waiting");
+  // Waiting for someone to approve it (a fork's pull request): finished until then.
+  assert.equal(runState("completed", "action_required"), "action_required");
   assert.equal(runState("in_progress", ""), "in_progress");
   assert.equal(runState("queued", ""), "queued");
   assert.equal(runState("pending", ""), "queued");
@@ -66,6 +90,37 @@ test("gh run view's run is read with its jobs and steps (real output)", () => {
     ],
   );
   assert.equal(parseRunDetail("{}"), undefined);
+  // vercel/next.js, run 44175381613: gh gives year 1 for times that have not come.
+  const going = parseRunDetail(
+    JSON.stringify({
+      ...JSON.parse(fixture("run-failed.json")),
+      status: "in_progress",
+      conclusion: "",
+      jobs: [
+        {
+          databaseId: 1,
+          name: "build",
+          status: "in_progress",
+          conclusion: "",
+          startedAt: "2026-11-17T21:02:02Z",
+          completedAt: "0001-01-01T00:00:00Z",
+          steps: [
+            { number: 7, name: "Run actions/cache@27d5ce7", status: "in_progress", conclusion: "", startedAt: "2026-11-17T21:02:19Z", completedAt: "0001-01-01T00:00:00Z" },
+            { number: 8, name: "Run pnpm install", status: "pending", conclusion: "", startedAt: "0001-01-01T00:00:00Z", completedAt: "0001-01-01T00:00:00Z" },
+          ],
+        },
+      ],
+    }),
+  );
+  const [goingJob] = going?.jobs ?? [];
+  assert.deepEqual([goingJob?.startedAt, goingJob?.completedAt], ["2026-11-17T21:02:02Z", undefined]);
+  assert.deepEqual(
+    goingJob?.steps.map((st) => [st.state, st.startedAt, st.completedAt]),
+    [
+      ["in_progress", "2026-11-17T21:02:19Z", undefined],
+      ["queued", undefined, undefined],
+    ],
+  );
 });
 
 test("a failed job's log is cut to the step that failed, without timestamps, colors and group markers (real log)", () => {
@@ -96,6 +151,65 @@ test("a step of a composite action that fails: its error ends the log, not the f
   assert.equal(lines.at(-1), "Error: Process completed with exit code 1.");
   assert.ok(lines.some((l) => l.includes("10 failed")));
   assert.ok(!lines.some((l) => l.includes("##[") || l.includes("upload-blob-report")));
+});
+
+test("a step before the failed one that ran in the same second is left out of its log", () => {
+  const log = [
+    "2026-11-17T10:00:04.1000000Z ##[group]Run npm ci",
+    "2026-11-17T10:00:04.1100000Z npm ci",
+    "2026-11-17T10:00:04.1200000Z ##[endgroup]",
+    "2026-11-17T10:00:04.5000000Z up to date in 300ms",
+    "2026-11-17T10:00:04.6000000Z ##[group]Run npm test",
+    "2026-11-17T10:00:04.6100000Z npm test",
+    "2026-11-17T10:00:04.6200000Z ##[endgroup]",
+    "2026-11-17T10:00:05.3000000Z not ok 1 - adds",
+    "2026-11-17T10:00:05.4000000Z ##[error]Process completed with exit code 1.",
+    "2026-11-17T10:00:05.5000000Z Post job cleanup.",
+  ].join("\n");
+  // Step 5 (npm ci) started and ended at 10:00:04, when step 6 (npm test) started too.
+  assert.deepEqual(logTail(log, { startedAt: "2026-11-17T10:00:04Z", completedAt: "2026-11-17T10:00:05Z" }), [
+    "Run npm test",
+    "npm test",
+    "not ok 1 - adds",
+    "Error: Process completed with exit code 1.",
+  ]);
+});
+
+test("groups and errors the failed step's script prints itself before it fails stay in its log", () => {
+  const log = [
+    "2026-11-19T10:00:04.1000000Z ##[group]Run ./ci.sh",
+    "2026-11-19T10:00:04.1100000Z ./ci.sh",
+    "2026-11-19T10:00:04.1200000Z ##[endgroup]",
+    "2026-11-19T10:00:05.0000000Z ##[group]Run lint",
+    "2026-11-19T10:00:07.0000000Z ##[error]src/a.ts:1 unused variable",
+    "2026-11-19T10:00:07.1000000Z ##[endgroup]",
+    "2026-11-19T10:00:07.2000000Z ##[group]Run unit tests",
+    "2026-11-19T10:00:09.0000000Z FAIL test/foo.test.ts",
+    "2026-11-19T10:00:09.1000000Z AssertionError: expected 1 to be 2",
+    "2026-11-19T10:00:09.2000000Z ##[endgroup]",
+    "2026-11-19T10:00:09.3000000Z ##[error]Process completed with exit code 1.",
+    "2026-11-19T10:00:09.5000000Z Post job cleanup.",
+  ].join("\n");
+  assert.deepEqual(logTail(log, { startedAt: "2026-11-19T10:00:04Z", completedAt: "2026-11-19T10:00:09Z" }), [
+    "Run ./ci.sh",
+    "./ci.sh",
+    "Run lint",
+    "Error: src/a.ts:1 unused variable",
+    "Run unit tests",
+    "FAIL test/foo.test.ts",
+    "AssertionError: expected 1 to be 2",
+    "Error: Process completed with exit code 1.",
+  ]);
+});
+
+test("a step after the failed one that fails in the same second is left out of its log (real log)", () => {
+  // grafana/grafana, job 134597618775: step 8 (the Playwright tests) fails at 05:30:31, when step 9 (`if: failure()`)
+  // runs and fails too. The log is cut down to the lines around those, without the steps' env.
+  const lines = logTail(fixture("job-log-same-second.txt"), { startedAt: "2026-11-18T05:24:52Z", completedAt: "2026-11-18T05:30:31Z" }, 1000);
+  assert.equal(lines[0], "Run pnpm run e2e:playwright --shard=3/8 --reporter=dot,blob --output=playwright-test-results");
+  assert.ok(lines.some((l) => l.includes("4 failed")));
+  assert.equal(lines.at(-1), "Error: Process completed with exit code 1.");
+  assert.ok(!lines.some((l) => l.includes("Tests in this shard failed") || l.includes("upload-artifact")));
 });
 
 test("failed jobs beyond those whose log is read say so", async () => {
@@ -131,6 +245,49 @@ test("reading again reads the workflows again too", async () => {
   await listRuns(ctx as never, "4rtofl/GashoPlugins", { maxAgeSeconds: 10 });
   await listRuns(ctx as never, "4rtofl/GashoPlugins", { maxAgeSeconds: 0 });
   assert.deepEqual(ages, [300, 0]);
+});
+
+test("with a branch chosen, the branches to choose from are still those of every branch's runs", async () => {
+  const asked: string[][] = [];
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        asked.push(args);
+        if (args[0] === "workflow") return { stdout: fixture("workflow-list.json"), stderr: "" };
+        const runs = JSON.parse(fixture("run-list.json")) as { headBranch: string }[];
+        const branch = args[args.indexOf("--branch") + 1];
+        return { stdout: JSON.stringify(args.includes("--branch") ? runs.filter((r) => r.headBranch === branch) : runs), stderr: "" };
+      },
+    },
+  };
+  const all = await listRuns(ctx as never, "4rtofl/GashoPlugins", { maxAgeSeconds: 10 });
+  assert.ok(all.branches.length > 1);
+  const one = await listRuns(ctx as never, "4rtofl/GashoPlugins", { branch: all.branches[1], maxAgeSeconds: 10 });
+  assert.ok(one.runs.every((r) => r.branch === all.branches[1]));
+  assert.deepEqual(one.branches, all.branches);
+  // The branches are read as the list without a branch is, so that gasho-daemon answers from what it kept of it.
+  const lists = asked.filter((a) => a[0] === "run" && !a.includes("--branch")).map((a) => JSON.stringify(a));
+  assert.equal(new Set(lists).size, 1);
+});
+
+test("an earlier attempt of a run is read with the latest, which says how many there are", async () => {
+  const asked: string[][] = [];
+  const latest = { ...JSON.parse(fixture("run-failed.json")), attempt: 2, conclusion: "success", jobs: [] };
+  const first = { ...JSON.parse(fixture("run-failed.json")), attempt: 1 };
+  const ctx = {
+    github: {
+      read: async (args: string[]) => {
+        asked.push(args);
+        if (args[0] === "run") return { stdout: JSON.stringify(args.includes("--attempt") ? first : latest), stderr: "" };
+        return { stdout: fixture("job-log.txt"), stderr: "" };
+      },
+    },
+  };
+  const run = await viewRun(ctx as never, "4rtofl/GashoPlugins", 43632505661, { attempt: 1, maxAgeSeconds: 10 });
+  assert.deepEqual([run.attempt, run.attempts, run.state], [1, 2, "failure"]);
+  assert.ok(asked.some((a) => a.join(" ").includes("--attempt 1")));
+  assert.equal(run.jobs[0]?.log?.at(-1), "Error: Process completed with exit code 1.");
+  assert.equal((await viewRun(ctx as never, "4rtofl/GashoPlugins", 43632505661, { maxAgeSeconds: 10 })).attempts, 2);
 });
 
 test("a run is read with the end of its failed jobs' logs; gh without --allow-escape-sequences is asked again without it", async () => {

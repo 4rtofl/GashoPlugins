@@ -1,10 +1,14 @@
 // The Projects panels: the projects linked to the repository and its owner's others, and one project as a board whose
-// columns are the options of a single select field (Status by default, as its board view has it). The board scrolls
-// sideways when its columns do not fit the panel. The views' filters are not applied: every item not archived shows.
+// columns are the options of a single select field or the iterations of an iteration field (the one its board view
+// uses, else Status). The board scrolls sideways when its columns do not fit the panel. The views' filters are not
+// applied: every item not archived shows.
 import { ArrowLeft, CircleCheck, CircleDot, CircleSlash, FileText, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, KanbanSquare, Lock } from "lucide-react";
 import { cn, relativeTime, useNavigation, useNow, type PanelProps } from "@gasho/plugin-sdk";
 import type { Board, BoardItem, ProjectRef, Projects } from "../types.ts";
 import { Empty, LoadedAt, MissingScopeNote, PanelFrame, PanelRepoTabs, Status, usePanelRepo, useRead } from "./common";
+
+/** Open projects and closed ones read per list (PROJECTS_MAX of the daemon part). */
+const PROJECTS_MAX = 50;
 
 /** GitHub's colors of a single select's options. */
 const OPTION_COLOR: Record<string, string> = {
@@ -72,16 +76,26 @@ export function ProjectsPanel({ machine, session, params }: PanelProps) {
             <section className="space-y-2">
               <h3 className="text-xs font-medium text-muted-foreground">このリポジトリの Project</h3>
               {data.linked.length ? list(data.linked) : <Empty>このリポジトリにつながった Project はありません。</Empty>}
+              {data.linkedTruncated && <Truncated />}
             </section>
             <section className="space-y-2">
               <h3 className="text-xs font-medium text-muted-foreground">{data.ownerLogin} のほかの Project</h3>
               {data.owner.length ? list(data.owner) : <Empty>ほかの Project はありません。</Empty>}
+              {data.ownerTruncated && <Truncated />}
             </section>
           </>
         )}
         <LoadedAt at={r.at} />
       </div>
     </PanelFrame>
+  );
+}
+
+function Truncated() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      開いているものと閉じたものを、それぞれ新しく更新したものから {PROJECTS_MAX} 件まで表示しています。すべては GitHub で見られます。
+    </p>
   );
 }
 
@@ -142,11 +156,23 @@ export function BoardPanel({ machine, session, params }: PanelProps) {
   );
 }
 
-/** The board's columns: one per option of the field, and one for the items without a value (when there are any). */
+/**
+ * The board's columns: one per option or iteration of the field (iterations that ended only when they hold items, as
+ * GitHub's board shows them), and one for the items without a value (when there are any).
+ */
 function Columns({ board, fieldId }: { board: Board; fieldId?: string }) {
   const field = board.fields.find((f) => f.id === fieldId);
-  const columns: { id: string; name: string; color?: string; items: BoardItem[] }[] = field
-    ? field.options.map((o) => ({ id: o.id, name: o.name, color: o.color, items: board.items.filter((i) => i.values[field.id] === o.id) }))
+  const columns: { id: string; name: string; color?: string; title?: string; items: BoardItem[] }[] = field
+    ? field.options
+        .map((o) => ({
+          id: o.id,
+          name: o.name,
+          color: o.color,
+          title: o.startDate ? `${o.name}（${o.startDate} から）` : o.name,
+          completed: o.completed,
+          items: board.items.filter((i) => i.values[field.id] === o.id),
+        }))
+        .filter((c) => !c.completed || c.items.length > 0)
     : [];
   const known = new Set(field?.options.map((o) => o.id));
   const rest = board.items.filter((i) => !field || !known.has(i.values[field.id] ?? ""));
@@ -159,8 +185,8 @@ function Columns({ board, fieldId }: { board: Board; fieldId?: string }) {
         {columns.map((c) => (
           <section key={c.id || "none"} aria-label={c.name} className="flex w-64 shrink-0 flex-col rounded-xl border border-border bg-surface/40">
             <header className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
-              <span aria-hidden className={cn("size-2.5 shrink-0 rounded-full", c.color ? (OPTION_COLOR[c.color] ?? "bg-neutral-400") : "border border-dashed border-muted-foreground")} />
-              <span className="min-w-0 flex-1 truncate font-medium" title={c.name}>
+              <span aria-hidden className={cn("size-2.5 shrink-0 rounded-full", c.id ? (OPTION_COLOR[c.color ?? ""] ?? "bg-neutral-400") : "border border-dashed border-muted-foreground")} />
+              <span className="min-w-0 flex-1 truncate font-medium" title={c.title ?? c.name}>
                 {c.name}
               </span>
               <span className="text-muted-foreground tabular-nums">{c.items.length}</span>
@@ -184,6 +210,7 @@ function ItemIcon({ item }: { item: BoardItem }) {
   if (item.type === "issue") {
     if (item.state === "closed") return <CircleCheck aria-label="閉じた Issue" className={cn(c, "text-violet-400")} />;
     if (item.state === "not_planned") return <CircleSlash aria-label="対応しない Issue" className={cn(c, "text-muted-foreground")} />;
+    if (item.state === "duplicate") return <CircleSlash aria-label="重複として閉じた Issue" className={cn(c, "text-muted-foreground")} />;
     return <CircleDot aria-label="Issue" className={cn(c, "text-emerald-400")} />;
   }
   if (item.state === "merged") return <GitMerge aria-label="マージ済みの Pull request" className={cn(c, "text-violet-400")} />;
