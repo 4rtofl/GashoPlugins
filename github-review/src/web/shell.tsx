@@ -115,7 +115,21 @@ export function useRowShell({
   const [rawDelete] = useSetting<boolean>("deleteBranch");
   const merge = useMemo(() => ({ method: mergeMethodOf(rawMethod), deleteBranch: rawDelete !== false }), [rawMethod, rawDelete]);
   const [notice, setNotice] = useState<Notice>();
-  const board = useMemo<NoticeBoard>(() => ({ notify: setNotice, dismiss: (n) => setNotice((cur) => (cur === n ? undefined : cur)) }), []);
+  const board = useMemo<NoticeBoard>(() => {
+    // A notice still going keeps the one with a button it took the place of (directly, or through other notices still
+    // going), and that one shows again once it is taken off: another button's session to open stays to open when the
+    // person says no to a question.
+    const under = new WeakMap<Notice, Notice>();
+    return {
+      notify: (n) =>
+        setNotice((cur) => {
+          const back = cur?.busy ? under.get(cur) : cur?.action ? cur : undefined;
+          if (n?.busy && back) under.set(n, back);
+          return n;
+        }),
+      dismiss: (n) => setNotice((cur) => (cur === n ? under.get(n) : cur)),
+    };
+  }, []);
   const shows = useShowsQuestions(board);
   const fork = forks.useFirst();
   const trust = trusts.useFirst();

@@ -287,6 +287,26 @@ describe("a pull request with a worktree", () => {
     expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-7");
   });
 
+  it("shows again the notice of a session started while another row made its worktree, once that row asks about its folder", async () => {
+    const other = pr({ number: 8, title: "設定を足す", url: "https://github.com/4rtofl/app/pull/8", branch: "feat/8-settings" });
+    respond({ list: listed({ requested: [pr({ place: { primary: "/work/app", worktree: review } }), other] }) });
+    let made!: () => void;
+    answerCalls({ create: () => new Promise((resolve) => (made = () => resolve({ ok: true, data: { path: "/work/review-8", created: true } }))) });
+    sdk.launchSession.mockImplementation((input) => (input.cwd === "/work/review-8" ? { ok: false, error: "not trusted", needsTrust: true } : { ok: true, sessionId: "s-7" }));
+    stopClock();
+    render(<ReviewPage params={{}} />);
+    const row = (title: string) => within(screen.getByText(title).closest("li")!);
+    await userEvent.click(row("設定を足す").getByRole("button", { name: /worktree を作る/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "何も送らない" }));
+    await userEvent.click(row("ログインを直す").getByRole("button", { name: "開く" }));
+    expect(await screen.findByText("review-7 のセッションを開けます。ほかのセッションの起動中だったので、このページのままにしました。")).toBeTruthy();
+    // "review-8 でセッションを起動しています…" takes its place, and is taken off before the question.
+    await act(async () => made());
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
+    await openFromNotice();
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-7");
+  });
+
   it("once merged, can be removed with its branch after the person agrees, and says what went", async () => {
     respond({ list: listed({ requested: [pr({ state: "merged", place: { primary: "/work/app", worktree: review } })] }) });
     answerCalls({ remove: { ok: true, data: { path: "/work/review-7", branch: "pr-7" } } });
