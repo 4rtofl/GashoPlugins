@@ -1,10 +1,12 @@
 // What every part of one item's screen shares (useItem): the item as last read, where it is, the clock, and running a
 // change. A change is one operation of the daemon part; when it is done, a toast says so (an Undo Toast when it can be
-// put back), and the item, the worktree's tabs and what the parts read themselves (useAfterChange) are read again.
+// put back), and the item, the worktree's tabs and what the parts read themselves (useAfterChange) are read again. What
+// is typed on the screen (useDraft) stays while the page is open, and goes when the worktree's screen shows another number.
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useNavigation, usePluginState, type MachineInfo, type Params, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind } from "../../types.ts";
 import { useWriteOp } from "../daemon.ts";
+import { withDraft, type Drafts } from "../ui/input.ts";
 import { useToast } from "../ui/toast.tsx";
 
 export interface Where {
@@ -90,11 +92,42 @@ export function useAfterChange(reload: () => void): void {
   }, [revision]);
 }
 
+const draftsKey = (machine: string, worktree: WorktreeInfo) => `drafts:${machine}:${worktree.path}`;
+const draftsAt = (where: Where) => `${where.kind}#${where.number}`;
+
+/**
+ * A draft of the screen (a title, a comment, …), or undefined when none is being written. Gasho keeps it while the page
+ * is open, so it stays when another tab of the screen (whose content is made anew) or a session's tab is chosen and
+ * then this one again.
+ */
+export function useDraft<T>(name: string): [T | undefined, (next: T | undefined | ((prev: T | undefined) => T | undefined)) => void] {
+  const { machine, worktree, where } = useItem();
+  const at = draftsAt(where);
+  const [drafts, setDrafts] = usePluginState<Drafts | undefined>(draftsKey(machine, worktree), undefined);
+  const value = drafts?.at === at ? (drafts.values[name] as T | undefined) : undefined;
+  const set = (next: T | undefined | ((prev: T | undefined) => T | undefined)) => setDrafts((d) => withDraft(d, at, name, next));
+  return [value, set];
+}
+
+/**
+ * Drops the drafts of another number of the worktree once its screen shows this one: what is typed for one number shows
+ * neither on another nor on it again after another was open (#125).
+ */
+export function useDraftsOf(machine: string, worktree: WorktreeInfo, where: Where | undefined): void {
+  const [, setDrafts] = usePluginState<Drafts | undefined>(draftsKey(machine, worktree), undefined);
+  const at = where && draftsAt(where);
+  useEffect(() => {
+    if (at) setDrafts((d) => (d && d.at !== at ? undefined : d));
+  }, [at]);
+}
+
 /** Runs the changes of one item's screen; `after` reads the item and the tabs again. `changed` reads everything again. */
 export function useChanges(machine: string, where: Where | undefined, after: () => void) {
   const write = useWriteOp();
   const toast = useToast();
-  const [busy, setBusy] = useState<string>();
+  // Kept like the drafts: the screen made anew (another tab chosen and this one again) shows the change still running,
+  // and what was sent, still in its box, cannot be sent again meanwhile.
+  const [busy, setBusy] = usePluginState<string | undefined>(`busy:${machine}:${where ? `${where.repo}:${draftsAt(where)}` : ""}`, undefined);
   const [revision, setRevision] = useState(0);
   const changed = () => {
     after();

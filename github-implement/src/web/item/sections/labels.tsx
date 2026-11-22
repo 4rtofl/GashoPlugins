@@ -11,6 +11,7 @@ import type { RepoMeta } from "../../../types.ts";
 import { readOp, useWriteOp } from "../../daemon.ts";
 import { Badge } from "../../ui/badge.tsx";
 import { Button } from "../../ui/button.tsx";
+import { isComposing } from "../../ui/input.ts";
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 import { useSettled } from "../picker.tsx";
@@ -152,7 +153,7 @@ function LabelMenu({ labels, more, error, reload, disabled }: { labels?: Label[]
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              if (e.key !== "Enter" || isComposing(e)) return;
               e.preventDefault();
               const top = shown?.[0];
               if (top) toggle(top.name);

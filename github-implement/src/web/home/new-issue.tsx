@@ -1,15 +1,16 @@
 // The "GitHub" tab's form for a new issue: title, body, labels and assignees from the repository's (the pickers of an
-// item's screen), and whether to add it to the worktree, which makes it a tab beside the sessions.
+// item's screen), and whether to add it to the worktree, which makes it a tab beside the sessions. What is typed stays
+// while the page is open (another tab of the worktree chosen in between), until the issue is made or the form closed.
 import { CirclePlus } from "lucide-react";
-import { useState } from "react";
-import { useRequest, type WorktreeInfo } from "@gasho/plugin-sdk";
+import { useRef } from "react";
+import { usePluginState, useRequest, type WorktreeInfo } from "@gasho/plugin-sdk";
 import type { RepoMeta } from "../../types.ts";
 import { readOp, useWriteOp } from "../daemon.ts";
 import { assignableSearch, labelSearch, Picker, type Choice } from "../item/picker.tsx";
 import { Alert } from "../ui/alert.tsx";
 import { Badge } from "../ui/badge.tsx";
 import { Button } from "../ui/button.tsx";
-import { INPUT } from "../ui/input.ts";
+import { INPUT, isComposing, leftAfter, noSubmit } from "../ui/input.ts";
 import { useToast } from "../ui/toast.tsx";
 
 type Label = RepoMeta["labels"][number];
@@ -25,12 +26,16 @@ interface Form {
 const EMPTY: Form = { title: "", body: "", labels: [], assignees: [], add: true };
 
 export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: string; worktree: WorktreeInfo; repo: string; onCreated: () => void }) {
-  const [form, setForm] = useState<Form>();
+  const kept = `new-issue:${machine}:${worktree.path}`;
+  const [form, setForm] = usePluginState<Form | undefined>(kept, undefined);
+  const bodyBox = useRef<HTMLTextAreaElement>(null);
   const meta = useRequest<RepoMeta>(form ? readOp(machine, "meta", { repo }) : undefined, { staleSeconds: 300 });
   const write = useWriteOp();
   const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  // Kept like the form: made anew while the issue is being made, the form still shows it so and makes no second one, and
+  // then why GitHub refused it.
+  const [busy, setBusy] = usePluginState(`${kept}:busy`, false);
+  const [error, setError] = usePluginState<string | undefined>(`${kept}:error`, undefined);
 
   if (!form) {
     return (
@@ -47,18 +52,25 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
   }
 
   const create = async () => {
+    if (busy) return;
+    const sent = form;
     setBusy(true);
     setError(undefined);
-    const params = { repo, title: form.title, body: form.body, labels: form.labels, assignees: form.assignees, ...(form.add ? { worktree: worktree.path } : {}) };
-    const res = await write(machine, "create-issue", params, `${repo} に Issue「${form.title}」を起票する`);
+    const params = { repo, title: sent.title, body: sent.body, labels: sent.labels, assignees: sent.assignees, ...(sent.add ? { worktree: worktree.path } : {}) };
+    const res = await write(machine, "create-issue", params, `${repo} に Issue「${sent.title}」を起票する`);
     setBusy(false);
     if (!res.ok) {
       setError(res.error);
       return;
     }
     const n = (res.data as { number?: number } | undefined)?.number;
-    toast({ title: n ? `Issue #${n} を起票しました` : "Issue を起票しました", description: form.title });
-    setForm(undefined);
+    toast({ title: n ? `Issue #${n} を起票しました` : "Issue を起票しました", description: sent.title });
+    // What was typed while it was being made stays, in a form of its own.
+    setForm((f) => {
+      const title = f ? leftAfter(f.title, sent.title) : "";
+      const body = f ? leftAfter(f.body, sent.body) : "";
+      return title || body ? { ...EMPTY, title, body } : undefined;
+    });
     onCreated();
   };
 
@@ -89,12 +101,28 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
       className="space-y-2 rounded-xl border border-border p-3"
     >
       <p className="text-sm font-medium">Issue を起票する</p>
-      <input autoFocus value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} aria-label="Issue の題" placeholder="題" maxLength={256} className={INPUT} />
+      <input
+        autoFocus
+        value={form.title}
+        onChange={(e) => setForm({ ...form, title: e.target.value })}
+        onKeyDown={(e) => {
+          // Enter goes on to the body: the issue is made by the button, or by ⌘ + Enter in the body.
+          if (e.key === "Enter" && !isComposing(e)) {
+            e.preventDefault();
+            bodyBox.current?.focus();
+          }
+        }}
+        aria-label="Issue の題"
+        placeholder="題"
+        maxLength={256}
+        className={INPUT}
+      />
       <textarea
+        ref={bodyBox}
         value={form.body}
         onChange={(e) => setForm({ ...form, body: e.target.value })}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && form.title.trim() && !busy) {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isComposing(e) && form.title.trim() && !busy) {
             e.preventDefault();
             void create();
           }
@@ -145,7 +173,7 @@ export function NewIssueBox({ machine, worktree, repo, onCreated }: { machine: s
         />
       </div>
       <label className="flex items-center gap-1.5 text-xs">
-        <input type="checkbox" checked={form.add} onChange={(e) => setForm({ ...form, add: e.target.checked })} />
+        <input type="checkbox" checked={form.add} onChange={(e) => setForm({ ...form, add: e.target.checked })} onKeyDown={noSubmit} />
         この worktree に足す（タブに出す）
       </label>
       {error && <Alert tone="danger">{error}</Alert>}

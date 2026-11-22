@@ -22,6 +22,7 @@ function useAssigneeCommands(): PaletteCommand[] {
         icon: UserMinus,
         keywords: "unassign me",
         disabled: busy !== undefined,
+        writes: true,
         run: () =>
           void run({
             id: `assign-${me}`,
@@ -41,6 +42,7 @@ function useAssigneeCommands(): PaletteCommand[] {
       icon: UserPlus,
       keywords: "assign me",
       disabled: busy !== undefined,
+      writes: true,
       run: () =>
         void run({
           id: `assign+${me}`,

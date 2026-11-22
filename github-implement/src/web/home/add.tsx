@@ -9,6 +9,7 @@ import { typedItem } from "../../number.ts";
 import { itemLook } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
 import { Button } from "../ui/button.tsx";
+import { isComposing } from "../ui/input.ts";
 
 /** How long typing pauses before the words are searched: every search takes a point of GitHub's hourly limit. */
 const SEARCH_AFTER_MS = 400;
@@ -18,6 +19,8 @@ export function AddBox({ machine, repo, has, busy, adding, onAdd }: { machine: s
   const [words, setWords] = useState("");
   const [active, setActive] = useState(0);
   const [error, setError] = useState<string>();
+  // Words in the middle of a composition are not searched: each search takes a point.
+  const [composing, setComposing] = useState(false);
   const list = useId();
   const typed = text.trim();
   const asked = typedItem(typed, repo);
@@ -26,13 +29,14 @@ export function AddBox({ machine, repo, has, busy, adding, onAdd }: { machine: s
   const there = number !== undefined && has.has(number);
   const searchable = asked === undefined && typed.length >= 2 ? typed : "";
   useEffect(() => {
+    if (composing) return;
     if (!searchable) {
       setWords("");
       return;
     }
     const timer = setTimeout(() => setWords(searchable), SEARCH_AFTER_MS);
     return () => clearTimeout(timer);
-  }, [searchable]);
+  }, [searchable, composing]);
   const found = useRequest<ItemSummary[]>(words ? readOp(machine, "search", { repo, query: words }) : undefined, { staleSeconds: 60 });
   const results = words && asked === undefined ? found.data : undefined;
   const choice = results?.[Math.min(active, results.length - 1)];
@@ -55,7 +59,7 @@ export function AddBox({ machine, repo, has, busy, adding, onAdd }: { machine: s
   };
 
   const move = (e: KeyboardEvent) => {
-    if (!results?.length || (e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
+    if (!results?.length || (e.key !== "ArrowDown" && e.key !== "ArrowUp") || isComposing(e)) return;
     e.preventDefault();
     setActive((a) => (Math.min(a, results.length - 1) + (e.key === "ArrowDown" ? 1 : results.length - 1)) % results.length);
   };
@@ -71,6 +75,8 @@ export function AddBox({ machine, repo, has, busy, adding, onAdd }: { machine: s
             setError(undefined);
           }}
           onKeyDown={move}
+          onCompositionStart={() => setComposing(true)}
+          onCompositionEnd={() => setComposing(false)}
           placeholder="番号・URL・題の語（例: 17、ログイン）"
           aria-label="worktree に足す Issue や Pull request"
           role="combobox"

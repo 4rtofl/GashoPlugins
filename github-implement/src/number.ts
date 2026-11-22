@@ -8,9 +8,12 @@ export function branchNumber(branch: string | undefined): number | undefined {
   return Number.isInteger(n) && n >= 1 && n <= 1e9 ? n : undefined;
 }
 
-/** "17", "#17", or a GitHub URL of an issue or pull request of `repo` (http:// too, which GitHub sends to https://). */
+/**
+ * "17", "#17", or a GitHub URL of an issue or pull request of `repo` (http:// too, which GitHub sends to https://);
+ * full-width "１７" and "＃１７" as well.
+ */
 export function numberFrom(text: string, repo: string): number | undefined {
-  const t = text.trim();
+  const t = text.normalize("NFKC").trim();
   const m = /^#?(\d{1,9})$/.exec(t) ?? new RegExp(`^https?://github\\.com/${repo.replace(/[.]/g, "\\.")}/(?:issues|pull)/(\\d{1,9})(?:[/?#].*)?$`, "i").exec(t);
   const n = m ? Number(m[1]) : NaN;
   return Number.isInteger(n) && n >= 1 ? n : undefined;
