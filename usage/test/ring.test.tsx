@@ -56,6 +56,16 @@ describe("UsageRing", () => {
     expect(screen.queryByText(/モデルごとの週の上限は出せません/)).toBeNull();
   });
 
+  it("says once when get_usage read the limits the status line has none of, after a reply that came since", async () => {
+    respond({ limits: { data: { ...withModels, at: NOW - 5 * 60_000 } } });
+    render(<UsageRing machine={machine({ sessions: [session({ sessionId: "s0", limits: reported })] })} session={s} />);
+    await openPopover();
+    expect(meter("週の上限（すべてのモデル）")?.getAttribute("aria-valuenow")).toBe("55");
+    expect(meter("週の上限（Fable）")?.getAttribute("aria-valuenow")).toBe("80");
+    expect(screen.getAllByText(/^Claude.ai から読んだ値/).map((p) => p.textContent)).toEqual(["Claude.ai から読んだ値（5 分前）"]);
+    expect(screen.getByText("最後の返答の時点（1 分前）")).toBeTruthy();
+  });
+
   it("reads nothing from an offline working server, and shows the limits it last received", async () => {
     render(<UsageRing machine={machine({ connected: false, sessions: [session({ sessionId: "s0", limits: reported })] })} session={s} />);
     await openPopover();

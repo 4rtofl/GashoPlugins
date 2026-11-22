@@ -5,7 +5,7 @@
 import { useEffect } from "react";
 import { cn, Popover, relativeTime, useDaemonReady, useNow, usePluginState, useRequest, type ComposerFooterProps } from "@gasho/plugin-sdk";
 import type { UsageLimits } from "../types.ts";
-import { clampPercent, latestStatusLineLimits, limitsView, resetLabel, shownPercent, toneOf, tokens, type Tone } from "./limits.ts";
+import { clampPercent, latestStatusLineLimits, limitsView, resetLabel, shownPercent, toneOf, tokens, type LimitRow, type Tone } from "./limits.ts";
 
 const TONE_TEXT: Record<Exclude<Tone, "normal">, string> = {
   warn: "text-amber-600 dark:text-amber-400",
@@ -100,6 +100,19 @@ function Heading({ label, percent }: { label: string; percent?: number }) {
   );
 }
 
+/** One limit: its share, and when it starts again. */
+function Limit({ row, now }: { row: LimitRow; now: number }) {
+  const percent = shownPercent(row.window, now);
+  const resetsAt = row.window.resetsAt;
+  return (
+    <div className={cn("flex flex-col gap-1", percent === undefined && "opacity-60")}>
+      <Heading label={row.label} percent={percent} />
+      {percent !== undefined && <Bar label={row.label} percent={percent} tone={toneOf(percent)} />}
+      {resetsAt !== undefined && <p className="text-xs text-muted-foreground">{resetLabel(resetsAt, now)}</p>}
+    </div>
+  );
+}
+
 /** What the popover shows. Drawn only while it is open, so that the limits are read only then. */
 function UsagePanel({ machine, session }: ComposerFooterProps) {
   const now = useNow(30_000);
@@ -119,7 +132,9 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
   const data = read.data ?? kept;
   const view = limitsView(data, latestStatusLineLimits(machine));
   const problem = machine.connected && !daemon.ready && daemon.reason ? `使用量の上限を読めません（${daemon.reason.replace(/。$/, "")}）。` : read.error;
-  const hasUsage = view !== undefined && view.source !== "none" && (view.source === "usage" || view.rows.some((r) => r.at !== undefined));
+  // get_usage's rows older than the status line's come after them, with when they were read said once.
+  const older = view && view.source !== "none" ? view.rows.filter((r) => r.at !== undefined) : [];
+  const hasUsage = view !== undefined && view.source !== "none" && (view.source === "usage" || older.length > 0);
   const modelsNote = hasUsage || problem ? undefined : data && !data.available ? "この working server の Claude Code のログインでは、モデルごとの週の上限を読めません。" : read.loading ? "モデルごとの週の上限を読んでいます…" : undefined;
   const note =
     view === undefined
@@ -147,21 +162,14 @@ function UsagePanel({ machine, session }: ComposerFooterProps) {
       <section className="flex flex-col gap-2 border-t border-border pt-3">
         {view && view.source !== "none" && (
           <>
-            {view.rows.map((row) => {
-              const percent = shownPercent(row.window, now);
-              const resetsAt = row.window.resetsAt;
-              return (
-                <div key={row.key} className={cn("flex flex-col gap-1", percent === undefined && "opacity-60")}>
-                  <Heading label={row.label} percent={percent} />
-                  {percent !== undefined && <Bar label={row.label} percent={percent} tone={toneOf(percent)} />}
-                  {resetsAt !== undefined && <p className="text-xs text-muted-foreground">{resetLabel(resetsAt, now)}</p>}
-                  {row.at !== undefined && <p className="text-xs text-muted-foreground">Claude.ai から読んだ値（{relativeTime(row.at, now)}）</p>}
-                </div>
-              );
-            })}
-            <p className="text-xs text-muted-foreground">
-              {view.source === "usage" ? `Claude.ai から読んだ値（${relativeTime(view.at, now)}）` : `最後の返答の時点（${relativeTime(view.at, now)}）`}
-            </p>
+            {view.rows.filter((r) => r.at === undefined).map((row) => <Limit key={row.key} row={row} now={now} />)}
+            {(older.length === 0 || older.length < view.rows.length) && (
+              <p className="text-xs text-muted-foreground">
+                {view.source === "usage" ? `Claude.ai から読んだ値（${relativeTime(view.at, now)}）` : `最後の返答の時点（${relativeTime(view.at, now)}）`}
+              </p>
+            )}
+            {older.map((row) => <Limit key={row.key} row={row} now={now} />)}
+            {older[0]?.at !== undefined && <p className="text-xs text-muted-foreground">Claude.ai から読んだ値（{relativeTime(older[0].at, now)}）</p>}
           </>
         )}
         {/* What came of a read, which takes up to a minute, is read out by a screen reader. The region stays while empty,
