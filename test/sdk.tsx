@@ -203,7 +203,8 @@ export const useDaemonReady: GashoSdk["useDaemonReady"] = (m) => (useScene(), ty
 export const useNow: GashoSdk["useNow"] = () => (useScene(), scene.now);
 export const useSessionActivity: GashoSdk["useSessionActivity"] = () => (useScene(), scene.activity);
 export const useEvent: GashoSdk["useEvent"] = <T,>(topic: string) => (useScene(), scene.events[topic] as T | undefined);
-export const useNavigation: GashoSdk["useNavigation"] = () => navigation;
+// A new one on every draw, as Gasho's is: what depends on it is made again each time.
+export const useNavigation: GashoSdk["useNavigation"] = () => ({ ...navigation });
 export const removeWorktreeProblem: GashoSdk["removeWorktreeProblem"] = (m, w) => sdk.removeWorktreeProblem(m, w);
 
 export const useRequest: GashoSdk["useRequest"] = <T,>(target: RequestTarget | undefined, options?: RequestOptions): RequestState<T> => {
