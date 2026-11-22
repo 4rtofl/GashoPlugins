@@ -1,8 +1,8 @@
 // EasyUI's Animated Tabs (easyui.site/components/animated-tabs): a pill that slides to the tab chosen, and the content
 // cross-fading. Changed for Gasho: the roles and keys of a tab list (arrows, Home and End), a count that rolls (Badge)
-// beside a label, and the colors on Gasho's tokens.
+// beside a label, the tab chosen scrolled into the row when the row is narrower, and the colors on Gasho's tokens.
 import { AnimatePresence, motion } from "framer-motion";
-import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@gasho/plugin-sdk";
 import { motionTransitions } from "./motion.ts";
 
@@ -17,6 +17,18 @@ export interface TabItem {
 export function AnimatedTabs({ tabs, value, onChange, label, children }: { tabs: TabItem[]; value: string; onChange: (id: string) => void; label: string; children: ReactNode }) {
   const id = useId();
   const list = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
+  // Only the row scrolls, sideways: scrollIntoView would scroll the page too, to a row out of sight.
+  useEffect(() => {
+    const scroller = row.current;
+    const tab = list.current?.querySelector<HTMLElement>(`[data-tab="${CSS.escape(value)}"]`);
+    if (!scroller || !tab) return;
+    const pad = parseFloat(getComputedStyle(scroller).paddingLeft) || 0;
+    const box = scroller.getBoundingClientRect();
+    const at = tab.getBoundingClientRect();
+    if (at.left < box.left + pad) scroller.scrollLeft -= box.left + pad - at.left;
+    else if (at.right > box.right - pad) scroller.scrollLeft += at.right - (box.right - pad);
+  }, [value]);
   const move = (e: KeyboardEvent, at: number) => {
     const to = e.key === "ArrowRight" ? at + 1 : e.key === "ArrowLeft" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : undefined;
     if (to === undefined) return;
@@ -28,7 +40,7 @@ export function AnimatedTabs({ tabs, value, onChange, label, children }: { tabs:
   };
   return (
     <div className="flex flex-col gap-4">
-      <div className="scrollbar-none -mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+      <div ref={row} className="scrollbar-none -mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
         <div ref={list} role="tablist" aria-label={label} className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface-raised p-1 select-none dark:border-[#1F1F1F] dark:bg-[#0E0E0E]">
           {tabs.map((tab, i) => {
             const active = tab.id === value;

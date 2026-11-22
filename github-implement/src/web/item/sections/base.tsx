@@ -1,12 +1,14 @@
 // A pull request's branches in one row: head → base, the size, the review decision, a picker that changes the base to
 // a branch found by name (an Undo Toast puts it back), how many commits of the base its head does not have, with a
-// button that merges them in (Update branch), and, when the parent was merged or the base branch deleted, a button that
-// moves the base to where the parent went.
+// button that merges them in (Update branch) unless they conflict, and, when the parent was merged or the base branch
+// deleted, a button that moves the base to where the parent went.
 import { Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn, Popover, useRequest } from "@gasho/plugin-sdk";
+import type { PullMerge } from "../../../daemon/ops/mergeable.ts";
 import type { GitHubItemDetail } from "../../../types.ts";
 import { readOp } from "../../daemon.ts";
+import { useRefreshOptions } from "../../tabs.ts";
 import { Alert } from "../../ui/alert.tsx";
 import { Badge, type BadgeTone } from "../../ui/badge.tsx";
 import { Button } from "../../ui/button.tsx";
@@ -22,9 +24,14 @@ const REVIEW: Record<NonNullable<GitHubItemDetail["review"]>, { label: string; t
 };
 
 function Branches() {
-  const { item, where, busy, run } = useItem();
+  const { item, machine, where, busy, run } = useItem();
   const r = useStack();
   const s = r.data;
+  // The merge's read (sections/merge.tsx), which is the same: GitHub offers no Update branch while the branches conflict,
+  // and gh fails on it then.
+  const merge = useRequest<PullMerge>(item.state === "open" ? readOp(machine, "mergeable", { repo: where.repo, number: where.number }) : undefined, useRefreshOptions());
+  const conflict = merge.data?.blockers.some((b) => b.kind === "conflict") === true;
+  const updatable = (merge.data !== undefined || merge.error !== undefined) && !conflict;
   const base = item.base;
   if (!base) return null;
   const decision = item.review ? REVIEW[item.review] : undefined;
@@ -74,25 +81,29 @@ function Branches() {
       )}
       {behind > 0 && (
         <>
-          <span className="text-amber-700 dark:text-amber-400">base より {behind.toLocaleString()} commit 遅れています</span>
-          <Button
-            size="xs"
-            onClick={() =>
-              void run({
-                id: "update-branch",
-                op: "update-branch",
-                params: {},
-                summary: `${id} に base（${base}）を取り込む`,
-                done: "base を取り込みました。worktree には git pull で入ります",
-              })
-            }
-            disabled={busy !== undefined}
-            isLoading={busy === "update-branch"}
-            loadingText="取り込んでいます…"
-            title="Update branch：GitHub で base をこの Pull request のブランチにマージする"
-          >
-            base を取り込む
-          </Button>
+          <span className="text-amber-700 dark:text-amber-400">
+            base より {behind.toLocaleString()} commit 遅れています{conflict && "。衝突しているので、ここからは取り込めません"}
+          </span>
+          {updatable && (
+            <Button
+              size="xs"
+              onClick={() =>
+                void run({
+                  id: "update-branch",
+                  op: "update-branch",
+                  params: {},
+                  summary: `${id} に base（${base}）を取り込む`,
+                  done: "base を取り込みました。worktree には git pull で入ります",
+                })
+              }
+              disabled={busy !== undefined}
+              isLoading={busy === "update-branch"}
+              loadingText="取り込んでいます…"
+              title="Update branch：GitHub で base をこの Pull request のブランチにマージする"
+            >
+              base を取り込む
+            </Button>
+          )}
         </>
       )}
       {r.error && <span className="text-red-600 dark:text-red-400">（親と子・base との差を読めませんでした：{r.error}）</span>}

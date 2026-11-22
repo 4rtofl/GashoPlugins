@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { DEFAULT_SETTINGS, Shells, type ShellSettings } from "../src/daemon/jobs.ts";
+import { DEFAULT_SETTINGS, MAX_WAITING, Shells, type ShellSettings } from "../src/daemon/jobs.ts";
 import { processStart, statStart } from "../src/daemon/proc.ts";
 import { folderKey, Store, type StoredJob } from "../src/daemon/store.ts";
 import type { ShellJob } from "../src/types.ts";
@@ -124,12 +124,13 @@ test("output beyond the limit is dropped from its start, at a line's start", asy
     const command = "i=0; while [ $i -lt 500 ]; do echo line$i; i=$((i+1)); done";
     const started = await shells.run(folder, { command }, { ...SH, maxOutput: 1000 });
     const { job, text } = await settle(shells, folder, started.id);
-    assert.equal(job.lines, 500);
     assert.ok(job.dropped > 0 && job.size - job.dropped <= 1000, JSON.stringify(job));
     assert.ok(text.endsWith("line499\n"));
     const kept = await shells.output(folder, job.id, 0, 5000);
     assert.equal(kept.from, job.dropped);
     assert.ok(kept.text.startsWith("line") && kept.text.endsWith("line499\n") && kept.text.length <= 1000);
+    // The lines kept ("すべて表示（N 行）"), not the 500 the command printed.
+    assert.equal(job.lines, kept.text.split("\n").length - 1);
   } finally {
     await shells.stop();
   }
@@ -149,6 +150,40 @@ test("watch waits for a change, and answers as soon as output comes", async () =
     const done = await settle(shells, folder, started.id);
     const quiet = await shells.watch(folder, { since: (await shells.watch(folder, { offsets: {}, waitMs: 0 })).version, offsets: { [started.id]: done.job.size }, waitMs: 300 });
     assert.deepEqual(quiet.output, {});
+  } finally {
+    await shells.stop();
+  }
+});
+
+test("one answer of watch shares its output among the commands it follows: a busy old one does not hold back a new one", async () => {
+  const { folder, shells } = setup();
+  try {
+    const old = await shells.run(folder, { command: "head -c 600000 /dev/zero | tr '\\0' x" }, SH);
+    await settle(shells, folder, old.id);
+    const recent = await shells.run(folder, { command: "echo new" }, SH);
+    await settle(shells, folder, recent.id);
+    // The old one first, as the panel asks (oldest first), with far more to send than one answer holds.
+    const v = await shells.watch(folder, { offsets: { [old.id]: 0, [recent.id]: 0 }, waitMs: 0 });
+    assert.equal(v.output[recent.id]?.text, "new\n");
+    const sent = v.output[old.id]?.text.length ?? 0;
+    assert.ok(sent > 200_000 && sent + 4 <= 256 * 1024, `${sent}`);
+  } finally {
+    await shells.stop();
+  }
+});
+
+test("a watch beyond those that may wait answers the one that has waited longest, as busy", async () => {
+  const { folder, shells } = setup();
+  try {
+    const since = (await shells.watch(folder, { offsets: {}, waitMs: 0 })).version;
+    const t0 = Date.now();
+    // Of panels closed since, say: the browser cannot call them off.
+    const waits = Array.from({ length: MAX_WAITING + 1 }, () => shells.watch(folder, { since, offsets: {}, waitMs: 5000 }).then((v) => ({ v, at: Date.now() - t0 })));
+    const first = await waits[0]!;
+    assert.ok(first.v.busy && first.at < 2000, JSON.stringify(first));
+    // The rest wait for a change: a command that starts.
+    await shells.run(folder, { command: "true" }, SH);
+    for (const w of waits.slice(1)) assert.ok(!(await w).v.busy);
   } finally {
     await shells.stop();
   }

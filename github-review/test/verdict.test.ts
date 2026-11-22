@@ -98,6 +98,8 @@ test("instructions: the review is posted with the heading and the mark; merge, s
   const own = mergeInstruction(PR, mark, { method: "merge", deleteBranch: false, own: true, fork: false, canPush: true });
   assert.ok(!own.includes("--approve"));
   assert.ok(own.includes("approve はできません"));
+  assert.ok(own.includes("gh pr merge 5 --merge --admin --match-head-commit <SHA> --repo o/r"));
+  assert.ok(!merge.includes("--admin "));
   assert.ok(!own.includes("git/refs/heads"));
 
   const fork = askInstruction("merge", { ...PR, fork: true }, mark, { method: "rebase", deleteBranch: true });

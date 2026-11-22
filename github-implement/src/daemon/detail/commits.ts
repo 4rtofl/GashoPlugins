@@ -1,5 +1,6 @@
-// The commits of a pull request, oldest first (GitHub gives 250 at most).
-import { str, type DetailPart } from "../gh.ts";
+// The commits of a pull request, oldest first: gh reads the oldest GH_COMMITS and no more, so how many there are is
+// read apart (commitsCountArgs) when it gave that many.
+import { num, str, type DetailPart } from "../gh.ts";
 
 export interface GitHubCommit {
   oid: string;
@@ -14,7 +15,24 @@ declare module "../../types.ts" {
   interface GitHubItemDetail {
     /** Pull requests only. */
     commits?: GitHubCommit[];
+    /** How many commits it has, read only when gh gave GH_COMMITS of them. */
+    commitsTotal?: number;
   }
+}
+
+/** gh pr view's `commits(first: 100)`. */
+export const GH_COMMITS = 100;
+
+/** How many commits the pull request has (1 point). */
+export function commitsCountArgs(repo: string, number: number): string[] {
+  const [owner, name] = repo.split("/") as [string, string];
+  const query = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { commits { totalCount } } } }";
+  return ["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`];
+}
+
+export function parseCommitsCount(json: string): number | undefined {
+  const data = JSON.parse(json) as { data?: { repository?: { pullRequest?: { commits?: { totalCount?: unknown } } | null } | null } };
+  return num(data.data?.repository?.pullRequest?.commits?.totalCount);
 }
 
 export default {

@@ -1,10 +1,10 @@
 // The buttons of a pull request's row, drawn by the review page: the page gives them their tools (useCall, the session
 // launcher, the dialogs that ask first, the notice at the bottom).
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { answerCalls, callsOf, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
+import { answerCalls, callsOf, machine, respond, scene, sdk, session, set } from "../../test/sdk.tsx";
 import { ForkDialog } from "../src/web/dialogs.tsx";
 import type { ForkQuestion } from "../src/web/actions.ts";
 import { ReviewPage } from "../src/web/page.tsx";
@@ -228,6 +228,32 @@ describe("a pull request with a worktree", () => {
   });
 });
 
+describe("my own open pull request with a worktree", () => {
+  const head = "abc1234";
+  // A number of its own: what the tests above sent for #7 is remembered on the page for a while (asked.ts).
+  const own = (over: Partial<PrRow> = {}) => pr({ number: 70, url: "https://github.com/4rtofl/app/pull/70", own: true, head, place: { primary: "/work/app", worktree: review }, ...over });
+  const verdict = (v: "changes" | "mergeable", sha = head) => ({ verdict: v, sha, url: "https://github.com/4rtofl/app/pull/7#issuecomment-1" });
+  const button = (name: RegExp) => screen.queryByRole("button", { name });
+
+  it("offers only 修正してもらう, not レビューする, when the review asks for changes", () => {
+    respond({ list: listed({ requested: [own({ mark: verdict("changes") })] }) });
+    render(<ReviewPage params={{}} />);
+    expect(button(/修正してもらう/)).not.toBeNull();
+    expect(button(/レビューする/)).toBeNull();
+  });
+
+  it.each([
+    ["has no review yet", undefined],
+    ["was pushed to after the review asked for changes", verdict("changes", "def5678")],
+    ["can be merged", verdict("mergeable")],
+  ])("offers レビューする when it %s", (_, mark) => {
+    respond({ list: listed({ requested: [own(mark ? { mark } : {})] }) });
+    render(<ReviewPage params={{}} />);
+    expect(button(/レビューする/)).not.toBeNull();
+    expect(button(/修正してもらう/)).toBeNull();
+  });
+});
+
 describe("fork pull requests asked about one after another", () => {
   const fork = (n: number) =>
     pr({ number: n, url: `https://github.com/4rtofl/app/pull/${n}`, fork: true, place: { primary: "/work/app", worktree: { path: `/work/review-${n}`, branch: `pr-${n}`, review: true } } });
@@ -276,5 +302,107 @@ describe("fork pull requests asked about one after another", () => {
     await userEvent.click(yes(screen.getByRole("dialog")));
     expect(answers).toEqual(["#12 true"]);
     expect(screen.getAllByRole("dialog").map((d) => d.textContent)).toEqual([expect.stringContaining("#11「")]);
+  });
+});
+
+// Each test has a pull request of its own: what the rows asked is remembered on the page for a while (asked.ts).
+const numbered = (n: number, place: Partial<NonNullable<PrRow["place"]>> = {}, over: Partial<PrRow> = {}) =>
+  pr({ number: n, url: `https://github.com/4rtofl/app/pull/${n}`, head: "abc1234", place: { primary: "/work/app", worktree: { path: `/work/review-${n}`, branch: `pr-${n}`, review: true }, ...place }, ...over });
+const mergeable = (n: number) => ({ verdict: "mergeable" as const, sha: "abc1234", url: `https://github.com/4rtofl/app/pull/${n}#issuecomment-1` });
+/** A working server with a Gasho session in /work/review-<n>. */
+const withSession = (n: number, over: Parameters<typeof session>[0] = {}) => [machine({ canLaunch: true, sessions: [session({ cwd: `/work/review-${n}`, managed: true, ...over })] })];
+
+describe("the tools the page gives the rows", () => {
+  it.each<[string, number, Record<string, unknown>, string, boolean]>([
+    ["squash, keeping the head branch", 40, { mergeMethod: "squash", deleteBranch: false }, "--squash", false],
+    ["rebase, deleting the head branch", 41, { mergeMethod: "rebase", deleteBranch: true }, "--rebase", true],
+  ])("ask the Agent to merge as the settings say: %s", async (_, n, settings, method, deletes) => {
+    set({ machines: withSession(n), settings: { ...scene.settings, ...settings } });
+    respond({ list: listed({ requested: [numbered(n, {}, { mark: mergeable(n) })] }) });
+    render(<ReviewPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "マージしてもらう" }));
+    const dialog = await screen.findByRole("dialog", { name: "Agent にマージを頼みますか" });
+    expect(within(dialog).queryByText("GitHub の head のブランチ（fix/7-login）を消します") !== null).toBe(deletes);
+    await userEvent.click(within(dialog).getByRole("button", { name: "マージを頼む" }));
+    await waitFor(() => expect(sdk.sendInput).toHaveBeenCalled());
+    const text = sdk.sendInput.mock.calls[0]?.[0].text ?? "";
+    expect(text).toContain(`gh pr merge ${n} ${method} --match-head-commit`);
+    expect(text.includes("git/refs/heads/fix/7-login")).toBe(deletes);
+  });
+
+  it("give a row its buttons back when the page is left while it asks the person first", async () => {
+    set({ machines: withSession(42) });
+    respond({ list: listed({ requested: [numbered(42, {}, { mark: mergeable(42) })] }) });
+    const left = render(<ReviewPage params={{}} />);
+    await userEvent.click(screen.getByRole("button", { name: "マージしてもらう" }));
+    await screen.findByRole("dialog", { name: "Agent にマージを頼みますか" });
+    expect(screen.getByRole("button", { name: "マージしてもらう", hidden: true })).toHaveProperty("disabled", true);
+    left.unmount();
+    render(<ReviewPage params={{}} />);
+    expect(screen.getByRole("button", { name: "マージしてもらう" })).toHaveProperty("disabled", false);
+  });
+
+  it("say what went wrong when a button's work fails unexpectedly, and give the row its buttons back", async () => {
+    respond({ list: listed({ requested: [numbered(43, { worktree: undefined })] }) });
+    sdk.call.mockImplementation(() => {
+      throw new Error("the daemon part went away");
+    });
+    render(<ReviewPage params={{}} />);
+    await choose("何も送らない");
+    expect((await screen.findByRole("alert")).textContent).toContain("the daemon part went away");
+    expect(screen.getByRole("button", { name: /worktree を作る/ })).toHaveProperty("disabled", false);
+  });
+});
+
+describe("what the page removes by itself", () => {
+  const claimed = (p: { action?: string }) => (p.action === "claim" ? { ok: true as const, data: { claimed: true } } : { ok: true as const, data: undefined });
+
+  it("removes a review worktree whose merge is done once no session works in it, and tries it once", async () => {
+    const merged = numbered(44, { cleanup: { kind: "merge", sha: "abc1234", done: true } }, { state: "merged" });
+    set({ machines: withSession(44, { status: "busy" }) });
+    answerCalls({ cleanup: claimed });
+    respond({ list: listed({ requested: [merged] }) });
+    render(<ReviewPage params={{}} />);
+    expect(callsOf("cleanup")).toEqual([]);
+    act(() => set({ machines: withSession(44) }));
+    await waitFor(() => expect(sdk.removeWorktree).toHaveBeenCalledWith({ machine: "m1", path: "/work/review-44", branch: "pr-44", pushed: ["abc1234"] }));
+    act(() => set({ machines: withSession(44) }));
+    await waitFor(() => expect(callsOf("cleanup")).toHaveLength(2));
+    expect(callsOf("cleanup")).toEqual([
+      { repo: "4rtofl/app", number: 44, action: "claim" },
+      { repo: "4rtofl/app", number: 44, action: "forget" },
+    ]);
+  });
+
+  it.each<[string, number, NonNullable<PrRow["place"]>["cleanup"], string | undefined]>([
+    ["is not done yet", 45, { kind: "merge", sha: "abc1234", done: false }, undefined],
+    ["could not be removed before", 46, { kind: "merge", sha: "abc1234", done: true, problem: "未コミットの変更が 1 件あります" }, undefined],
+    ["Gasho cannot remove", 47, { kind: "merge", sha: "abc1234", done: true }, "この worktree では Gasho のセッションが動いています"],
+  ])("leaves alone a review worktree to remove once a merge is done that %s", (_, n, cleanup, problem) => {
+    sdk.removeWorktreeProblem.mockReturnValue(problem);
+    set({ machines: withSession(n) });
+    respond({ list: listed({ requested: [numbered(n, cleanup ? { cleanup } : {}, { state: "merged" })] }) });
+    render(<ReviewPage params={{}} />);
+    expect(callsOf("cleanup")).toEqual([]);
+    expect(sdk.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("removes a session that has posted its review once it is at rest, forgets one that is gone, and tries each once", async () => {
+    set({ machines: withSession(48, { sessionId: "posted", status: "busy" }) });
+    answerCalls({ reviewSession: claimed });
+    respond({ list: listed({ requested: [numbered(48, { finishedSessions: ["posted", "gone"] })] }) });
+    render(<ReviewPage params={{}} />);
+    await waitFor(() => expect(callsOf("reviewSession")).toEqual([{ action: "forget", sessionId: "gone" }]));
+    expect(sdk.removeSession).not.toHaveBeenCalled();
+    act(() => set({ machines: withSession(48, { sessionId: "posted" }) }));
+    await waitFor(() => expect(sdk.removeSession).toHaveBeenCalledWith({ machine: "m1", sessionId: "posted" }));
+    act(() => set({ machines: withSession(48, { sessionId: "posted" }) }));
+    await waitFor(() => expect(callsOf("reviewSession")).toHaveLength(3));
+    expect(callsOf("reviewSession")).toEqual([
+      { action: "forget", sessionId: "gone" },
+      { action: "claim", sessionId: "posted" },
+      { action: "forget", sessionId: "posted" },
+    ]);
+    expect(sdk.removeSession).toHaveBeenCalledTimes(1);
   });
 });

@@ -93,8 +93,13 @@ export function mergeInstruction(pr: PrRef, mark: ReviewMark, o: MergeOptions): 
       ? "これは私の Pull request なので、approve はできません。approve せずに進めてください。"
       : `\`${gh(pr, "pr review {n} --approve --body-file <ファイル>")}\` で approve します。本文は、レビューの結果を1〜3行に要約したものにしてください。`,
   );
+  // A ruleset that asks for an approval blocks my own pull request, which only I could approve; a bypass (`--admin`)
+  // is how it merges. The checks were waited for above, so the bypass skips only the approval.
   steps.push(
-    `\`${gh(pr, `pr merge {n} --${o.method} --match-head-commit <SHA>`)}\` でマージします。SHA は、push しなかったときはレビューした ${mark.sha}、コンフリクトを解決して push したときは、その commit です。` +
+    `\`${gh(pr, `pr merge {n} --${o.method}${o.own ? " --admin" : ""} --match-head-commit <SHA>`)}\` でマージします。SHA は、push しなかったときはレビューした ${mark.sha}、コンフリクトを解決して push したときは、その commit です。` +
+      (o.own
+        ? "自分の Pull request には approve が付けられず、ブランチのルールで止められるので、`--admin` でルールを迂回します（チェックは前の手順で通っています）。迂回する権限が無いと言われたら、マージせずに、そのことを伝えて終わりにしてください。"
+        : "approve してもブランチのルールで止められたときは（`--admin` は使わずに）、マージせずに、何が足りないと言われたかを伝えて終わりにしてください。") +
       "head が違うと言われたら（ほかの人が push した）、マージせずに、そのことを伝えて終わりにしてください。",
   );
   if (o.deleteBranch && !o.fork) {

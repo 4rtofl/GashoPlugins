@@ -46,7 +46,10 @@ export function settingsFrom(values: Record<string, unknown>): ShellSettings {
 /** Commands running at once in one session folder, and on the working server. */
 export const MAX_RUNNING_PER_FOLDER = 4;
 export const MAX_RUNNING = 16;
-/** `watch` calls waiting at once: gasho-daemon runs 8 calls of a plugin at a time, and `run` and `signal` must get through. */
+/**
+ * `watch` calls waiting at once: gasho-daemon runs 8 calls of a plugin at a time, and `run` and `signal` must get through.
+ * One more answers the one that has waited longest (it may be of a panel closed since: the browser cannot call it off).
+ */
 export const MAX_WAITING = 4;
 /** Output per `watch` answer and per `output` answer (characters). */
 const WATCH_BUDGET = 256 * 1024;
@@ -238,7 +241,8 @@ export class Shells {
   private readonly cached: Job[] = [];
   /** When this process started, kept in its records with its PID. */
   private readonly ownerStart: Promise<string | undefined> = processStart(process.pid);
-  private waiting = 0;
+  /** The `watch` calls waiting, the longest first: aborting one answers it as busy. */
+  private readonly waiting: AbortController[] = [];
   private stopping = false;
 
   constructor(opts: { dataDir: string; env?: NodeJS.ProcessEnv; log?: (...args: unknown[]) => void }) {
@@ -302,7 +306,7 @@ export class Shells {
     const shell = pickShell(settings.shell, this.env.SHELL, isFile);
     let child: ChildProcess;
     try {
-      child = spawn(shell, shellArgs(settings.startup, this.store.cwdFile(f.key, id), command), {
+      child = spawn(shell, shellArgs(settings.startup, shell, this.store.cwdFile(f.key, id), command), {
         cwd,
         env: shellEnv(this.env, { cwd, ...(input.cols !== undefined ? { cols: input.cols } : {}) }),
         stdio: ["ignore", "pipe", "pipe"],
@@ -397,15 +401,16 @@ export class Shells {
     const ready = () => this.stopping || input.since !== f.version || behind(f, input.offsets);
     let busy = false;
     if (!ready() && input.waitMs > 0) {
-      if (this.waiting >= MAX_WAITING) busy = true;
-      else {
-        this.waiting++;
-        try {
-          if (await f.wait(ready, input.waitMs, signal)) await sleep(BATCH_MS);
-        } finally {
-          this.waiting--;
-        }
+      while (this.waiting.length >= MAX_WAITING) this.waiting.shift()?.abort();
+      const turn = new AbortController();
+      this.waiting.push(turn);
+      try {
+        if (await f.wait(ready, input.waitMs, signal ? AbortSignal.any([signal, turn.signal]) : turn.signal)) await sleep(BATCH_MS);
+      } finally {
+        const i = this.waiting.indexOf(turn);
+        if (i >= 0) this.waiting.splice(i, 1);
       }
+      busy = turn.signal.aborted;
     }
     return this.view(f, input.offsets, busy);
   }
@@ -608,7 +613,7 @@ export class Shells {
       return job.out;
     }
     const text = await this.store.readLog(f.key, job.meta.id);
-    const out = new OutputBuffer(Number.MAX_SAFE_INTEGER, { text, dropped: job.meta.logFrom, lines: job.meta.lines });
+    const out = new OutputBuffer(Number.MAX_SAFE_INTEGER, { text, dropped: job.meta.logFrom });
     if (!job.running) {
       job.out = out;
       this.remember(job);
@@ -635,16 +640,14 @@ export class Shells {
     const cwd = f.cwd;
     const jobs = f.jobs.map((j) => publicJob(j.meta));
     const output: Record<string, OutputPiece> = {};
-    let budget = WATCH_BUDGET;
-    for (const [id, at] of Object.entries(offsets)) {
-      if (budget <= 0) break;
+    const behindBy = Object.entries(offsets).flatMap(([id, at]) => {
       const job = f.find(id);
-      if (!job || job.meta.size <= at) continue;
-      const piece = (await this.outputOf(f, job)).slice(at, budget);
-      if (piece.text) {
-        output[id] = piece;
-        budget -= piece.text.length;
-      }
+      return job && job.meta.size > at ? [{ id, job, at }] : [];
+    });
+    const shares = share(behindBy.map(({ job, at }) => job.meta.size - at), WATCH_BUDGET);
+    for (const [i, { id, job, at }] of behindBy.entries()) {
+      const piece = (await this.outputOf(f, job)).slice(at, shares[i] ?? 0);
+      if (piece.text) output[id] = piece;
     }
     return { version, folder: f.path, cwd, home: this.home, now: Date.now(), jobs, output, ...(busy ? { busy: true } : {}) };
   }
@@ -691,6 +694,22 @@ export class Shells {
     }
     if (changed) f.bump();
   }
+}
+
+/**
+ * `budget` shared among what each asks for: the same for each, and what one needs less of goes to the others. A command
+ * with much output to send does not hold back another's (the order of `offsets` is the oldest first).
+ */
+function share(wants: number[], budget: number): number[] {
+  const out = wants.map(() => 0);
+  let left = budget;
+  const order = wants.map((_, i) => i).sort((a, b) => (wants[a] ?? 0) - (wants[b] ?? 0));
+  for (const [k, i] of order.entries()) {
+    const give = Math.min(wants[i] ?? 0, Math.floor(left / (order.length - k)));
+    out[i] = give;
+    left -= give;
+  }
+  return out;
 }
 
 /** A record in `offsets` has output past its offset. */
