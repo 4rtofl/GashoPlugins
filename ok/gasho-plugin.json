@@ -1,7 +1,7 @@
 {
   "id": "ok",
   "name": "OK",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Claude が返答したあと、次に送りそうな指示を予測して、入力欄の上にボタンで出す。押すと、その指示をセッションに送る",
   "genre": "other",
   "api": "1.4",
