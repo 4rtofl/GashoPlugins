@@ -84,17 +84,22 @@ describe("ImagePreview", () => {
     expect(screen.getByText("50%")).toBeTruthy();
   });
 
-  it("fits the image again when the box narrows, after a wheel that could not zoom it out", () => {
-    let width = 400;
+  it("fits the image again when the box narrows, after a wheel and a drag that could not move it", () => {
+    // At 203 px, the fitted 3024 px wide image is wider than the box by a rounding error.
+    let width = 203;
     let resized = () => {};
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
     vi.stubGlobal("ResizeObserver", class { constructor(cb: () => void) { resized = cb; } observe() {} disconnect() {} });
     show("a.png");
-    load(800, 600);
-    screen.getByRole("img").parentElement!.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true }));
-    width = 200;
+    load(3024, 4032);
+    const box = screen.getByRole("img").parentElement!;
+    box.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true }));
+    fireEvent.pointerDown(box, { pointerId: 1, pointerType: "mouse", button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(box, { pointerId: 1, clientX: 95, clientY: 100 });
+    fireEvent.pointerUp(box, { pointerId: 1 });
+    width = 100;
     act(() => resized());
-    expect(screen.getByText("25%")).toBeTruthy();
+    expect(screen.getByText("3%")).toBeTruthy();
   });
 
   it("tells why a large image is not shown, and still goes on to the next", async () => {

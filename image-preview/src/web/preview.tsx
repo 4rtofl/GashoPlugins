@@ -145,8 +145,9 @@ function Stage({ file, image, name, nav, position }: { file: FileContent; image:
     setView((v) => {
       if (!v) return v;
       const next = moveView(v, natural, stage, how);
-      // A wheel turned down or a drag while the whole image is shown changes nothing, and it stays fitted.
-      if (next.scale !== v.scale || next.x !== v.x || next.y !== v.y) fitted.current = false;
+      // A wheel turned down or a drag while the whole image is shown changes nothing, and it stays fitted. The fitted
+      // image can be wider than the stage by a rounding error, which lets a drag move it by a hair: that is no change.
+      if (next.scale !== v.scale || Math.abs(next.x - v.x) > 0.01 || Math.abs(next.y - v.y) > 0.01) fitted.current = false;
       return next;
     });
   }, []);
