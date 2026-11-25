@@ -1,0 +1,9 @@
+{
+  "id": "image-preview",
+  "name": "Image Preview",
+  "version": "1.0.0",
+  "description": "ファイルのパネルで開いた画像を、ホイール・ピンチで拡大・縮小し、ドラッグで動かして見る。← → で同じフォルダーの画像に移り、画像の下に幅×高さと容量を出す",
+  "genre": "appearance",
+  "api": "1.18",
+  "web": { "js": "web.js", "css": "web.css" }
+}
