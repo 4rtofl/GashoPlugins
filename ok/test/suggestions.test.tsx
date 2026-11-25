@@ -93,7 +93,7 @@ describe("holding a digit key", () => {
     expect(sdk.sendInput).not.toHaveBeenCalled();
   });
 
-  it("in an empty chat box, keeps the digit from being typed while held, and types it after a short press", () => {
+  it("leaves the digit keys to the chat box while it has the focus, empty or not", () => {
     respond({ predict: { data: three, loading: false } });
     render(
       <>
@@ -103,18 +103,14 @@ describe("holding a digit key", () => {
     );
     const box = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "入力" });
     box.focus();
-    const down = fireEvent.keyDown(box, { key: "3" });
-    expect(down).toBe(false);
-    fireEvent.keyUp(box, { key: "3" });
-    expect(box.value).toBe("3");
-    expect(sdk.sendInput).not.toHaveBeenCalled();
-    // With text in it, the digits are the person's.
     expect(fireEvent.keyDown(box, { key: "1" })).toBe(true);
-    act(() => vi.advanceTimersByTime(HOLD_MS));
+    expect(ring(1)).toBeNull();
+    act(() => vi.advanceTimersByTime(HOLD_MS * 2));
+    fireEvent.keyUp(box, { key: "1" });
     expect(sdk.sendInput).not.toHaveBeenCalled();
   });
 
-  it("in an empty chat box, sends the suggestion held for 2.5 s without typing the digit", () => {
+  it("ends the hold when the focus goes to the chat box", () => {
     respond({ predict: { data: three, loading: false } });
     render(
       <>
@@ -122,13 +118,12 @@ describe("holding a digit key", () => {
         <Suggestions machine={machine()} session={idle()} />
       </>,
     );
-    const box = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "入力" });
-    box.focus();
-    fireEvent.keyDown(box, { key: "1" });
-    act(() => vi.advanceTimersByTime(HOLD_MS));
-    fireEvent.keyUp(box, { key: "1" });
-    expect(box.value).toBe("");
-    expect(sdk.sendInput).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1", text: "はい" });
+    fireEvent.keyDown(document.body, { key: "2" });
+    expect(ring(2)).toBeTruthy();
+    act(() => screen.getByRole("textbox", { name: "入力" }).focus());
+    expect(ring(2)).toBeNull();
+    act(() => vi.advanceTimersByTime(HOLD_MS * 2));
+    expect(sdk.sendInput).not.toHaveBeenCalled();
   });
 
   it("waits for the seconds of the setting holdSeconds", () => {
