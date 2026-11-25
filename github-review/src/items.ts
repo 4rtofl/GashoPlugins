@@ -1,6 +1,9 @@
 // The page's rows from the lists of every working server: a pull request once, with where it is on each working server
 // that listed it (the clone of its repository there, and its worktree), so that one with a worktree anywhere opens
-// there. One without a clone on any working server cannot get a worktree, and is left out.
+// there. One without a clone on any working server cannot get a worktree, and is left out (the page says how many).
+// Each part shows at most SEARCH_LIMIT, the newest of every working server's, and counts the rest once however many
+// working servers watch a repository.
+import { inOrder } from "./search.ts";
 import { SEARCH_LIMIT, type Cleanup, type Listing, type PrRow, type PrWorktree } from "./types.ts";
 
 export interface Spot<M> {
@@ -21,15 +24,27 @@ export interface Group<M> {
   repo: string;
   /** Watched on some working server; otherwise it is here for the review worktrees of its pull requests. */
   watched: boolean;
+  /** Those the search found, then those kept for their review worktree. */
   items: Item<M>[];
+  /** Watched: how many GitHub found for the search words. */
+  total: number;
 }
 
 export interface PageItems<M> {
   requested: Item<M>[];
-  groups: Group<M>[];
+  /** Of those read for the upper part, how many are left out as no working server has a clone of their repository. */
+  requestedNoClone: number;
+  /** How many GitHub found for the upper part that were not read (whether they have a clone is not known). */
   requestedMore: number;
+  groups: Group<M>[];
+  /** How many GitHub found for the watched repositories that the lower part does not show. */
   watchedMore: number;
 }
+
+const once = (prs: PrRow[]): PrRow[] => {
+  const seen = new Set<string>();
+  return prs.filter((p) => !seen.has(p.url) && Boolean(seen.add(p.url)));
+};
 
 /**
  * Lists each in order, as one list in that order: of those ranked the same, or without a rank to compare, the earlier
@@ -58,11 +73,27 @@ export function mergeOrdered<T>(lists: readonly (readonly T[])[], rank: (x: T) =
   }
 }
 
-export function pageItems<M>(lists: { machine: M; listing: Listing }[]): PageItems<M> {
+/**
+ * A list as this version reads it. Once the plugin is updated, the page keeps what the daemon part of the version
+ * before gave until it reads again, which may lack the parts added since (`kept`, `total`, `hidden`).
+ */
+export function readListing(l: Listing): Listing {
+  const old = l as Partial<Listing> & { repos?: Partial<Listing["repos"][number]>[] };
+  return {
+    ...l,
+    requested: old.requested ?? [],
+    repos: (old.repos ?? []).map((r) => ({ repo: r.repo ?? "", watched: r.watched === true, prs: r.prs ?? [], total: r.total ?? 0, kept: r.kept ?? [] })),
+    hidden: old.hidden ?? [],
+    errors: old.errors ?? [],
+  };
+}
+
+/** The page's rows; `words` are the search words, whose order the lower part keeps. */
+export function pageItems<M>(lists: { machine: M; listing: Listing }[], words: string): PageItems<M> {
   // Every working server's spot of a pull request, whichever part of the page listed it there.
   const spots = new Map<string, Spot<M>[]>();
   for (const { machine, listing } of lists) {
-    for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => r.prs)]) {
+    for (const pr of [...listing.requested, ...listing.repos.flatMap((r) => [...r.prs, ...r.kept])]) {
       if (!pr.place) continue;
       const all = spots.get(pr.url) ?? [];
       if (!all.some((s) => s.machine === machine)) all.push({ machine, ...pr.place });
@@ -70,31 +101,44 @@ export function pageItems<M>(lists: { machine: M; listing: Listing }[]): PageIte
     }
   }
   const item = ({ place: _, ...pr }: PrRow): Item<M> => ({ pr, spots: spots.get(pr.url) ?? [] });
-  const once = (prs: PrRow[]): Item<M>[] => {
-    const seen = new Set<string>();
-    return prs
-      .filter((p) => !seen.has(p.url) && Boolean(seen.add(p.url)))
-      .map(item)
-      .filter((i) => i.spots.length > 0);
-  };
-  const groups = new Map<string, { repo: string; watched: boolean; prs: PrRow[] }>();
+  const placed = (prs: PrRow[]): Item<M>[] => prs.map(item).filter((i) => i.spots.length > 0);
+
+  // Working servers watch different repositories, so each lists some of mine the others do not.
+  const read = once(mergeOrdered(lists.map((l) => l.listing.requested), (p) => p.order));
+  const first = read.slice(0, SEARCH_LIMIT);
+  const requested = placed(first);
+
+  const groups = new Map<string, { repo: string; watched: boolean; prs: PrRow[]; kept: PrRow[]; total: number }>();
   for (const { listing } of lists) {
     for (const r of listing.repos) {
       const key = r.repo.toLowerCase();
-      const g = groups.get(key) ?? { repo: r.repo, watched: false, prs: [] };
+      const g = groups.get(key) ?? { repo: r.repo, watched: false, prs: [], kept: [], total: 0 };
       g.watched ||= r.watched;
       g.prs.push(...r.prs);
+      g.kept.push(...r.kept);
+      // Working servers that watch it read the same search.
+      g.total = Math.max(g.total, r.total);
       groups.set(key, g);
     }
   }
-  // Working servers watch different repositories, so each lists some of mine the others do not.
-  const requested = once(mergeOrdered(lists.map((l) => l.listing.requested), (p) => p.order));
+  // The watched repositories first, as their working servers list them.
+  const ordered = [...groups.values()].sort((a, b) => Number(b.watched) - Number(a.watched));
+  const found = inOrder(once(ordered.flatMap((g) => g.prs)), words).slice(0, SEARCH_LIMIT);
+  const foundUrls = new Set(ordered.flatMap((g) => g.prs.map((p) => p.url)));
   return {
-    requested: requested.slice(0, SEARCH_LIMIT),
-    // The watched repositories first, as their working servers list them.
-    groups: [...groups.values()].sort((a, b) => Number(b.watched) - Number(a.watched)).map((g) => ({ repo: g.repo, watched: g.watched, items: once(g.prs) })),
-    requestedMore: Math.max(0, ...lists.map((l) => l.listing.requestedMore ?? 0)) + Math.max(0, requested.length - SEARCH_LIMIT),
-    watchedMore: lists.reduce((n, l) => n + (l.listing.watchedMore ?? 0), 0),
+    requested,
+    requestedNoClone: first.length - requested.length,
+    requestedMore: Math.max(0, ...lists.map((l) => l.listing.requestedMore ?? 0)) + Math.max(0, read.length - SEARCH_LIMIT),
+    groups: ordered.map((g) => {
+      const key = g.repo.toLowerCase();
+      return {
+        repo: g.repo,
+        watched: g.watched,
+        items: placed([...found.filter((p) => p.repo.toLowerCase() === key), ...once(g.kept).filter((p) => !foundUrls.has(p.url))]),
+        total: g.total,
+      };
+    }),
+    watchedMore: Math.max(0, ordered.reduce((n, g) => n + g.total, 0) - found.length),
   };
 }
 

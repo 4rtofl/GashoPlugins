@@ -51,7 +51,14 @@ export class SessionRemovals {
   load(): Promise<void> {
     this.loaded ??= fs.readFile(this.file, "utf8").then(
       (raw) => {
-        const v = JSON.parse(raw) as { sessions?: unknown } | null;
+        let v: { sessions?: unknown } | null;
+        try {
+          v = JSON.parse(raw) as { sessions?: unknown } | null;
+        } catch (e) {
+          // Starts with none: the next one sent a review writes the file anew.
+          this.log("github-review: the file of the sessions to remove is broken; starting with none", e);
+          return;
+        }
         for (const e of Array.isArray(v?.sessions) ? v.sessions : []) if (isEntry(e)) this.entries.set(e.sessionId, e);
       },
       (e: unknown) => {
