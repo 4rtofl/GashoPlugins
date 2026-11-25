@@ -2,7 +2,7 @@
 // panel (README.md「メソッド」). The folder always comes from gasho-daemon (ctx.session), never from the browser; what
 // the browser sends is checked here.
 import { defineDaemonPlugin, PluginError, type DaemonContext } from "@gasho/plugin-sdk/daemon";
-import { JOB_ID, MAX_COMMAND_CHARS, MAX_WAIT_MS } from "../types.ts";
+import { JOB_ID, MAX_COMMAND_CHARS, MAX_WAIT_MS, RUN_REQUEST } from "../types.ts";
 import { OUTPUT_BUDGET, settingsFrom, Shells } from "./jobs.ts";
 
 let shells: Shells | undefined;
@@ -31,6 +31,7 @@ const intIn = (v: unknown, min: number, max: number, fallback: number): number =
 export default defineDaemonPlugin({
   start(ctx) {
     shells = new Shells({ dataDir: ctx.dataDir, log: ctx.log });
+    shells.tidy();
   },
   async stop() {
     const s = shells;
@@ -38,7 +39,10 @@ export default defineDaemonPlugin({
     await s?.stop();
   },
   methods: {
-    /** Runs { command } (or the command of the record { again }) in the working folder: the record, running. */
+    /**
+     * Runs { command } (or the command of the record { again }) in the working folder: the record, running. With
+     * { request }, the record already started for it, if there is one, marked `earlier`.
+     */
     async run(params, ctx) {
       const p = fields(params);
       const again = p.again === undefined ? undefined : jobId(p.again);
@@ -50,7 +54,13 @@ export default defineDaemonPlugin({
         command = p.command;
       }
       const cols = typeof p.cols === "number" && Number.isInteger(p.cols) ? Math.min(500, Math.max(20, p.cols)) : undefined;
-      return current().run(sessionFolder(ctx), { command, again, ...(cols !== undefined ? { cols } : {}) }, settingsFrom(ctx.settings));
+      if (p.request !== undefined && (typeof p.request !== "string" || !RUN_REQUEST.test(p.request))) throw new PluginError("依頼の指定が正しくありません。");
+      const request = p.request as string | undefined;
+      return current().run(
+        sessionFolder(ctx),
+        { command, again, ...(cols !== undefined ? { cols } : {}), ...(request !== undefined ? { request } : {}) },
+        settingsFrom(ctx.settings),
+      );
     },
     /** Sends { signal: "INT" | "KILL" } to the running command { job }. */
     async signal(params, ctx) {

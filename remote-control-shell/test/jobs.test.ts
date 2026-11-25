@@ -1,11 +1,11 @@
 // The daemon part's commands, with real shells (sh) in folders of their own.
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { DEFAULT_SETTINGS, MAX_WAITING, Shells, type ShellSettings } from "../src/daemon/jobs.ts";
+import { DEFAULT_SETTINGS, GONE_KEEP_MS, MAX_WAITING, Shells, type ShellSettings } from "../src/daemon/jobs.ts";
 import { processStart, statStart } from "../src/daemon/proc.ts";
 import { folderKey, Store, type StoredJob } from "../src/daemon/store.ts";
 import type { ShellJob } from "../src/types.ts";
@@ -97,22 +97,77 @@ test("cd carries over to the next command, only from the command started last; c
   }
 });
 
-test("SIGINT stops a command, and SIGKILL one that ignores SIGINT", async () => {
-  const { folder, shells } = setup();
+/** Waits until a command has written `text`: what it does before that has been done. */
+async function said(s: Shells, folder: string, id: string, text: string): Promise<void> {
+  const until = Date.now() + 15_000;
+  while (Date.now() < until) {
+    if ((await s.output(folder, id, 0, 10_000)).text.includes(text)) return;
+    await sleep(20);
+  }
+  throw new Error(`${id} did not write ${text}`);
+}
+
+test("SIGINT stops a command, sent from here or not, and SIGKILL one that ignores SIGINT; one that ends by itself keeps its exit code", async () => {
+  const { folder, dataDir, shells } = setup();
   try {
-    const sleeping = await shells.run(folder, { command: "sleep 30" }, SH);
-    await sleep(200);
+    // "ready" comes from the process the shell waits for, so that the signal comes while it does.
+    const sleeping = await shells.run(folder, { command: "sh -c 'echo ready; exec sleep 30'" }, SH);
+    await said(shells, folder, sleeping.id, "ready");
     await shells.signal(folder, sleeping.id, "INT");
     const a = await settle(shells, folder, sleeping.id);
     assert.deepEqual([a.job.state, a.job.signal], ["stopped", "SIGINT"]);
-    const stubborn = await shells.run(folder, { command: "trap '' INT; sleep 30" }, SH);
-    await sleep(200);
+    const stubborn = await shells.run(folder, { command: "trap '' INT; echo ready; sleep 30" }, SH);
+    await said(shells, folder, stubborn.id, "ready");
     await shells.signal(folder, stubborn.id, "INT");
     await sleep(300);
     assert.equal((await shells.status(folder)).running, 1);
     await shells.signal(folder, stubborn.id, "KILL");
     const b = await settle(shells, folder, stubborn.id);
     assert.deepEqual([b.job.state, b.job.signal], ["stopped", "SIGKILL"]);
+    const own = await shells.run(folder, { command: "sh -c \"trap '' INT; echo ready; sleep 0.3; exit 3\"" }, SH);
+    await said(shells, folder, own.id, "ready");
+    await shells.signal(folder, own.id, "INT");
+    const c = await settle(shells, folder, own.id);
+    assert.deepEqual([c.job.state, c.job.exitCode, c.job.signal], ["exited", 3, undefined]);
+    // Sent by another process of the plugin (during a hot reload), or by someone with kill.
+    const outside = await shells.run(folder, { command: "sh -c 'echo ready; exec sleep 30'" }, SH);
+    await said(shells, folder, outside.id, "ready");
+    await shells.idle();
+    process.kill(-(await new Store(dataDir).readJob(folderKey(folder), outside.id))!.pgid!, "SIGINT");
+    const d = await settle(shells, folder, outside.id);
+    assert.deepEqual([d.job.state, d.job.signal], ["stopped", "SIGINT"]);
+  } finally {
+    await shells.stop();
+  }
+});
+
+test("SIGKILL stops a command whose shell ended first while what it left in the background kept its output open", async () => {
+  const { folder, dataDir, shells } = setup();
+  /** Waits until the shell (the group's leader) has ended, leaving `sleep` in its group. */
+  const shellGone = async (id: string) => {
+    await shells.idle();
+    const pid = (await new Store(dataDir).readJob(folderKey(folder), id))!.pgid!;
+    for (const until = Date.now() + 5000; Date.now() < until; await sleep(50)) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return;
+      }
+    }
+    throw new Error(`the shell of ${id} did not end`);
+  };
+  try {
+    // The shell ends with 0, 3, and, after SIGINT (which a command in the background ignores), 130.
+    for (const [command, int] of [["sleep 30 & echo ready", false], ["sleep 30 & echo ready; exit 3", false], ["sleep 30 & echo ready; wait", true]] as const) {
+      const job = await shells.run(folder, { command }, SH);
+      await said(shells, folder, job.id, "ready");
+      if (int) await shells.signal(folder, job.id, "INT");
+      await shellGone(job.id);
+      assert.equal((await shells.status(folder)).running, 1, command);
+      await shells.signal(folder, job.id, "KILL");
+      const { job: ended } = await settle(shells, folder, job.id);
+      assert.deepEqual([ended.state, ended.signal, ended.exitCode], ["stopped", "SIGKILL", undefined], command);
+    }
   } finally {
     await shells.stop();
   }
@@ -139,12 +194,14 @@ test("output beyond the limit is dropped from its start, at a line's start", asy
 test("watch waits for a change, and answers as soon as output comes", async () => {
   const { folder, shells } = setup();
   try {
-    const started = await shells.run(folder, { command: "sleep 0.3; echo late" }, SH);
+    const started = await shells.run(folder, { command: "sleep 2; echo late" }, SH);
     const first = await shells.watch(folder, { offsets: { [started.id]: 0 }, waitMs: 0 });
+    assert.deepEqual(first.output, {});
     const t0 = Date.now();
-    const next = await shells.watch(folder, { since: first.version, offsets: { [started.id]: 0 }, waitMs: 5000 });
+    const next = await shells.watch(folder, { since: first.version, offsets: { [started.id]: 0 }, waitMs: 10_000 });
     const waited = Date.now() - t0;
-    assert.ok(waited >= 150 && waited < 4000, `${waited} ms`);
+    // Nothing had come before it was called: it waited for the output, and answered once it came, well before waitMs.
+    assert.ok(waited < 8000, `${waited} ms`);
     assert.equal(next.output[started.id]?.text, "late\n");
     // Nothing new: it waits the whole time.
     const done = await settle(shells, folder, started.id);
@@ -338,5 +395,74 @@ test("a record another process of the plugin runs stays running, and gets a sign
   } finally {
     for (const p of [taken, shell]) p.kill("SIGKILL");
     await shells.stop();
+  }
+});
+
+test("a run that comes while the plugin stops is refused, and starts nothing", async () => {
+  const { folder, dataDir, shells } = setup();
+  // The folder is still being read when stop() begins.
+  const late = shells.run(folder, { command: "sleep 30" }, SH);
+  await shells.stop();
+  await assert.rejects(late, /止まるところ/);
+  const again = new Shells({ dataDir });
+  try {
+    assert.deepEqual((await again.watch(folder, { offsets: {}, waitMs: 0 })).jobs, []);
+  } finally {
+    await again.stop();
+  }
+});
+
+test("a run sent again with the same request answers the record started for it, and runs the command once", async () => {
+  const { folder, dataDir, shells } = setup();
+  const input = { command: "echo once >> runs.txt", request: "0123456789abcdef" };
+  let first = "";
+  try {
+    // The second comes while the first waits for the folder to be read, as when the first had no answer in time.
+    const [a, b] = await Promise.all([shells.run(folder, input, SH), shells.run(folder, input, SH)]);
+    first = a.id;
+    assert.deepEqual([b.id, a.earlier, b.earlier], [a.id, undefined, true]);
+    await settle(shells, folder, a.id);
+    assert.equal((await shells.run(folder, input, SH)).id, a.id);
+  } finally {
+    await shells.stop();
+  }
+  const again = new Shells({ dataDir });
+  try {
+    assert.equal((await again.run(folder, input, SH)).id, first);
+    await settle(again, folder, (await again.run(folder, { ...input, request: "fedcba9876543210" }, SH)).id);
+    assert.equal(readFileSync(path.join(folder, "runs.txt"), "utf8"), "once\nonce\n");
+  } finally {
+    await again.stop();
+  }
+});
+
+test("the records of a session folder that has gone are removed a week after it was first found gone", async () => {
+  const { folder, dataDir, shells } = setup();
+  const gone = path.join(path.dirname(folder), "gone");
+  const unread = path.join(path.dirname(folder), "unread");
+  for (const f of [gone, unread]) mkdirSync(f);
+  try {
+    for (const f of [folder, gone, unread]) await settle(shells, f, (await shells.run(f, { command: "echo hi" }, SH)).id);
+  } finally {
+    await shells.stop();
+  }
+  for (const f of [gone, unread]) rmSync(f, { recursive: true });
+  const again = new Shells({ dataDir });
+  const week = GONE_KEEP_MS + 60_000;
+  try {
+    // One is read by this process, the other is not.
+    assert.equal((await again.watch(gone, { offsets: {}, waitMs: 0 })).jobs.length, 1);
+    // Found gone only now: kept, however long ago their records changed.
+    assert.equal(await again.sweep(Date.now() + week), 0);
+    // There again for a while (a disk plugged in): found gone later, the week starts again.
+    mkdirSync(unread);
+    assert.equal(await again.sweep(Date.now() + week), 0);
+    rmSync(unread, { recursive: true });
+    assert.equal(await again.sweep(Date.now() + 2 * week), 1);
+    assert.equal(await again.sweep(Date.now() + 3 * week), 1);
+    assert.deepEqual(await new Store(dataDir).keys(), [folderKey(folder)]);
+    assert.equal((await again.watch(folder, { offsets: {}, waitMs: 0 })).jobs.length, 1);
+  } finally {
+    await again.stop();
   }
 });

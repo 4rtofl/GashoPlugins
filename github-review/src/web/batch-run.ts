@@ -106,6 +106,9 @@ export function startBatch(choice: BatchChoice, targets: BatchTarget[], tools: T
   const actions: Actions = {
     ...tools.actions,
     notify: tell,
+    dismiss: (n) => {
+      if (notice.n === n) tell(undefined);
+    },
     askTrust: (q) =>
       new Promise<boolean>((resolve) =>
         update((run) => ({

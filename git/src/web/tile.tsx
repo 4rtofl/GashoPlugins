@@ -57,7 +57,7 @@ export function RepoCounts() {
   return (
     <Tile title="GitHub" icon={<FolderGit2 className="size-4" />}>
       {repos.length === 0 ? (
-        <p className="text-sm text-muted-foreground">GitHub のリポジトリで作業しているセッションはありません。</p>
+        <p className="text-sm text-muted-foreground">Gasho から起動したセッションのうち、GitHub のリポジトリで作業しているものはありません。</p>
       ) : (
         <ul className="space-y-3">
           {repos.map((r) => (

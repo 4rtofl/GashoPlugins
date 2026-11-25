@@ -25,6 +25,12 @@ export interface ShellJob {
   lines: number;
 }
 
+/** What `run` answers: the record it started, or the one already started for the same request. */
+export interface RunAnswer extends ShellJob {
+  /** Started for the same request before: nothing ran this time. */
+  earlier?: true;
+}
+
 /** A stretch of a command's output: `text` starts `from` characters after the start of the output. */
 export interface OutputPiece {
   from: number;
@@ -62,3 +68,5 @@ export const MAX_COMMAND_CHARS = 16_000;
 export const MAX_WAIT_MS = 20_000;
 /** A record's id: the time it started (base 36) and 3 random bytes. */
 export const JOB_ID = /^[0-9a-z]{6,12}-[0-9a-f]{6}$/;
+/** The panel's name for a `run`: 16 random hex digits (it may send the same one again after getting no answer). */
+export const RUN_REQUEST = /^[0-9a-f]{16}$/;

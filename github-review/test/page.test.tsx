@@ -85,6 +85,7 @@ describe("ReviewPage", () => {
 
   it("with no repository watched, offers to choose some, which opens the dialog", async () => {
     respond({ list: listed({ watched: [] }), options: { data: [] } });
+    answerCalls({ watched: { ok: true, data: [] } });
     render(<ReviewPage params={{}} />);
     expect(screen.getByText("検索の語に合う、レビューを頼まれた Pull request も、自分の Pull request もありません。")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "対象リポジトリを選ぶ" }));

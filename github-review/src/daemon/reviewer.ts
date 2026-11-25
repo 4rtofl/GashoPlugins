@@ -89,6 +89,12 @@ export class Reviewer {
     return this.listing;
   }
 
+  /** The repositories watched, as chosen. */
+  async watching(): Promise<string[]> {
+    await this.load();
+    return [...this.watched];
+  }
+
   /** Watches `paths` from now on: each a repository on GitHub that can be watched now, or one watched already. */
   async watch(paths: unknown): Promise<string[]> {
     await this.load();
@@ -97,8 +103,11 @@ export class Reviewer {
     if (next.length > MAX_REPOS) throw new ReviewError(`対象リポジトリは、1 台の working server に ${MAX_REPOS} 個までです。`);
     const added = next.filter((p) => !this.watched.includes(p));
     if (added.length > 0) {
-      const offered = new Set((await this.repoOptions(30_000)).filter((o) => o.github).map((o) => o.path));
-      const bad = added.filter((p) => !offered.has(p));
+      // What the dialog was offered, kept for a while: listing the folders again can take longer than this call may wait.
+      const offered = async (maxAgeMs: number) => new Set((await this.repoOptions(maxAgeMs)).filter((o) => o.github).map((o) => o.path));
+      let ok = await offered(OPTIONS_MAX_AGE_MS);
+      if (added.some((p) => !ok.has(p))) ok = await offered(30_000);
+      const bad = added.filter((p) => !ok.has(p));
       if (bad.length > 0) throw new ReviewError(`選べない repo です：${bad.join("、")}`);
     }
     if (JSON.stringify(next) !== JSON.stringify(this.watched)) {

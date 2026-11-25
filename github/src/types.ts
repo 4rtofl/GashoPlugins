@@ -14,8 +14,11 @@ export interface MissingScope {
 
 // ---- Actions ----
 
-/** Where a run, a job or a step stands, in a few words. */
-export type RunState = "success" | "failure" | "cancelled" | "skipped" | "neutral" | "in_progress" | "queued" | "waiting";
+/**
+ * Where a run, a job or a step stands, in a few words. "waiting": for a deployment's reviewers, still running.
+ * "action_required": finished until someone approves it on GitHub (a first pull request from a fork, say).
+ */
+export type RunState = "success" | "failure" | "cancelled" | "skipped" | "neutral" | "in_progress" | "queued" | "waiting" | "action_required";
 
 export interface Workflow {
   id: number;
@@ -30,12 +33,15 @@ export interface Run {
   id: number;
   /** The workflow's run number (#25). */
   number?: number;
+  /** Empty when GitHub could not read the workflow's file. */
   workflow: string;
   workflowId?: number;
   title: string;
   branch?: string;
   event: string;
   state: RunState;
+  /** GitHub could not start the run (its startup_failure): a wrong workflow file, among other causes. */
+  startupFailure?: boolean;
   attempt?: number;
   /** ISO 8601 */
   createdAt: string;
@@ -51,6 +57,8 @@ export interface Runs {
   runs: Run[];
   /** More runs match than were sent. */
   truncated: boolean;
+  /** The branches of the latest runs, as if no branch were chosen. */
+  branches: string[];
 }
 
 export interface Step {
@@ -77,6 +85,8 @@ export interface Job {
 
 export interface RunDetail extends Run {
   jobs: Job[];
+  /** The run's latest attempt; `attempt` is the one shown (an earlier one when asked for). */
+  attempts?: number;
 }
 
 // ---- Projects ----
@@ -98,15 +108,20 @@ export interface Projects {
   /** The other projects of the repository's owner. */
   owner: ProjectRef[];
   ownerLogin: string;
+  /** More projects than were read, of the repository's or of its owner's. */
+  linkedTruncated?: boolean;
+  ownerTruncated?: boolean;
   /** gh's login has no read:project: nothing could be read. */
   missing?: MissingScope;
 }
 
-/** A single select field: what the board can make columns of. */
+/** A single select or iteration field: what the board can make columns of. */
 export interface BoardField {
   id: string;
   name: string;
-  options: { id: string; name: string; color?: string }[];
+  iteration?: boolean;
+  /** An iteration field's: its iterations, those that ended first (as GitHub's board orders them). */
+  options: { id: string; name: string; color?: string; startDate?: string; completed?: boolean }[];
 }
 
 export interface BoardItem {
@@ -117,9 +132,9 @@ export interface BoardItem {
   url?: string;
   /** owner/name, when it is not the session's repository. */
   repo?: string;
-  state?: "open" | "closed" | "merged" | "draft" | "not_planned";
+  state?: "open" | "closed" | "merged" | "draft" | "not_planned" | "duplicate";
   assignees: string[];
-  /** The option chosen in each single select field (field id → option id). */
+  /** The option or iteration chosen in each single select or iteration field (field id → option or iteration id). */
   values: Record<string, string>;
 }
 
@@ -131,7 +146,7 @@ export interface Board {
   closed: boolean;
   shortDescription?: string;
   fields: BoardField[];
-  /** The field the project's first board view makes its columns of (else "Status", else the first). */
+  /** The field the project's first board view makes its columns of (else "Status", else the first single select). */
   defaultField?: string;
   /** In the project's order; archived ones are left out. */
   items: BoardItem[];
@@ -151,7 +166,8 @@ export interface Package {
   /** Absent for a user's packages (GitHub does not say). */
   versions?: number;
   createdAt?: string;
-  updatedAt?: string;
+  /** When its newest version was published (the package's own updated_at does not change then). */
+  publishedAt?: string;
   url: string;
 }
 
@@ -162,6 +178,8 @@ export interface Packages {
   missing?: MissingScope;
   /** Kinds that could not be read, and why. */
   errors?: string[];
+  /** Packages without publishedAt (past those whose newest version is read, or whose version could not be read): they come last. */
+  undated?: number;
 }
 
 export interface PackageVersion {

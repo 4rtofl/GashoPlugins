@@ -6,7 +6,7 @@
 import { ArrowUpDown, Check, FileDown, LoaderCircle, RefreshCw, Settings2, SquareKanban, X } from "lucide-react";
 import { AnimatePresence, LayoutGroup, motion, MotionConfig } from "framer-motion";
 import { Dialog, Popover } from "radix-ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   cn,
   useCall,
@@ -42,7 +42,7 @@ import { useBoardPlugins } from "./board-plugins";
 import { Card, CardActionsContext, CardSkeleton, CompactCard, type CardActions, type Notice, type Where } from "./card";
 import { clampWidth, columnCompact, columnWidth, setColumnCompact, setColumnSort, setColumnWidth, useKanbanPrefs, type KanbanPrefs } from "./prefs";
 import { ReposDialog } from "./repos-dialog";
-import { Alert, AlertDescription, AlertTitle, Badge, Button, DESKTOP, useMediaQuery, type BadgeTone } from "./ui/parts";
+import { Alert, AlertDescription, AlertTitle, Badge, Button, DESKTOP, PortalScope, useMediaQuery, type BadgeTone } from "./ui/parts";
 import { DIALOG_OVERLAY, DIALOG_PANEL, motionTransitions, TILE, TILE_SHADOW } from "./ui/styles";
 
 /** The daemon part reads every minute while the board shows; an older reading means it stopped. */
@@ -158,6 +158,60 @@ function BoardSource({ machine, refreshAsk, onChange }: { machine: MachineInfo; 
   return null;
 }
 
+/** Claude Code's question whether to trust a card's folder, and how the person's answer gets back to the card. */
+type TrustQuestion = { path: string; warnings: string[]; answer: (yes: boolean) => void };
+
+/**
+ * What the cards' menus ask, in the order they asked, kept here rather than in the board: a card asks once Claude Code
+ * has answered its launch, and the board may be gone by then (a session opened from the notice, a card or the sidebar).
+ * They wait till the board is open again, which shows the first.
+ */
+let trustLine: TrustQuestion[] = [];
+const trustWatchers = new Set<() => void>();
+const setTrustLine = (next: TrustQuestion[]) => {
+  trustLine = next;
+  for (const w of trustWatchers) w();
+};
+const watchTrusts = (w: () => void) => {
+  trustWatchers.add(w);
+  return () => {
+    trustWatchers.delete(w);
+  };
+};
+
+/** Where the board open now shows the notices of the cards' work, that of a board that was left too. */
+let openBoard: Pick<CardActions, "notify" | "dismiss"> | undefined;
+/** How many sessions the cards are starting, on this board and on one that was left. */
+let starting = 0;
+
+const cardActions: CardActions = {
+  notify: (n) => openBoard?.notify(n),
+  dismiss: (n) => openBoard?.dismiss(n),
+  askTrust: (q) =>
+    new Promise<boolean>((resolve) => {
+      const asked: TrustQuestion = {
+        ...q,
+        answer: (yes) => {
+          // Once: answered twice before the board draws again, the next one is not answered with it.
+          if (!trustLine.includes(asked)) return;
+          setTrustLine(trustLine.filter((x) => x !== asked));
+          resolve(yes);
+        },
+      };
+      setTrustLine([...trustLine, asked]);
+    }),
+  begin: () => {
+    starting++;
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      starting--;
+    };
+  },
+  starting: () => starting,
+};
+
 export function KanbanPage(_: PageProps) {
   const machines = useMachines();
   const now = useNow(15_000);
@@ -179,7 +233,14 @@ export function KanbanPage(_: PageProps) {
   const [tab, setTab] = useState<KanbanColumn>("mine");
   // What a card's menu is doing or did: starting a session.
   const [notice, setNotice] = useState<Notice>();
-  const [trust, setTrust] = useState<{ path: string; warnings: string[]; answer: (yes: boolean) => void }>();
+  useEffect(() => {
+    const here = { notify: setNotice, dismiss: (n: Notice) => setNotice((cur) => (cur === n ? undefined : cur)) };
+    openBoard = here;
+    return () => {
+      if (openBoard === here) openBoard = undefined;
+    };
+  }, []);
+  const trust = useSyncExternalStore(watchTrusts, () => trustLine[0]);
   // How many repositories each working server watched when last read, kept while the page is open: an offline one
   // is named above the board.
   const [lastWatched, setLastWatched] = usePluginState<Record<string, number>>("lastWatched", {});
@@ -231,18 +292,6 @@ export function KanbanPage(_: PageProps) {
     return () => clearTimeout(t);
   }, [asked]);
 
-  const actions = useMemo<CardActions>(
-    () => ({
-      notify: setNotice,
-      askTrust: (q) => new Promise<boolean>((resolve) => setTrust({ ...q, answer: resolve })),
-    }),
-    [],
-  );
-  const answerTrust = (yes: boolean) => {
-    trust?.answer(yes);
-    setTrust(undefined);
-  };
-
   const call = useCall();
   const [exporting, setExporting] = useState(false);
   /** Writes each working server's cards, as `state` gets them, to its board plugins' folder (cards/), for check.ts. */
@@ -290,7 +339,7 @@ export function KanbanPage(_: PageProps) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <CardActionsContext.Provider value={actions}>
+      <CardActionsContext.Provider value={cardActions}>
         {machines.map((m) => (
           <BoardSource key={m.id} machine={m} refreshAsk={refreshAsk} onChange={onSource} />
         ))}
@@ -478,9 +527,11 @@ export function KanbanPage(_: PageProps) {
             pluginSet={(id) => sources[id]?.pluginSet}
             reload={(id) => sources[id]?.reload()}
           />
-          <TrustDialog question={trust} onAnswer={answerTrust} />
+          {/* Opens anew for the next folder, so that it shows as another question rather than the same one changing. */}
+          <TrustDialog key={trust?.path} question={trust} onAnswer={(yes) => trust?.answer(yes)} />
           <Toast
             notice={notice}
+            asking={trust !== undefined}
             onClose={() => setNotice(undefined)}
             onOpen={(s) => {
               setNotice(undefined);
@@ -748,51 +799,53 @@ function SortMenu({ label, sort, onChange }: { label: string; sort: KanbanSort |
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content
-          align="start"
-          sideOffset={6}
-          className="z-50 w-64 rounded-xl border border-border bg-surface p-1.5 text-xs shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-        >
-          <button
-            type="button"
-            aria-pressed={!sort}
-            onClick={() => pick(undefined)}
-            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-neutral-300 hover:bg-surface-raised aria-pressed:text-foreground"
+        <PortalScope>
+          <Popover.Content
+            align="start"
+            sideOffset={6}
+            className="z-50 w-64 rounded-xl border border-border bg-surface p-1.5 text-xs shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
           >
-            <Check className={cn("size-3.5", sort && "invisible")} />
-            既定の順
-            <span className="ml-auto text-[11px] text-muted-foreground">更新の古い順</span>
-          </button>
-          <div className="mt-1 space-y-0.5 border-t border-border pt-1">
-            {(Object.keys(KANBAN_SORTS) as KanbanSortKey[]).map((key) => (
-              <div key={key} role="group" aria-label={KANBAN_SORTS[key].label} className="flex items-center gap-2 px-2 py-1">
-                <Check className={cn("size-3.5 shrink-0", sort?.key !== key && "invisible")} />
-                <span className="flex-1 text-neutral-300">{KANBAN_SORTS[key].label}</span>
-                <span className="inline-flex rounded-md border border-border p-0.5">
-                  {[false, true].map((desc) => {
-                    const on = sort?.key === key && sort.desc === desc;
-                    return (
-                      <button
-                        key={String(desc)}
-                        type="button"
-                        aria-pressed={on}
-                        title={desc ? KANBAN_SORTS[key].desc : KANBAN_SORTS[key].asc}
-                        onClick={() => pick({ key, desc })}
-                        className={cn(
-                          "cursor-pointer rounded-[5px] px-2 py-0.5 text-[11px] transition-colors",
-                          on ? "bg-primary text-primary-foreground" : "text-neutral-400 hover:bg-surface-raised hover:text-foreground",
-                        )}
-                      >
-                        {desc ? "降順" : "昇順"}
-                      </button>
-                    );
-                  })}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="px-2 pt-1.5 pb-0.5 text-[11px] leading-relaxed text-muted-foreground">番号や更新の時刻が無いカードは、どちらの向きでも下に並べます。</p>
-        </Popover.Content>
+            <button
+              type="button"
+              aria-pressed={!sort}
+              onClick={() => pick(undefined)}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-neutral-300 hover:bg-surface-raised aria-pressed:text-foreground"
+            >
+              <Check className={cn("size-3.5", sort && "invisible")} />
+              既定の順
+              <span className="ml-auto text-[11px] text-muted-foreground">更新の古い順</span>
+            </button>
+            <div className="mt-1 space-y-0.5 border-t border-border pt-1">
+              {(Object.keys(KANBAN_SORTS) as KanbanSortKey[]).map((key) => (
+                <div key={key} role="group" aria-label={KANBAN_SORTS[key].label} className="flex items-center gap-2 px-2 py-1">
+                  <Check className={cn("size-3.5 shrink-0", sort?.key !== key && "invisible")} />
+                  <span className="flex-1 text-neutral-300">{KANBAN_SORTS[key].label}</span>
+                  <span className="inline-flex rounded-md border border-border p-0.5">
+                    {[false, true].map((desc) => {
+                      const on = sort?.key === key && sort.desc === desc;
+                      return (
+                        <button
+                          key={String(desc)}
+                          type="button"
+                          aria-pressed={on}
+                          title={desc ? KANBAN_SORTS[key].desc : KANBAN_SORTS[key].asc}
+                          onClick={() => pick({ key, desc })}
+                          className={cn(
+                            "cursor-pointer rounded-[5px] px-2 py-0.5 text-[11px] transition-colors",
+                            on ? "bg-primary text-primary-foreground" : "text-neutral-400 hover:bg-surface-raised hover:text-foreground",
+                          )}
+                        >
+                          {desc ? "降順" : "昇順"}
+                        </button>
+                      );
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="px-2 pt-1.5 pb-0.5 text-[11px] leading-relaxed text-muted-foreground">番号や更新の時刻が無いカードは、どちらの向きでも下に並べます。</p>
+          </Popover.Content>
+        </PortalScope>
       </Popover.Portal>
     </Popover.Root>
   );
@@ -890,49 +943,86 @@ function EmptyState({ canChoose, onChoose }: { canChoose: boolean; onChoose: () 
   );
 }
 
+/**
+ * How long the buttons of a folder's question do nothing once it shows: the next question opens where the one just
+ * answered was, so the second click of a double click would trust a folder that was never read.
+ */
+const TRUST_ANSWER_AFTER_MS = 500;
+
+/** Whether `question` has shown for TRUST_ANSWER_AFTER_MS, so its buttons may answer it. */
+function useAnswerable(question: object | undefined): boolean {
+  // The question it is for, not a flag: one that takes another's place without closing waits on its own.
+  const [ready, setReady] = useState<object>();
+  useEffect(() => {
+    if (!question) return;
+    const t = setTimeout(() => setReady(question), TRUST_ANSWER_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [question]);
+  return question !== undefined && ready === question;
+}
+
 /** Claude Code asks whether to trust a card's folder before a session starts there: the person answers here. */
 function TrustDialog({ question, onAnswer }: { question: { path: string; warnings: string[] } | undefined; onAnswer: (yes: boolean) => void }) {
+  const answerable = useAnswerable(question);
   return (
-    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && onAnswer(false)}>
+    // A click outside or Esc says no only once it may be answered: the second click of a double click lands outside
+    // a smaller question that opened in its place.
+    <Dialog.Root open={Boolean(question)} onOpenChange={(next) => !next && answerable && onAnswer(false)}>
       <Dialog.Portal>
-        <Dialog.Overlay className={DIALOG_OVERLAY} />
-        <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
-          <div className="space-y-1.5">
-            <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
-            <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
-              Claude Code は、このフォルダーをまだ信頼していません。信頼すると、セッションはこのフォルダーのファイルを読み書きし、コマンドを実行できます。
-            </Dialog.Description>
-          </div>
-          <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>
-          {(question?.warnings.length ?? 0) > 0 && (
-            <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
-              {question?.warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
-          )}
-          <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Button size="sm" onClick={() => onAnswer(false)}>
-              やめる
-            </Button>
-            <Button size="sm" variant="primary" onClick={() => onAnswer(true)}>
-              信頼して起動する
-            </Button>
-          </div>
-        </Dialog.Content>
+        <PortalScope>
+          <Dialog.Overlay className={DIALOG_OVERLAY} />
+          <Dialog.Content className={cn(DIALOG_PANEL, "flex flex-col gap-4")}>
+            <div className="space-y-1.5">
+              <Dialog.Title className="text-base font-semibold tracking-tight">このフォルダーを信頼しますか</Dialog.Title>
+              <Dialog.Description className="text-xs leading-relaxed text-muted-foreground">
+                Claude Code は、このフォルダーをまだ信頼していません。信頼すると、セッションはこのフォルダーのファイルを読み書きし、コマンドを実行できます。
+              </Dialog.Description>
+            </div>
+            <p className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs break-all">{question?.path}</p>
+            {(question?.warnings.length ?? 0) > 0 && (
+              <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
+                {question?.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Button size="sm" disabled={!answerable} onClick={() => onAnswer(false)}>
+                やめる
+              </Button>
+              <Button size="sm" variant="primary" disabled={!answerable} onClick={() => onAnswer(true)}>
+                信頼して起動する
+              </Button>
+            </div>
+          </Dialog.Content>
+        </PortalScope>
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
 
 /** A notice at the bottom of the page (after EasyUI's VelocityToast); it goes after a few seconds once nothing is going on. */
-function Toast({ notice, onClose, onOpen }: { notice: Notice | undefined; onClose: () => void; onOpen: (s: { machine: string; sessionId: string }) => void }) {
+function Toast({
+  notice,
+  asking,
+  onClose,
+  onOpen,
+}: {
+  notice: Notice | undefined;
+  /**
+   * A folder's question shows: the notice cannot be pressed (the page under a modal dialog is not), and a press there
+   * would say no to the question. Its buttons wait, and so does its going, until no question is left.
+   */
+  asking: boolean;
+  onClose: () => void;
+  onOpen: (s: { machine: string; sessionId: string }) => void;
+}) {
   useEffect(() => {
-    if (!notice || notice.busy) return;
+    if (!notice || notice.busy || asking) return;
     const t = setTimeout(onClose, 6000);
     return () => clearTimeout(t);
-    // Restarts only for a new notice.
-  }, [notice]);
+    // Restarts only for a new notice, or once no question is left.
+  }, [notice, asking]);
   return (
     <AnimatePresence>
       {notice && (
@@ -950,7 +1040,7 @@ function Toast({ notice, onClose, onOpen }: { notice: Notice | undefined; onClos
         >
           {notice.busy && <LoaderCircle className="size-4 shrink-0 text-muted-foreground motion-safe:animate-spin" />}
           <span className="min-w-0">{notice.text}</span>
-          {notice.session && !notice.busy && (
+          {notice.session && !notice.busy && !asking && (
             <button
               type="button"
               onClick={() => notice.session && onOpen(notice.session)}
@@ -959,7 +1049,7 @@ function Toast({ notice, onClose, onOpen }: { notice: Notice | undefined; onClos
               セッションを開く
             </button>
           )}
-          {!notice.busy && (
+          {!notice.busy && !asking && (
             <button type="button" onClick={onClose} aria-label="閉じる" className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground">
               <X className="size-3.5" />
             </button>

@@ -71,6 +71,9 @@ function fake(
     nav: { openSession: (machine: string, sessionId: string) => opened.push(`${machine}/${sessionId}`) } as unknown as Tools["nav"],
     actions: {
       notify: (n) => notices.push(n),
+      dismiss: (n) => {
+        if (notices.at(-1) === n) notices.push(undefined);
+      },
       askFork: async (q) => {
         asked.push(q);
         return opts.fork?.start ?? true;
