@@ -58,7 +58,14 @@ export class Cleanups {
   load(): Promise<void> {
     this.loaded ??= fs.readFile(this.file, "utf8").then(
       (raw) => {
-        const v = JSON.parse(raw) as { cleanups?: unknown } | null;
+        let v: { cleanups?: unknown } | null;
+        try {
+          v = JSON.parse(raw) as { cleanups?: unknown } | null;
+        } catch (e) {
+          // Starts with none: the next one asked writes the file anew.
+          this.log("github-review: the file of the worktrees to clean up is broken; starting with none", e);
+          return;
+        }
         for (const e of Array.isArray(v?.cleanups) ? v.cleanups : []) if (isEntry(e)) this.entries.set(keyOf(e.repo, e.number), e);
       },
       (e: unknown) => {

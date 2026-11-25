@@ -1,11 +1,11 @@
 // The buttons above the chat box: the prompts the daemon part predicted for the session's last reply. Pressing one
-// sends it to the session, as the chat box would; so does holding the digit key of its number (hold.ts), while a ring
-// around the number fills. They go away once one is sent, or "×" is pressed, until the next reply.
+// sends it to the session, as the chat box would; so does holding the digit key of its number for the time of the
+// setting holdSeconds (hold.ts), while a ring around the number fills. They go away once one is sent, or "×" is pressed, until the next reply.
 import { useState, type CSSProperties } from "react";
 import { Sparkles, X } from "lucide-react";
-import { cn, usePluginState, useRequest, useSendInput, type ConversationEndProps } from "@gasho/plugin-sdk";
+import { cn, usePluginState, useRequest, useSendInput, useSetting, type ConversationEndProps } from "@gasho/plugin-sdk";
 import type { Prediction } from "../types.ts";
-import { HOLD_MS, useHoldKeys } from "./hold.ts";
+import { holdMsOf, useHoldKeys } from "./hold.ts";
 
 const CHIP =
   "inline-flex max-w-full items-center rounded-full border border-border bg-background px-3 py-1 text-left text-sm " +
@@ -22,6 +22,8 @@ export function Suggestions({ machine, session }: ConversationEndProps) {
   // The reply (its `at`) whose buttons were used or put away: kept while the page is open.
   const [doneAt, setDoneAt] = usePluginState<number | undefined>(`done:${machine.id}:${session.sessionId}`, undefined);
   const send = useSendInput();
+  const [holdSeconds] = useSetting<number | undefined>("holdSeconds");
+  const holdMs = holdMsOf(holdSeconds);
   const [sending, setSending] = useState<string | undefined>();
   const [failed, setFailed] = useState<string | undefined>();
 
@@ -36,7 +38,7 @@ export function Suggestions({ machine, session }: ConversationEndProps) {
 
   const hidden = doneAt === at;
   const prompts = hidden ? [] : (data?.prompts ?? []);
-  const holding = useHoldKeys(prompts.length, sending === undefined, (i) => {
+  const holding = useHoldKeys(prompts.length, sending === undefined, holdMs, (i) => {
     const p = prompts[i];
     if (p !== undefined) void pick(p);
   });
@@ -75,11 +77,11 @@ export function Suggestions({ machine, session }: ConversationEndProps) {
             type="button"
             className={cn(CHIP, "gap-1.5 pl-1", sending === p && "animate-pulse")}
             disabled={sending !== undefined}
-            title={`「${p}」を送る（${i + 1} のキーを長押しでも送る）`}
+            title={`「${p}」を送る（${i + 1} のキーを ${holdMs / 1000} 秒押し続けても送る）`}
             aria-keyshortcuts={String(i + 1)}
             onClick={() => void pick(p)}
           >
-            <KeyRing n={i + 1} filling={holding === i} />
+            <KeyRing n={i + 1} filling={holding === i} ms={holdMs} />
             <span className="truncate">{p}</span>
           </button>
         ))}
@@ -108,13 +110,13 @@ const STROKE = 2;
 const RADIUS = (SIZE - STROKE) / 2;
 const ROUND = 2 * Math.PI * RADIUS;
 
-/** The number of a suggestion's key, in a ring that fills over HOLD_MS while the key is held. */
-function KeyRing({ n, filling }: { n: number; filling: boolean }) {
+/** The number of a suggestion's key, in a ring that fills over `ms` while the key is held. */
+function KeyRing({ n, filling, ms }: { n: number; filling: boolean; ms: number }) {
   // From empty to full while held; back to empty at once when let go.
   const progress: CSSProperties = {
     strokeDasharray: ROUND,
     strokeDashoffset: filling ? 0 : ROUND,
-    transition: filling ? `stroke-dashoffset ${HOLD_MS}ms linear` : "none",
+    transition: filling ? `stroke-dashoffset ${ms}ms linear` : "none",
   };
   return (
     <span className="relative inline-grid size-5 shrink-0 place-items-center text-[11px] font-medium tabular-nums text-muted-foreground" data-holding={filling || undefined}>

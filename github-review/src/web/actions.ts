@@ -54,7 +54,8 @@ export interface Actions {
   dismiss: (n: Notice) => void;
   askFork: (q: ForkQuestion) => Promise<boolean>;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
-  askRemove: (q: { item: Item; spot: Spot }) => Promise<boolean>;
+  /** Before removing a review worktree, with what goes with it (`removal`, from the daemon part's check). */
+  askRemove: (q: { item: Item; spot: Spot; removal: Removed }) => Promise<boolean>;
   /**
    * Before asking the Agent to merge or to send it back: what it will do, and whether to remove the review worktree
    * once it is done. Undefined when the person does not ask.
@@ -243,16 +244,21 @@ async function makeAndStart({ pr }: Item, spot: Spot, template: Template | undef
     if (sessionId) sentNotice(machine, sessionId, `#${pr.number} のレビュー用の worktree はもうありました（${folderName(r.data.path)}）。`, t);
     return false;
   }
+  // How it was made otherwise than usual (detached HEAD, another folder name…), after what the notice says.
+  const note = r.data.note ? ` ${r.data.note}` : "";
   const sessionId = await start(machine, r.data.path, pr, t, making);
-  if (!sessionId) return false;
-  const sent = template ? await sendTemplate(pr, machine, sessionId, template, t) : undefined;
+  if (!sessionId) {
+    if (note) t.actions.notify({ text: `#${pr.number} のレビュー用の worktree を作りましたが、セッションを起動しませんでした。${note}`, tone: "danger" });
+    return false;
+  }
+  const sent = template ? await sendTemplate(pr, machine, sessionId, template, t, note) : undefined;
   if (sent === "failed") return false;
   // The notice of what went wrong with the effort level stays.
   if (sent === "warned") return true;
   sentNotice(
     machine,
     sessionId,
-    template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`,
+    (template ? `#${pr.number} のセッションを起動し、「${template.name}」を送りました。` : `#${pr.number} のセッションを起動しました。`) + note,
     t,
   );
   return sent === "sent";
@@ -260,10 +266,10 @@ async function makeAndStart({ pr }: Item, spot: Spot, template: Template | undef
 
 /**
  * Sends a session the template, with the verdict's mark asked for after it whatever it says, at the effort level of a
- * review. "failed" (with the reason shown) when it did not go, "warned" (with the reason shown) when it went without the
- * effort level.
+ * review. "failed" (with the reason shown, then `note`) when it did not go, "warned" (with the reason shown, then `note`) when it
+ * went without the effort level.
  */
-async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools): Promise<"sent" | "warned" | "failed"> {
+async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: string, template: Template, t: Tools, note = ""): Promise<"sent" | "warned" | "failed"> {
   t.actions.notify({ text: `「${template.name}」を送っています…`, busy: true });
   await trackSession(pr, machine, sessionId, t);
   const sent = await t.send({
@@ -275,11 +281,11 @@ async function sendTemplate(pr: Item["pr"], machine: MachineInfo, sessionId: str
   const open = { label: "セッションを開く", run: () => t.nav.openSession(machine.id, sessionId) };
   if (!sent.ok) {
     await forgetSession(machine, sessionId, t);
-    t.actions.notify({ text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`, tone: "danger", action: open });
+    t.actions.notify({ text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}${note}`, tone: "danger", action: open });
     return "failed";
   }
   if (sent.data.warning) {
-    t.actions.notify({ text: `「${template.name}」を送りました。${sent.data.warning}`, tone: "danger", action: open });
+    t.actions.notify({ text: `「${template.name}」を送りました。${sent.data.warning}${note}`, tone: "danger", action: open });
     return "warned";
   }
   return "sent";
@@ -406,9 +412,12 @@ export async function reviewAll(
       end({ state: "skipped", text: `worktree（${folderName(r.data.path)}）がもうあるので、作りませんでした。` });
       continue;
     }
+    // How it was made otherwise than usual (detached HEAD…) goes in its result after the rest, as "worktree を作る" says it.
+    const { note } = r.data;
+    const said = (text?: string) => [text, note].filter(Boolean).join(" ");
     const started = await launchIn(machine, r.data.path, preparing, t, trustQuietly);
     if (!started.ok) {
-      end({ state: "failed", text: started.error ?? "フォルダーを信頼しなかったので、セッションを起動しませんでした（worktree は作りました）。" });
+      end({ state: "failed", text: said(started.error ?? "フォルダーを信頼しなかったので、セッションを起動しませんでした（worktree は作りました）。") });
       continue;
     }
     trustQuietly ||= started.trusted;
@@ -417,12 +426,13 @@ export async function reviewAll(
     const sent = await t.send({ machine: machine.id, sessionId, text: reviewInstruction(template, pr), ...effortFor(machine, REVIEW_EFFORT) });
     if (!sent.ok) {
       await forgetSession(machine, sessionId, t);
-      end({ state: "failed", sessionId, text: `セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}` });
+      end({ state: "failed", sessionId, text: said(`セッションは起動しましたが、「${template.name}」を送れませんでした：${sent.error}`) });
       continue;
     }
     // Sent, but not quite as asked (the effort level could not be switched, say): its result says so.
     if (sent.data.warning) count.warned += 1;
-    end({ state: "done", sessionId, ...(sent.data.warning ? { text: sent.data.warning } : {}) });
+    const text = said(sent.data.warning);
+    end({ state: "done", sessionId, ...(text ? { text } : {}) });
   }
   return count;
 }
@@ -539,21 +549,41 @@ export async function cleanUp(pr: Pick<PrRow, "repo" | "number" | "head">, machi
   t.actions.reload(machine.id);
 }
 
-/** Removes a pull request's review worktree, or the one a merge asked to clean up, and its local branch, once the person agrees. */
+/**
+ * Removes a pull request's review worktree, or the one a merge asked to clean up, and its local branch, once the person agrees: the daemon part first says
+ * what would go (or why it would not), and the files git does not track go only as the person saw them listed.
+ */
 export async function removeWorktree(item: Item, spot: Spot, t: Tools): Promise<void> {
   const { pr } = item;
-  if (!(spot.worktree?.review || spot.cleanup) || !spot.worktree || !(await t.actions.askRemove({ item, spot }))) return;
-  t.actions.notify({ text: `${folderName(spot.worktree.path)} を片付けています…`, busy: true });
-  const r = await t.call<Removed>({
-    machine: spot.machine.id,
-    method: "remove",
-    params: { repo: pr.repo, number: pr.number },
-    summary: `${pr.repo}#${pr.number} の worktree を片付ける`,
-  });
-  t.actions.reload(spot.machine.id);
-  t.actions.notify(
-    r.ok
-      ? { text: `${folderName(r.data.path)} を片付けました${r.data.branch ? `（ローカルのブランチ ${r.data.branch} も消しました）` : ""}。` }
-      : { text: r.error, tone: "danger" },
-  );
+  if (!(spot.worktree?.review || spot.cleanup) || !spot.worktree) return;
+  const ask = (params: { check: true } | { agreed?: string }, summary: string) =>
+    t.call<Removed>({ machine: spot.machine.id, method: "remove", params: { repo: pr.repo, number: pr.number, ...params }, summary });
+  t.actions.notify({ text: `${folderName(spot.worktree.path)} を片付けられるか確かめています…`, busy: true });
+  let check = await ask({ check: true }, `${pr.repo}#${pr.number} のレビュー用の worktree を片付けられるか確かめる`);
+  for (;;) {
+    if (!check.ok) {
+      t.actions.notify({ text: check.error, tone: "danger" });
+      return;
+    }
+    t.actions.notify(undefined);
+    const removal = check.data;
+    if (!(await t.actions.askRemove({ item, spot, removal }))) return;
+    t.actions.notify({ text: `${folderName(removal.path)} を片付けています…`, busy: true });
+    const r = await ask(removal.token ? { agreed: removal.token } : {}, `${pr.repo}#${pr.number} の worktree を片付ける`);
+    // Files came or went since they were listed: the person sees the new list.
+    if (r.ok && !r.data.removed) {
+      check = r;
+      continue;
+    }
+    t.actions.reload(spot.machine.id);
+    if (!r.ok) {
+      t.actions.notify({ text: r.error, tone: "danger" });
+      return;
+    }
+    const files = r.data.fileCount > 0 ? `git が追跡していないファイル ${r.data.fileCount} 件` : "";
+    const branch = r.data.branch ? `ローカルのブランチ ${r.data.branch} ` : "";
+    const also = files && branch ? `${files}と、${branch}` : files || branch;
+    t.actions.notify({ text: `${folderName(r.data.path)} を片付けました${also ? `（${also}も消しました）` : ""}。` });
+    return;
+  }
 }
