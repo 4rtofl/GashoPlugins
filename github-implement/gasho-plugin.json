@@ -1,7 +1,7 @@
 {
   "id": "github-implement",
   "name": "GitHub Implement",
-  "version": "1.2.6",
+  "version": "1.3.0",
   "description": "worktree の Issue と Pull request を、セッションと並んだタブで読み、assign・コメント・本文の変更などの操作をする（working server の gh を使う）",
   "genre": "integration",
   "api": "1.10",
@@ -33,6 +33,16 @@
       "step": 10,
       "label": "GitHub から読み直す間隔（秒）",
       "description": "ここ 24 時間に開いた worktree の Issue と Pull request を、この間隔で読み直す。読み直すたびに worktree 1 つにつき GitHub の API を 1 点使い、Issue や Pull request が変わったときと、前に読んでから 10 分たったときは最大 4 点使う。上限は 1 時間 5000 点（ほかの gh と分け合う）。worktree が多いときは、下の表を見て間隔を延ばす。0 にすると、タブを開いたときと再読み込みを押したときだけ読む"
+    },
+    "removeMergedMinutes": {
+      "type": "number",
+      "scope": "server",
+      "default": 0,
+      "min": 0,
+      "max": 720,
+      "step": 1,
+      "label": "マージされた worktree を自動で削除するまでの時間（分）",
+      "description": "ここ 24 時間に開いた worktree のうち、Pull request がマージされたものを、最後に使ってからこの時間がたつと、中のセッションとローカルのブランチと一緒に削除する。最後に使ったときは、中のセッションが最後に動いたときと、その worktree の画面を最後に開いていたときの新しいほう。作業中・確認待ちのセッションがあるものと、未コミットの変更か push していない commit があるものは消さない。Gasho のセッションか worktree の画面を開いているあいだだけ動き、読み直す間隔が 0 か 10 分より長くても 10 分おきに読む。0 で止める"
     }
   }
 }

@@ -3,11 +3,12 @@
 // the folder, the branch and the sessions that end, with the local branch deleted too by default. The head commit goes
 // as pushed, so a squash merge whose branch GitHub deleted is no reason to ask more; uncommitted changes or other
 // commits are, and only a second press ("変更を捨てて削除") removes the worktree with them. Once it is gone, Gasho moves
-// to the home screen, as this screen's worktree is no more. Where it is the place of the open pull request's merge.
+// to the home screen, as this screen's worktree is no more. Where it is the place of the open pull request's merge. Why
+// removing it without asking ("removeMergedMinutes", auto-remove.ts) did not shows here too.
 import { FolderX, GitBranch, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { removeWorktreeProblem, useRemoveWorktree, useRequest } from "@gasho/plugin-sdk";
-import type { WorktreeItems } from "../../../types.ts";
+import type { NotRemoved, WorktreeItems } from "../../../types.ts";
 import { itemsTarget, useRefreshOptions } from "../../tabs.ts";
 import { Alert } from "../../ui/alert.tsx";
 import { Button } from "../../ui/button.tsx";
@@ -15,7 +16,7 @@ import { changesText, isMergedHeadWorktree, pushedOf, sessionName, sessionsIn, t
 import { useItem } from "../context.tsx";
 import type { ItemSection } from "../parts.ts";
 
-function MergedCleanup() {
+function MergedCleanup({ notRemoved }: { notRemoved: NotRemoved | undefined }) {
   const { machineInfo, worktree, item, busy } = useItem();
   const [open, setOpen] = useState(false);
   const problem = removeWorktreeProblem(machineInfo, worktree);
@@ -34,6 +35,11 @@ function MergedCleanup() {
         </Button>
         {problem && <span className="text-muted-foreground">{problem}</span>}
       </div>
+      {notRemoved && (
+        <Alert tone="warning" className="p-2.5 text-xs">
+          自動では削除しませんでした：{notRemoved.problem}
+        </Alert>
+      )}
       {open && <RemoveDialog onClose={() => setOpen(false)} />}
     </section>
   );
@@ -151,7 +157,7 @@ function MergedSection() {
   const { machine, item, worktree } = useItem();
   // The same read as the worktree's tabs (useRequest shares it): it says whether the pull request is the worktree's.
   const items = useRequest<WorktreeItems>(itemsTarget(machine, worktree, true), useRefreshOptions());
-  return isMergedHeadWorktree(item, worktree, items.data) ? <MergedCleanup /> : null;
+  return isMergedHeadWorktree(item, worktree, items.data) ? <MergedCleanup notRemoved={items.data?.notRemoved} /> : null;
 }
 
 export default { order: 50, kinds: ["pulls"], View: MergedSection } satisfies ItemSection;

@@ -1,8 +1,9 @@
 // What the merged section (sections/merged.tsx) needs to know before it offers removing a worktree, apart from Gasho:
 // whether the screen is open in the worktree of the merged pull request's head branch, the sessions that end with it,
-// and how to say why gasho-daemon would not remove it yet. Kept free of the SDK's functions, so the tests can run it.
+// and how to say why gasho-daemon would not remove it yet; and when a merged worktree is removed without asking
+// (auto-remove.ts). Kept free of the SDK's functions, so the tests can run it.
 import type { MachineInfo, SessionInfo, WorktreeInfo } from "@gasho/plugin-sdk";
-import type { GitHubItemDetail, WorktreeItems } from "../../types.ts";
+import type { GitHubItemDetail, MergedWorktree, WorktreeItems } from "../../types.ts";
 
 /** Why gasho-daemon did not remove a worktree (the SDK's WorktreeChanges). */
 export interface Changes {
@@ -12,7 +13,7 @@ export interface Changes {
   unpushed: number;
 }
 
-const trimSlash = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
+export const trimSlash = (p: string): string => (p.length > 1 ? p.replace(/\/+$/, "") : p);
 
 /**
  * Whether the merged section shows for this worktree: a merged pull request, opened in a worktree that has its head
@@ -54,4 +55,21 @@ export function changesText(c: Changes): string {
 /** The commits gasho-daemon counts as pushed: the pull request's head, which GitHub keeps after a squash merge too. */
 export function pushedOf(item: Pick<GitHubItemDetail, "headOid">): string[] | undefined {
   return item.headOid ? [item.headOid] : undefined;
+}
+
+type SessionTimes = Pick<SessionInfo, "status" | "lastActivityAt" | "startedAt" | "pendingInputs" | "background">;
+
+/** At work, or waiting for an answer: also with inputs waiting to be sent, or work going on in the background. */
+const atWork = (s: SessionTimes): boolean => s.status === "busy" || s.status === "waiting" || (s.pendingInputs ?? 0) > 0 || (s.background?.length ?? 0) > 0;
+
+/**
+ * Whether a merged worktree (the operation "merged") is removed now, without asking: no session in it (`sessions`,
+ * sessionsIn) is at work, and nobody used it for `minutes`, at `now` (the working server's clock). Used is the latest of
+ * its sessions' last activity and when Gasho last showed it. One that was not removed waits until it is used again.
+ */
+export function dueForRemoval(w: Pick<MergedWorktree, "seenAt" | "notRemoved">, sessions: SessionTimes[], minutes: number, now: number): boolean {
+  if (!(minutes > 0) || sessions.some(atWork)) return false;
+  const used = Math.max(w.seenAt, ...sessions.map((s) => s.lastActivityAt ?? s.startedAt ?? 0));
+  if (w.notRemoved && w.notRemoved.at >= used) return false;
+  return now - used >= minutes * 60_000;
 }

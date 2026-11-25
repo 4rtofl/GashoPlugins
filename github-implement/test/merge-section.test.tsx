@@ -156,4 +156,12 @@ describe("the dialog that removes the worktree of a merged pull request", () => 
     fireEvent.click(dialog);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("says why removing it without asking did not, as the worktree's items have it", () => {
+    const worktree = { path: "/work/app-12", repo: "/work/app", branch: "feat/12-merge", github, sessions: [] };
+    const notRemoved = { problem: "未コミットの変更が 2 件あります。", at: 0 };
+    reads({ items: { data: { pulls: [{ kind: "pulls", number: 12, title: "マージを足す", state: "merged", url: "" }], added: [], missing: [], at: 0, notRemoved } } });
+    renderItem(pull({ state: "merged" }), <Merged.View />, worktree);
+    expect(screen.getByRole("alert").textContent).toBe("自動では削除しませんでした：未コミットの変更が 2 件あります。");
+  });
 });
