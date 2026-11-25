@@ -34,7 +34,7 @@ import type { CheckState, PrRow, ReviewState } from "../types.ts";
 import { askOf, underway, workEndUnseen, workRechecking, type AskKind, type ReviewProgress, type Underway } from "../verdict.ts";
 import { askAgent, createWorktree, followCleanup, newSessionIn, reviewIn, reviewingIn, openWorktree, progressOf, removeWorktree, sessionsIn, workingIn, type Item, type Spot, type Tools } from "./actions";
 import { markAsked, recheck, useAsked } from "./asked";
-import { Badge, Button, type BadgeTone, type ButtonVariant } from "./ui/parts";
+import { Badge, Button, PortalScope, type BadgeTone, type ButtonVariant } from "./ui/parts";
 import { MENU, MENU_ITEM } from "./ui/styles";
 
 /** What the rows share: the tools of the buttons, the templates, and which rows' buttons are at work. */
@@ -452,13 +452,15 @@ function SpotButton({
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
-          {spots.map((s) => (
-            <DropdownMenu.Item key={s.machine.id} disabled={!usable(s)} onSelect={() => onPick(s)} className={MENU_ITEM}>
-              {s.machine.name}
-            </DropdownMenu.Item>
-          ))}
-        </DropdownMenu.Content>
+        <PortalScope>
+          <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
+            {spots.map((s) => (
+              <DropdownMenu.Item key={s.machine.id} disabled={!usable(s)} onSelect={() => onPick(s)} className={MENU_ITEM}>
+                {s.machine.name}
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </PortalScope>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );
@@ -495,23 +497,25 @@ function TemplateMenu({
         </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
-          {templatesProblem && <p className="max-w-72 px-2.5 pt-1 pb-1.5 text-[11px] text-amber-700 dark:text-amber-300">{templatesProblem}</p>}
-          {spots.map((s, i) => (
-            <DropdownMenu.Group key={s.machine.id}>
-              {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
-              <DropdownMenu.Label className="px-2.5 pt-1 pb-1.5 text-[11px] text-muted-foreground">
-                {heading(s)}
-                {!s.machine.canLaunch && <span className="block text-amber-700 dark:text-amber-300">{cannotLaunch}</span>}
-              </DropdownMenu.Label>
-              {choices.map((t, j) => (
-                <DropdownMenu.Item key={j} disabled={!s.machine.canLaunch} onSelect={() => onPick(s, t)} className={cn(MENU_ITEM, !t && "text-muted-foreground")} title={t?.body}>
-                  {t ? t.name : "何も送らない"}
-                </DropdownMenu.Item>
-              ))}
-            </DropdownMenu.Group>
-          ))}
-        </DropdownMenu.Content>
+        <PortalScope>
+          <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
+            {templatesProblem && <p className="max-w-72 px-2.5 pt-1 pb-1.5 text-[11px] text-amber-700 dark:text-amber-300">{templatesProblem}</p>}
+            {spots.map((s, i) => (
+              <DropdownMenu.Group key={s.machine.id}>
+                {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
+                <DropdownMenu.Label className="px-2.5 pt-1 pb-1.5 text-[11px] text-muted-foreground">
+                  {heading(s)}
+                  {!s.machine.canLaunch && <span className="block text-amber-700 dark:text-amber-300">{cannotLaunch}</span>}
+                </DropdownMenu.Label>
+                {choices.map((t, j) => (
+                  <DropdownMenu.Item key={j} disabled={!s.machine.canLaunch} onSelect={() => onPick(s, t)} className={cn(MENU_ITEM, !t && "text-muted-foreground")} title={t?.body}>
+                    {t ? t.name : "何も送らない"}
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.Group>
+            ))}
+          </DropdownMenu.Content>
+        </PortalScope>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );

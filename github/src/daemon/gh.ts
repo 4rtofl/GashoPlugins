@@ -90,7 +90,8 @@ export function missingScope(e: unknown): MissingScope | undefined {
   return undefined;
 }
 
-function errorText(e: unknown): string {
+/** What a failed gh call printed and said. */
+export function errorText(e: unknown): string {
   const err = (e ?? {}) as { stderr?: unknown; stdout?: unknown; message?: unknown };
   return [err.stderr, err.stdout, err.message].filter((t): t is string => typeof t === "string").join("\n");
 }

@@ -1,23 +1,25 @@
 // The box for a new comment, right under the body.
-import { useState } from "react";
 import { Button } from "../../ui/button.tsx";
-import { INPUT } from "../../ui/input.ts";
-import { useItem } from "../context.tsx";
+import { INPUT, isComposing, leftAfter } from "../../ui/input.ts";
+import { useDraft, useItem } from "../context.tsx";
 import type { ConversationPart } from "../parts.ts";
 
 function NewComment() {
   const { where, busy, run } = useItem();
-  const [text, setText] = useState("");
+  const [draft, setDraft] = useDraft<string>("comment");
+  const text = draft ?? "";
   const send = async () => {
-    if (await run({ id: "comment", op: "comment", params: { body: text }, summary: `#${where.number} にコメントする`, done: "コメントしました" })) setText("");
+    const sent = text;
+    // What was typed while it was being sent stays.
+    if (await run({ id: "comment", op: "comment", params: { body: sent }, summary: `#${where.number} にコメントする`, done: "コメントしました" })) setDraft((d) => leftAfter(d ?? "", sent) || undefined);
   };
   return (
     <section className="space-y-2">
       <textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setDraft(e.target.value || undefined)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && busy === undefined) {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !isComposing(e) && text.trim() && busy === undefined) {
             e.preventDefault();
             void send();
           }

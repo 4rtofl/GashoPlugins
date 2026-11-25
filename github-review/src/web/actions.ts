@@ -50,6 +50,8 @@ export interface ForkQuestion {
 /** What the rows ask of the page. */
 export interface Actions {
   notify: (n: Notice | undefined) => void;
+  /** Takes `n` off, unless another notice has come since (another button's session to open, say). */
+  dismiss: (n: Notice) => void;
   askFork: (q: ForkQuestion) => Promise<boolean>;
   askTrust: (q: { path: string; warnings: string[] }) => Promise<boolean>;
   /** Before removing a review worktree, with what goes with it (`removal`, from the daemon part's check). */
@@ -109,9 +111,9 @@ type PrRef = Pick<PrRow, "repo" | "number" | "title" | "author" | "fork">;
  * fork's code: Claude Code trusts the worktree as it trusts the primary checkout, so it asks nothing, and reads the
  * fork's `.claude/` (hooks run commands) and CLAUDE.md. So the person is shown which of them it has, and answers; one
  * of the same repository goes on unasked. `error`: the worktree could not be read, or the daemon read another one (of
- * another clone of the repository). The notice is cleared before asking.
+ * another clone of the repository). The caller's notice (`shown`) is taken off before asking.
  */
-export async function confirmFork(pr: PrRef, cwd: string, machine: MachineInfo, t: Tools): Promise<{ start: boolean; error?: string }> {
+export async function confirmFork(pr: PrRef, cwd: string, machine: MachineInfo, t: Tools, shown?: Notice): Promise<{ start: boolean; error?: string }> {
   if (!pr.fork) return { start: true };
   const r = await t.call<ProjectFiles>({ machine: machine.id, method: "projectFiles", params: { repo: pr.repo, number: pr.number } });
   if (!r.ok) return { start: false, error: r.error };
@@ -119,7 +121,7 @@ export async function confirmFork(pr: PrRef, cwd: string, machine: MachineInfo, 
     const error = `セッションは起動していません。同じリポジトリの clone が複数あり、${cwd} ではなく ${r.data.path} の中身を読んだためです。そのうち 1 つだけを対象リポジトリにすると、起動できます。`;
     return { start: false, error };
   }
-  t.actions.notify(undefined);
+  if (shown) t.actions.dismiss(shown);
   return { start: await t.actions.askFork({ pr, path: r.data.path, files: r.data.files }) };
 }
 
@@ -128,7 +130,7 @@ type Started = { ok: true; sessionId: string; trusted: boolean } | { ok: false; 
 
 /**
  * Starts a session in a folder, asking the person first when Claude Code does not trust it yet; the notice the caller
- * shows while it starts (`starting`) is hidden while the person is asked, and back once they say yes. `trustQuietly`: a
+ * shows while it starts (`starting`) is taken off while the person is asked, and back once they say yes. `trustQuietly`: a
  * folder Claude Code has no warnings about is trusted without asking (the person has said yes once in this run).
  */
 async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: Tools, trustQuietly = false): Promise<Started> {
@@ -137,7 +139,7 @@ async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: 
   if (!r.ok && r.needsTrust) {
     const warnings = r.trustWarnings ?? [];
     if (!(trustQuietly && warnings.length === 0)) {
-      t.actions.notify(undefined);
+      t.actions.dismiss(starting);
       if (!(await t.actions.askTrust({ path: cwd, warnings }))) return { ok: false };
       t.actions.notify(starting);
     }
@@ -147,31 +149,61 @@ async function launchIn(machine: MachineInfo, cwd: string, starting: Notice, t: 
   return r.ok ? { ok: true, sessionId: r.sessionId, trusted } : { ok: false, error: r.error };
 }
 
-/** Starts a session in a pull request's worktree; its id, or undefined (with the reason shown) when it did not start. */
-async function start(machine: MachineInfo, cwd: string, pr: PrRef, t: Tools): Promise<string | undefined> {
-  const fork = await confirmFork(pr, cwd, machine, t);
-  if (!fork.start) {
-    t.actions.notify(
-      fork.error
-        ? { text: fork.error, tone: "danger" }
-        : { text: `#${pr.number} のセッションは起動していません。worktree（${folderName(cwd)}）はそのまま残しています。` },
-    );
-    return undefined;
+/**
+ * How many of the rows' buttons are starting a session (or making the worktree to start it in), on the review page and
+ * the panel of a pull request together. Opening a session leaves the page, and the questions still to come would wait
+ * unseen till the person is back (shell.tsx): while one is starting, a session started by another is not opened.
+ */
+let sessionStarts = 0;
+
+/** `work`, counted in `sessionStarts` from the moment it is called. */
+async function counted<T>(work: () => Promise<T>): Promise<T> {
+  sessionStarts++;
+  try {
+    return await work();
+  } finally {
+    sessionStarts--;
   }
-  const starting: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
-  t.actions.notify(starting);
-  const r = await launchIn(machine, cwd, starting, t);
-  if (r.ok) return r.sessionId;
-  if (r.error) t.actions.notify({ text: r.error, tone: "danger" });
-  return undefined;
+}
+
+/**
+ * Starts a session in a pull request's worktree; its id, or undefined (with the reason shown) when it did not start.
+ * `shown`: the caller's notice, taken off while the person is asked.
+ */
+function start(machine: MachineInfo, cwd: string, pr: PrRef, t: Tools, shown?: Notice): Promise<string | undefined> {
+  return counted(async () => {
+    const fork = await confirmFork(pr, cwd, machine, t, shown);
+    if (!fork.start) {
+      t.actions.notify(
+        fork.error
+          ? { text: fork.error, tone: "danger" }
+          : { text: `#${pr.number} のセッションは起動していません。worktree（${folderName(cwd)}）はそのまま残しています。` },
+      );
+      return undefined;
+    }
+    const starting: Notice = { text: `${folderName(cwd)} でセッションを起動しています…`, busy: true };
+    t.actions.notify(starting);
+    const r = await launchIn(machine, cwd, starting, t);
+    if (r.ok) return r.sessionId;
+    if (r.error) t.actions.notify({ text: r.error, tone: "danger" });
+    return undefined;
+  });
+}
+
+/** Opens a session a button was pressed to open; while another button is still starting one, the notice opens it. */
+function openStarted(machine: MachineInfo, sessionId: string, dir: string, t: Tools): void {
+  if (sessionStarts > 0) {
+    sentNotice(machine, sessionId, `${folderName(dir)} のセッションを開けます。ほかのセッションの起動中だったので、このページのままにしました。`, t);
+    return;
+  }
+  t.actions.notify(undefined);
+  t.nav.openSession(machine.id, sessionId);
 }
 
 /** Opens the Gasho session used last in a pull request's worktree, or one started there. */
 async function openIn(machine: MachineInfo, dir: string, pr: PrRef, t: Tools): Promise<void> {
   const sessionId = sessionsIn(machine, dir)[0]?.sessionId ?? (await start(machine, dir, pr, t));
-  if (!sessionId) return;
-  t.actions.notify(undefined);
-  t.nav.openSession(machine.id, sessionId);
+  if (sessionId) openStarted(machine, sessionId, dir, t);
 }
 
 /** The notice that a session got what it was sent, with a button to open it: the page stays where it is. */
@@ -187,9 +219,15 @@ function sentNotice(machine: MachineInfo, sessionId: string, text: string, t: To
  * says why when the effort level could not be switched.
  * True when a review was sent.
  */
-export async function createWorktree({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<boolean> {
+export function createWorktree(item: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<boolean> {
+  // Counted as a whole, so that no moment between making the worktree and starting its session goes uncounted.
+  return counted(() => makeAndStart(item, spot, template, t));
+}
+
+async function makeAndStart({ pr }: Item, spot: Spot, template: Template | undefined, t: Tools): Promise<boolean> {
   const { machine } = spot;
-  t.actions.notify({ text: `#${pr.number} のレビュー用の worktree を作っています…`, busy: true });
+  const making: Notice = { text: `#${pr.number} のレビュー用の worktree を作っています…`, busy: true };
+  t.actions.notify(making);
   const r = await t.call<Created>({
     machine: machine.id,
     method: "create",
@@ -202,13 +240,13 @@ export async function createWorktree({ pr }: Item, spot: Spot, template: Templat
     return false;
   }
   if (!r.data.created) {
-    const sessionId = sessionsIn(machine, r.data.path)[0]?.sessionId ?? (await start(machine, r.data.path, pr, t));
+    const sessionId = sessionsIn(machine, r.data.path)[0]?.sessionId ?? (await start(machine, r.data.path, pr, t, making));
     if (sessionId) sentNotice(machine, sessionId, `#${pr.number} のレビュー用の worktree はもうありました（${folderName(r.data.path)}）。`, t);
     return false;
   }
   // How it was made otherwise than usual (detached HEAD, another folder name…), after what the notice says.
   const note = r.data.note ? ` ${r.data.note}` : "";
-  const sessionId = await start(machine, r.data.path, pr, t);
+  const sessionId = await start(machine, r.data.path, pr, t, making);
   if (!sessionId) {
     if (note) t.actions.notify({ text: `#${pr.number} のレビュー用の worktree を作りましたが、セッションを起動しませんでした。${note}`, tone: "danger" });
     return false;
@@ -421,9 +459,7 @@ export async function openWorktree({ pr }: Item, spot: Spot, t: Tools): Promise<
 export async function newSessionIn({ pr }: Item, spot: Spot, t: Tools): Promise<void> {
   if (!spot.worktree) return;
   const sessionId = await start(spot.machine, spot.worktree.path, pr, t);
-  if (!sessionId) return;
-  t.actions.notify(undefined);
-  t.nav.openSession(spot.machine.id, sessionId);
+  if (sessionId) openStarted(spot.machine, sessionId, spot.worktree.path, t);
 }
 
 /**

@@ -9,7 +9,7 @@ import { Alert } from "../../ui/alert.tsx";
 import { Badge } from "../../ui/badge.tsx";
 import { Button, buttonClass } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
-import { useAfterChange, useItem } from "../context.tsx";
+import { useAfterChange, useDraft, useItem } from "../context.tsx";
 import { useConversationMeta } from "../conversation-meta.ts";
 import type { ConversationEntry, ConversationPart } from "../parts.ts";
 import { Reactions } from "../reactions.tsx";
@@ -17,15 +17,20 @@ import { Reactions } from "../reactions.tsx";
 /** The daemon part cuts a longer comment (gh.ts, clip): saving the cut text would lose the rest, so it is not edited here. */
 const EDITABLE_MAX = 60_000;
 
-/** The comment being edited, with its new text, or being asked about before it is deleted: one at a time. */
-type Opened = { url: string; draft: string } | { url: string; deleting: true };
+/** The comment being edited, with its new text. One comment is edited or asked about before it is deleted at a time. */
+interface Editing {
+  url: string;
+  draft: string;
+}
 
 function useComments(): ConversationEntry[] {
   const { item, where, now, busy, run } = useItem();
   const meta = useConversationMeta();
   useAfterChange(meta.reload);
   const [hideBots, setHideBots] = usePluginState("hideBots", false);
-  const [opened, setOpened] = useState<Opened>();
+  const [editing, setEditing] = useDraft<Editing>("comment-edit");
+  // The url of the comment asked about before it is deleted.
+  const [deleting, setDeleting] = useState<string>();
   const byUrl = new Map((meta.data?.comments ?? []).map((m) => [m.url, m]));
   const comments = item.comments ?? [];
   const entries: ConversationEntry[] = [];
@@ -57,25 +62,28 @@ function useComments(): ConversationEntry[] {
       return;
     }
     endHidden();
-    const open = opened && opened.url === c.url ? opened : undefined;
+    const editingThis = editing && editing.url === c.url ? editing : undefined;
+    const deletingThis = deleting !== undefined && deleting === c.url;
+    const open = editingThis !== undefined || deletingThis;
     const edit = m?.editable && !c.minimized && c.body.length <= EDITABLE_MAX ? m : undefined;
-    const save = async (draft: string) => {
+    const save = async (sent: string) => {
       if (!edit) return;
       const id = `#${where.number} の自分のコメント`;
       const ok = await run({
         id: `comment-edit:${edit.id}`,
         op: "comment-edit",
-        params: { id: edit.id, body: draft },
+        params: { id: edit.id, body: sent },
         summary: `${id}を変える`,
         done: "コメントを変えました",
         undo: { op: "comment-edit", params: { id: edit.id, body: c.body }, summary: `${id}を戻す` },
       });
-      if (ok) setOpened(undefined);
+      // A comment changed while it was being saved stays in the box, to be saved again.
+      if (ok) setEditing((e) => (e && e.url === edit.url && e.draft === sent ? undefined : e));
     };
     const remove = async () => {
       if (!m?.deletable) return;
       const ok = await run({ id: `comment-delete:${m.id}`, op: "comment-delete", params: { id: m.id }, summary: `#${where.number} の自分のコメントを削除する`, done: "コメントを削除しました" });
-      if (ok) setOpened(undefined);
+      if (ok) setDeleting(undefined);
     };
     const text = c.minimized ? (
       <p className="text-sm text-muted-foreground">GitHub で非表示にされたコメントです。</p>
@@ -106,12 +114,18 @@ function useComments(): ConversationEntry[] {
             </Button>
           )}
           {!open && edit && (
-            <Button variant="ghost" size="xs" leftIcon={<Pencil />} onClick={() => setOpened({ url: edit.url, draft: c.body })} disabled={busy !== undefined}>
+            <Button variant="ghost" size="xs" leftIcon={<Pencil />} onClick={() => {
+                setDeleting(undefined);
+                setEditing({ url: edit.url, draft: c.body });
+              }} disabled={busy !== undefined}>
               編集
             </Button>
           )}
           {!open && m?.deletable && (
-            <Button variant="ghost" size="icon" onClick={() => setOpened({ url: m.url, deleting: true })} disabled={busy !== undefined} aria-label="コメントを削除する" title="コメントを削除する">
+            <Button variant="ghost" size="icon" onClick={() => {
+                setEditing(undefined);
+                setDeleting(m.url);
+              }} disabled={busy !== undefined} aria-label="コメントを削除する" title="コメントを削除する">
               <Trash2 />
             </Button>
           )}
@@ -123,33 +137,33 @@ function useComments(): ConversationEntry[] {
         </>
       ),
       body:
-        open && "draft" in open ? (
+        editingThis ? (
           <div className="space-y-2">
             <textarea
-              value={open.draft}
-              onChange={(e) => setOpened({ url: open.url, draft: e.target.value })}
+              value={editingThis.draft}
+              onChange={(e) => setEditing({ url: editingThis.url, draft: e.target.value })}
               aria-label="コメント"
-              rows={Math.min(30, Math.max(6, open.draft.split("\n").length + 2))}
+              rows={Math.min(30, Math.max(6, editingThis.draft.split("\n").length + 2))}
               className={cn(INPUT, "font-mono text-xs")}
             />
             <div className="flex gap-2">
               <Button
                 variant="primary"
-                onClick={() => void save(open.draft)}
+                onClick={() => void save(editingThis.draft)}
                 isLoading={busy === `comment-edit:${edit?.id}`}
                 loadingText="保存しています…"
-                disabled={busy !== undefined || !open.draft.trim() || open.draft === c.body}
+                disabled={busy !== undefined || !editingThis.draft.trim() || editingThis.draft === c.body}
               >
                 保存する
               </Button>
-              <Button onClick={() => setOpened(undefined)} disabled={busy !== undefined}>
+              <Button onClick={() => setEditing(undefined)} disabled={busy !== undefined}>
                 やめる
               </Button>
             </div>
           </div>
         ) : (
           <>
-            {open && (
+            {deletingThis && (
               <Alert
                 tone="warning"
                 className="mb-2.5"
@@ -158,7 +172,7 @@ function useComments(): ConversationEntry[] {
                     <Button variant="destructive" size="xs" onClick={() => void remove()} isLoading={busy === `comment-delete:${m?.id}`} loadingText="削除しています…" disabled={busy !== undefined}>
                       削除する
                     </Button>
-                    <Button size="xs" onClick={() => setOpened(undefined)} disabled={busy !== undefined}>
+                    <Button size="xs" onClick={() => setDeleting(undefined)} disabled={busy !== undefined}>
                       やめる
                     </Button>
                   </div>

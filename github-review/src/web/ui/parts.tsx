@@ -1,5 +1,6 @@
 // The parts github-review takes from Gasho's screen (as the kanban does), which the SDK does not provide: EasyUI's
-// Button, Alert, Badge, Skeleton and DrawCheckbox with their colors on Gasho's tokens.
+// Button, Alert, Badge, Skeleton and DrawCheckbox with their colors on Gasho's tokens; and the element that keeps the
+// plugin's CSS on what Radix's portals draw.
 import { AnimatePresence, motion, type HTMLMotionProps } from "framer-motion";
 import { CircleAlert, Info, Loader2, TriangleAlert, type LucideIcon } from "lucide-react";
 import { forwardRef, useId, type ComponentProps, type ReactNode } from "react";
@@ -222,4 +223,14 @@ export function DrawCheckbox({
       )}
     </div>
   );
+}
+
+// ---- what a Radix portal draws, where the plugin's CSS applies ----
+
+/**
+ * Wraps what a Radix portal draws at the end of document.body, outside the part: Gasho's screen applies the plugin's
+ * CSS only inside an element of its id (Gasho's docs/plugins.md), so the classes only this plugin has would not apply.
+ */
+export function PortalScope({ style, ...props }: ComponentProps<"div">) {
+  return <div data-gasho-plugin="github-review" style={{ display: "contents", ...style }} {...props} />;
 }

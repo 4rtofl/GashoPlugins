@@ -15,10 +15,12 @@ import { itemLook, itemsInOrder, itemsTarget, useRefreshOptions } from "./tabs.t
 import { Alert } from "./ui/alert.tsx";
 import { Badge } from "./ui/badge.tsx";
 import { Button, buttonClass } from "./ui/button.tsx";
+import { useComposingEscape } from "./ui/input.ts";
 import { Skeleton } from "./ui/skeleton.tsx";
 import { ToastProvider, useToast } from "./ui/toast.tsx";
 
 export function HomeView(props: WorktreeViewProps) {
+  useComposingEscape();
   return (
     <ToastProvider>
       <Home {...props} />

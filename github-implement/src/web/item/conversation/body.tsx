@@ -1,13 +1,12 @@
 // The body, at the top of the conversation, with a button that edits it (an Undo Toast can put the old text back) and its
 // reactions.
 import { FileText, Pencil } from "lucide-react";
-import { useState } from "react";
 import { cn, Markdown, RelativeTime } from "@gasho/plugin-sdk";
 import { bodyEditParams } from "../../../edit-was.ts";
 import { Alert } from "../../ui/alert.tsx";
 import { Button } from "../../ui/button.tsx";
 import { INPUT } from "../../ui/input.ts";
-import { useItem } from "../context.tsx";
+import { useDraft, useItem } from "../context.tsx";
 import { useConversationMeta } from "../conversation-meta.ts";
 import type { ConversationEntry, ConversationPart } from "../parts.ts";
 import { Reactions } from "../reactions.tsx";
@@ -15,21 +14,24 @@ import { Reactions } from "../reactions.tsx";
 function useBody(): ConversationEntry[] {
   const { item, where, now, busy, run } = useItem();
   const meta = useConversationMeta().data;
-  // What is typed, and GitHub's body when the edit started: the daemon part refuses to save over another one.
-  const [edit, setEdit] = useState<{ draft: string; from: string }>();
-  const changed = edit !== undefined && edit.from !== item.body;
+  // What is typed, and GitHub's body when the edit started: the daemon part refuses to save over another one. `over`:
+  // the body a save replaced, which the item read before the save still shows until it is read again.
+  const [edit, setEdit] = useDraft<{ draft: string; from: string; over?: string }>("body");
+  const changed = edit !== undefined && edit.from !== item.body && edit.over !== item.body;
   // `base`: GitHub's body the draft is saved over.
   const save = async (base: string) => {
     if (!edit) return;
+    const sent = edit.draft;
     const ok = await run({
       id: "body",
       op: "edit",
-      params: bodyEditParams(edit.draft, base),
+      params: bodyEditParams(sent, base),
       summary: `#${where.number} の本文を変える`,
       done: "本文を変えました",
       undo: { op: "edit", params: { body: base }, summary: `#${where.number} の本文を戻す` },
     });
-    if (ok) setEdit(undefined);
+    // A body changed while it was being saved stays in the box, to be saved again over the one just saved.
+    if (ok) setEdit((e) => (!e || e.draft === sent ? undefined : { ...e, from: sent, over: base }));
   };
   return [
     {
@@ -53,7 +55,7 @@ function useBody(): ConversationEntry[] {
       body:
         edit !== undefined ? (
           <div className="space-y-2">
-            <textarea value={edit.draft} onChange={(e) => setEdit({ draft: e.target.value, from: edit.from })} aria-label="本文" rows={Math.min(30, Math.max(8, edit.draft.split("\n").length + 2))} className={cn(INPUT, "font-mono text-xs")} />
+            <textarea value={edit.draft} onChange={(e) => setEdit({ ...edit, draft: e.target.value })} aria-label="本文" rows={Math.min(30, Math.max(8, edit.draft.split("\n").length + 2))} className={cn(INPUT, "font-mono text-xs")} />
             {changed && (
               <Alert tone="warning">
                 <p>編集を始めたあとに、GitHub で本文が変わりました。このまま保存すると、その変更は消えます。</p>

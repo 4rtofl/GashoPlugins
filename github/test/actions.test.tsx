@@ -56,6 +56,24 @@ describe("RunsPanel", () => {
     expect(sdk.nav.openPanel).toHaveBeenCalledWith("run", { id: "11", workflow: "1", branch: "feat/1-x" }, undefined);
   });
 
+  it("back from a run, the list is where it was scrolled to, once", async () => {
+    respond({ runs: { data: runs([run()]) } });
+    const panel = () => (
+      <div data-testid="box" style={{ overflowY: "auto" }}>
+        <RunsPanel machine={machine()} session={s} params={{}} docked />
+      </div>
+    );
+    const opened = render(panel());
+    screen.getByTestId("box").scrollTop = 120;
+    await userEvent.click(screen.getByRole("link", { name: /テストを足す/ }));
+    opened.unmount();
+    const back = render(panel());
+    expect(screen.getByTestId("box").scrollTop).toBe(120);
+    back.unmount();
+    render(panel());
+    expect(screen.getByTestId("box").scrollTop).toBe(0);
+  });
+
   it("asks gh to read GitHub again on the reload button, then reads the request again", async () => {
     respond({ runs: { data: runs([run()]) } });
     render(<RunsPanel machine={machine()} session={s} params={{}} docked />);

@@ -1,28 +1,35 @@
-// GitHub Projects of a repository: those linked to it and the other ones of its owner (one GraphQL query), and one of
-// them as a board: its single select fields (what the columns can be made of) and its items with the options chosen in
+// GitHub Projects of a repository: those linked to it and the other ones of its owner (one GraphQL query, open and
+// closed ones apart, so that many closed ones do not leave open ones out), and one of them as a board: its single
+// select and iteration fields (what the columns can be made of) and its items with the options or iterations chosen in
 // them, read 100 at a time. gh's login needs read:project; without it, the answer says how to add it.
 // The owner is read as the repository's: `repository(owner:, name:)` still finds a repository by the name its clone's
 // origin says after its owner was renamed, while `repositoryOwner(login:)` finds no one by the old login.
 import type { Board, BoardField, BoardItem, ProjectRef, Projects } from "../types.ts";
 import { arr, githubUrl, missingScope, num, parseJson, rec, str, type Gh } from "./gh.ts";
 
-/** Projects sent per list, and items read per board (100 a page). */
-const PROJECTS_MAX = 50;
+/** Open projects and closed ones read per list, and items read per board (100 a page). */
+export const PROJECTS_MAX = 50;
 export const BOARD_PAGES = 5;
 
 const PROJECT_FIELDS = "number title url closed shortDescription updatedAt items { totalCount }";
+const projectsOf = (state: "open" | "closed") =>
+  `${state}: projectsV2(first: ${PROJECTS_MAX}, query: "is:${state}", orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { ${PROJECT_FIELDS} } }`;
 
 export const PROJECTS_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
-    projectsV2(first: ${PROJECTS_MAX}, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { ${PROJECT_FIELDS} } }
+    ${projectsOf("open")}
+    ${projectsOf("closed")}
     owner {
       login
       ... on ProjectV2Owner {
-        projectsV2(first: ${PROJECTS_MAX}, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { ${PROJECT_FIELDS} } }
+        ${projectsOf("open")}
+        ${projectsOf("closed")}
       }
     }
   }
 }`;
+
+const ITERATION_FIELDS = "id name configuration { iterations { id title startDate } completedIterations { id title startDate } }";
 
 export const BOARD_QUERY = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -31,8 +38,12 @@ export const BOARD_QUERY = `query($owner: String!, $name: String!, $number: Int!
       ... on ProjectV2Owner {
         projectV2(number: $number) {
           number title url closed shortDescription
-          fields(first: 50) { nodes { __typename ... on ProjectV2SingleSelectField { id name options { id name color } } } }
-          views(first: 20) { nodes { layout verticalGroupByFields(first: 1) { nodes { ... on ProjectV2SingleSelectField { id } } } } }
+          fields(first: 50) {
+            nodes { __typename ... on ProjectV2SingleSelectField { id name options { id name color } } ... on ProjectV2IterationField { ${ITERATION_FIELDS} } }
+          }
+          views(first: 20) {
+            nodes { layout verticalGroupByFields(first: 1) { nodes { ... on ProjectV2SingleSelectField { id } ... on ProjectV2IterationField { id } } } }
+          }
           items(first: 100, after: $cursor) {
             pageInfo { hasNextPage endCursor }
             nodes {
@@ -43,7 +54,13 @@ export const BOARD_QUERY = `query($owner: String!, $name: String!, $number: Int!
                 ... on PullRequest { number title url state isDraft repository { nameWithOwner } assignees(first: 5) { nodes { login } } }
                 ... on DraftIssue { title assignees(first: 5) { nodes { login } } }
               }
-              fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { optionId field { ... on ProjectV2SingleSelectField { id } } } } }
+              fieldValues(first: 30) {
+                nodes {
+                  __typename
+                  ... on ProjectV2ItemFieldSingleSelectValue { optionId field { ... on ProjectV2SingleSelectField { id } } }
+                  ... on ProjectV2ItemFieldIterationValue { iterationId field { ... on ProjectV2IterationField { id } } }
+                }
+              }
             }
           }
         }
@@ -81,19 +98,32 @@ const refs = (conn: unknown): ProjectRef[] =>
     return p ? [p] : [];
   });
 
+/** The open projects and then the closed ones of an answer's `open` and `closed`, and whether GitHub has more. */
+function openAndClosed(of: Record<string, unknown>): { projects: ProjectRef[]; truncated: boolean } {
+  const more = (conn: unknown) => (num(rec(conn).totalCount) ?? 0) > arr(rec(conn).nodes).length;
+  return { projects: [...refs(of.open), ...refs(of.closed)], truncated: more(of.open) || more(of.closed) };
+}
+
 /** The answer of PROJECTS_QUERY: the repository's projects, and its owner's others (open ones first). */
 export function parseProjects(json: string): Omit<Projects, "repo"> {
   const data = rec(rec(parseJson(json)).data);
   const repository = rec(data.repository);
-  const linked = refs(repository.projectsV2);
+  const linked = openAndClosed(repository);
   const owner = rec(repository.owner);
-  const seen = new Set(linked.map((p) => p.number));
-  const others = refs(owner.projectsV2).filter((p) => !seen.has(p.number));
-  const openFirst = (a: ProjectRef, b: ProjectRef) => Number(a.closed) - Number(b.closed);
-  return { linked: linked.sort(openFirst), owner: others.sort(openFirst), ownerLogin: str(owner.login) ?? "" };
+  const seen = new Set(linked.projects.map((p) => p.number));
+  const others = openAndClosed(owner);
+  return {
+    linked: linked.projects,
+    owner: others.projects.filter((p) => !seen.has(p.number)),
+    ownerLogin: str(owner.login) ?? "",
+    ...(linked.truncated ? { linkedTruncated: true } : {}),
+    ...(others.truncated ? { ownerTruncated: true } : {}),
+  };
 }
 
 const ITEM_STATE: Record<string, BoardItem["state"]> = { OPEN: "open", CLOSED: "closed", MERGED: "merged" };
+/** How GitHub shows an issue closed for a reason other than done. */
+const CLOSED_AS: Record<string, BoardItem["state"]> = { NOT_PLANNED: "not_planned", DUPLICATE: "duplicate" };
 
 function parseItem(raw: unknown, repo: string): BoardItem | undefined {
   const n = rec(raw);
@@ -106,13 +136,13 @@ function parseItem(raw: unknown, repo: string): BoardItem | undefined {
   for (const v of arr(rec(n.fieldValues).nodes)) {
     const value = rec(v);
     const field = str(rec(value.field).id);
-    const option = str(value.optionId);
-    if (value.__typename === "ProjectV2ItemFieldSingleSelectValue" && field && option) values[field] = option;
+    const option = value.__typename === "ProjectV2ItemFieldSingleSelectValue" ? str(value.optionId) : value.__typename === "ProjectV2ItemFieldIterationValue" ? str(value.iterationId) : undefined;
+    if (field && option) values[field] = option;
   }
   const itemRepo = str(rec(c.repository).nameWithOwner);
   let state = ITEM_STATE[str(c.state) ?? ""];
   if (type === "pull" && state === "open" && c.isDraft === true) state = "draft";
-  if (type === "issue" && state === "closed" && c.stateReason === "NOT_PLANNED") state = "not_planned";
+  if (type === "issue" && state === "closed") state = CLOSED_AS[str(c.stateReason) ?? ""] ?? state;
   return {
     id,
     type,
@@ -125,6 +155,20 @@ function parseItem(raw: unknown, repo: string): BoardItem | undefined {
     assignees: arr(rec(c.assignees).nodes).flatMap((a) => (str(rec(a).login) ? [str(rec(a).login) as string] : [])),
     values,
   };
+}
+
+/** An iteration field's iterations as the options of its columns: those that ended, then the others, by their start. */
+function iterations(configuration: unknown): BoardField["options"] {
+  const c = rec(configuration);
+  const of = (list: unknown, completed: boolean) =>
+    arr(list).flatMap((raw) => {
+      const it = rec(raw);
+      const id = str(it.id);
+      const title = str(it.title);
+      return id && title !== undefined ? [{ id, name: title, ...(str(it.startDate) ? { startDate: str(it.startDate) } : {}), ...(completed ? { completed: true } : {}) }] : [];
+    });
+  const byStart = (a: { startDate?: string }, b: { startDate?: string }) => (a.startDate ?? "").localeCompare(b.startDate ?? "");
+  return [...of(c.completedIterations, true).sort(byStart), ...of(c.iterations, false).sort(byStart)];
 }
 
 /**
@@ -145,7 +189,9 @@ export function parseBoardPage(
     const f = rec(raw);
     const id = str(f.id);
     const name = str(f.name);
-    if (f.__typename !== "ProjectV2SingleSelectField" || !id || !name) return [];
+    if (!id || !name) return [];
+    if (f.__typename === "ProjectV2IterationField") return [{ id, name, iteration: true, options: iterations(f.configuration) }];
+    if (f.__typename !== "ProjectV2SingleSelectField") return [];
     const options = arr(f.options).flatMap((o) => {
       const opt = rec(o);
       const oid = str(opt.id);
@@ -159,7 +205,9 @@ export function parseBoardPage(
     .find((v) => v.layout === "BOARD_LAYOUT" && str(rec(arr(rec(v.verticalGroupByFields).nodes)[0]).id));
   const viewField = str(rec(arr(rec(boardView?.verticalGroupByFields).nodes)[0]).id);
   const defaultField =
-    (viewField && fields.some((f) => f.id === viewField) ? viewField : undefined) ?? fields.find((f) => f.name.toLowerCase() === "status")?.id ?? fields[0]?.id;
+    (viewField && fields.some((f) => f.id === viewField) ? viewField : undefined) ??
+    fields.find((f) => !f.iteration && f.name.toLowerCase() === "status")?.id ??
+    fields.find((f) => !f.iteration)?.id;
   const items = rec(p.items);
   const page = rec(items.pageInfo);
   return {

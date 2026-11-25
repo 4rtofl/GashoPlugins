@@ -4,9 +4,11 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CallResult, LaunchResult } from "@gasho/plugin-sdk";
 import { answerCalls, callsOf, machine, respond, scene, sdk, session, set } from "../../test/sdk.tsx";
+import { batchRun, hideBatch, startBatch } from "../src/web/batch-run.ts";
 import { ForkDialog } from "../src/web/dialogs.tsx";
-import type { ForkQuestion } from "../src/web/actions.ts";
+import type { Actions, ForkQuestion, Item, Tools } from "../src/web/actions.ts";
 import { ReviewPage } from "../src/web/page.tsx";
 import type { Listing, PrRow } from "../src/types.ts";
 
@@ -54,6 +56,12 @@ async function openFromNotice() {
   await userEvent.click(open);
 }
 
+/** Answers the question shown once it has been read (stopClock: the dialogs take no press within 0.5 s of it showing). */
+async function answerTrust(dialog: HTMLElement, name: "信頼して起動する" | "やめる") {
+  read();
+  await userEvent.click(within(dialog).getByRole("button", { name }));
+}
+
 async function choose(template: string) {
   await userEvent.click(screen.getByRole("button", { name: /worktree を作る/ }));
   await userEvent.click(await screen.findByRole("menuitem", { name: template }));
@@ -97,6 +105,32 @@ describe("a pull request without a worktree", () => {
     expect(sdk.launchSession).not.toHaveBeenCalled();
   });
 
+  it("keeps the notice of its work while \"まとめてレビューさせる\" runs for another pull request", async () => {
+    answerCalls({ create: { ok: false, error: "gh: could not fetch the pull request" } });
+    render(<ReviewPage params={{}} />);
+    // The run holds on making #99's worktree.
+    let release!: () => void;
+    const held = new Promise<CallResult<unknown>>((resolve) => (release = () => resolve({ ok: false, error: "held" })));
+    const spot = { machine: machine({ canLaunch: true }), primary: "/work/app" };
+    const other = { item: { pr: pr({ number: 99, url: "https://github.com/4rtofl/app/pull/99" }), spots: [spot] } as Item, spot };
+    const actions = { notify: () => {}, dismiss: () => {}, reload: () => {} } as unknown as Actions;
+    act(() => {
+      startBatch({ machine: spot.machine, template: { name: "レビュー", body: "" }, targets: [other] }, [other], { call: () => held, actions } as unknown as Tools);
+      hideBatch();
+    });
+    try {
+      expect(await screen.findByText("1 / 1：#99 のレビューを用意しています…")).toBeTruthy();
+      await choose("何も送らない");
+      // The row's notice takes the place of the run's, and stays though the page is drawn again.
+      await waitFor(() => expect(screen.queryByText("1 / 1：#99 のレビューを用意しています…")).toBeNull());
+      expect(screen.getByRole("alert").textContent).toContain("gh: could not fetch the pull request");
+    } finally {
+      // The run is kept outside the page: it ends here, not to hold the rows of the tests after this one.
+      await act(async () => release());
+      await waitFor(() => expect(batchRun()?.running).toBe(false));
+    }
+  });
+
   it("asks before Claude Code trusts the new folder, and starts the session only once trusted", async () => {
     answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
     sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true, trustWarnings: [".claude/settings.json があります"] });
@@ -106,6 +140,11 @@ describe("a pull request without a worktree", () => {
     const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
     expect(within(dialog).getByText("/work/review-7")).toBeTruthy();
     expect(within(dialog).getByText(".claude/settings.json があります")).toBeTruthy();
+    // Drawn where the plugin's CSS applies, though the portal puts it outside the page.
+    expect(dialog.closest('[data-gasho-plugin="github-review"]')).not.toBeNull();
+    // A press as it shows (the second click of a double click, say) is not its answer.
+    await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
+    expect(sdk.launchSession).toHaveBeenCalledTimes(1);
     read();
     await userEvent.click(within(dialog).getByRole("button", { name: "信頼して起動する" }));
     await openFromNotice();
@@ -126,6 +165,60 @@ describe("a pull request without a worktree", () => {
     expect(sdk.launchSession).toHaveBeenCalledTimes(1);
     expect(sdk.sendInput).not.toHaveBeenCalled();
     expect(sdk.nav.openSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps the question of a row's work while the page is left, shows it once the page is back, and the work goes on", async () => {
+    let made!: () => void;
+    answerCalls({ create: () => new Promise((resolve) => (made = () => resolve({ ok: true, data: { path: "/work/review-7", created: true } }))) });
+    sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true });
+    stopClock();
+    const page = render(<ReviewPage params={{}} />);
+    await choose("レビュー");
+    // Left while the worktree is made: a session opened from the notice or the sidebar closes the page.
+    page.unmount();
+    await act(async () => made());
+    await waitFor(() => expect(sdk.launchSession).toHaveBeenCalledTimes(1));
+    render(<ReviewPage params={{}} />);
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "信頼して起動する");
+    await waitFor(() => expect(sdk.sendInput).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "launched", text: expect.stringMatching(/^#7 をレビューして/) })));
+    expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/review-7", trust: true });
+    expect(await screen.findByText("#7 のセッションを起動し、「レビュー」を送りました。")).toBeTruthy();
+  });
+
+  it("takes the notice of a closed panel's work off the page once the next one shows in a panel opened since", async () => {
+    let made!: () => void;
+    answerCalls({ create: () => new Promise((resolve) => (made = () => resolve({ ok: true, data: { path: "/work/review-7", created: true } }))) });
+    let started!: () => void;
+    sdk.launchSession.mockReturnValueOnce(new Promise<LaunchResult>((resolve) => (started = () => resolve({ ok: true, sessionId: "launched" }))) as unknown as LaunchResult);
+    // Two parts of the screen that draw the rows, as the review page and the panel of a pull request do.
+    const page = render(<ReviewPage params={{}} />);
+    const panel = render(<ReviewPage params={{}} />);
+    await userEvent.click(within(panel.container).getByRole("button", { name: /worktree を作る/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "何も送らない" }));
+    panel.unmount();
+    await act(async () => made());
+    expect(await within(page.container).findByText("review-7 でセッションを起動しています…")).toBeTruthy();
+    const next = render(<ReviewPage params={{}} />);
+    await act(async () => started());
+    expect(await within(next.container).findByText("#7 のセッションを起動しました。")).toBeTruthy();
+    await waitFor(() => expect(within(page.container).queryByText("review-7 でセッションを起動しています…")).toBeNull());
+  });
+
+  it("shows a question once while the page and a panel are both open", async () => {
+    answerCalls({ create: { ok: true, data: { path: "/work/review-7", created: true } } });
+    sdk.launchSession.mockReturnValueOnce({ ok: false, error: "not trusted", needsTrust: true });
+    stopClock();
+    // Two parts of the screen that draw the rows, as the review page and the panel of a pull request do.
+    render(<ReviewPage params={{}} />);
+    render(<ReviewPage params={{}} />);
+    await userEvent.click(screen.getAllByRole("button", { name: /worktree を作る/ })[0]!);
+    await userEvent.click(await screen.findByRole("menuitem", { name: "何も送らない" }));
+    const dialog = await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" });
+    // Counted in the document: Radix hides from the roles all but the dialog in front.
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    await answerTrust(dialog, "信頼して起動する");
+    await waitFor(() => expect(sdk.launchSession).toHaveBeenLastCalledWith({ machine: "m1", cwd: "/work/review-7", trust: true }));
+    expect(sdk.launchSession).toHaveBeenCalledTimes(2);
   });
 
   it("says that the session started but the template could not be sent, and does not open it", async () => {
@@ -172,6 +265,46 @@ describe("a pull request with a worktree", () => {
     await userEvent.click(screen.getByRole("button", { name: "新たにセッションを作成する" }));
     await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
     expect(sdk.launchSession).toHaveBeenCalledWith({ machine: "m1", cwd: "/work/review-7" });
+  });
+
+  it("keeps the notice of a session started while another row waits to ask about its folder, which opens it once that is answered", async () => {
+    const other = pr({ number: 8, title: "設定を足す", url: "https://github.com/4rtofl/app/pull/8", branch: "feat/8-settings", place: { primary: "/work/app", worktree: { ...review, path: "/work/review-8" } } });
+    respond({ list: listed({ requested: [pr({ place: { primary: "/work/app", worktree: review } }), other] }) });
+    // Claude Code answers for review-8 only when the test says.
+    let answer!: (r: LaunchResult) => void;
+    sdk.launchSession.mockImplementation((input) =>
+      input.cwd === "/work/review-8" ? (new Promise<LaunchResult>((resolve) => (answer = resolve)) as unknown as LaunchResult) : { ok: true, sessionId: "s-7" },
+    );
+    stopClock();
+    render(<ReviewPage params={{}} />);
+    const row = (title: string) => within(screen.getByText(title).closest("li")!);
+    await userEvent.click(row("設定を足す").getByRole("button", { name: "開く" }));
+    await userEvent.click(row("ログインを直す").getByRole("button", { name: "開く" }));
+    expect(await screen.findByText("review-7 のセッションを開けます。ほかのセッションの起動中だったので、このページのままにしました。")).toBeTruthy();
+    await act(async () => answer({ ok: false, error: "not trusted", needsTrust: true }));
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
+    await openFromNotice();
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-7");
+  });
+
+  it("shows again the notice of a session started while another row made its worktree, once that row asks about its folder", async () => {
+    const other = pr({ number: 8, title: "設定を足す", url: "https://github.com/4rtofl/app/pull/8", branch: "feat/8-settings" });
+    respond({ list: listed({ requested: [pr({ place: { primary: "/work/app", worktree: review } }), other] }) });
+    let made!: () => void;
+    answerCalls({ create: () => new Promise((resolve) => (made = () => resolve({ ok: true, data: { path: "/work/review-8", created: true } }))) });
+    sdk.launchSession.mockImplementation((input) => (input.cwd === "/work/review-8" ? { ok: false, error: "not trusted", needsTrust: true } : { ok: true, sessionId: "s-7" }));
+    stopClock();
+    render(<ReviewPage params={{}} />);
+    const row = (title: string) => within(screen.getByText(title).closest("li")!);
+    await userEvent.click(row("設定を足す").getByRole("button", { name: /worktree を作る/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "何も送らない" }));
+    await userEvent.click(row("ログインを直す").getByRole("button", { name: "開く" }));
+    expect(await screen.findByText("review-7 のセッションを開けます。ほかのセッションの起動中だったので、このページのままにしました。")).toBeTruthy();
+    // "review-8 でセッションを起動しています…" takes its place, and is taken off before the question.
+    await act(async () => made());
+    await answerTrust(await screen.findByRole("dialog", { name: "このフォルダーを信頼しますか" }), "やめる");
+    await openFromNotice();
+    expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "s-7");
   });
 
   it("once merged, can be removed with its branch after the person agrees, and says what went", async () => {
@@ -330,16 +463,19 @@ describe("the tools the page gives the rows", () => {
     expect(text.includes("git/refs/heads/fix/7-login")).toBe(deletes);
   });
 
-  it("give a row its buttons back when the page is left while it asks the person first", async () => {
+  it("ask again on the page opened after the one that asked was left, and give the row its buttons back once answered", async () => {
     set({ machines: withSession(42) });
     respond({ list: listed({ requested: [numbered(42, {}, { mark: mergeable(42) })] }) });
     const left = render(<ReviewPage params={{}} />);
     await userEvent.click(screen.getByRole("button", { name: "マージしてもらう" }));
     await screen.findByRole("dialog", { name: "Agent にマージを頼みますか" });
-    expect(screen.getByRole("button", { name: "マージしてもらう", hidden: true })).toHaveProperty("disabled", true);
     left.unmount();
     render(<ReviewPage params={{}} />);
-    expect(screen.getByRole("button", { name: "マージしてもらう" })).toHaveProperty("disabled", false);
+    const dialog = await screen.findByRole("dialog", { name: "Agent にマージを頼みますか" });
+    expect(screen.getByRole("button", { name: "マージしてもらう", hidden: true })).toHaveProperty("disabled", true);
+    await userEvent.click(within(dialog).getByRole("button", { name: "やめる" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "マージしてもらう" })).toHaveProperty("disabled", false));
+    expect(sdk.sendInput).not.toHaveBeenCalled();
   });
 
   it("say what went wrong when a button's work fails unexpectedly, and give the row its buttons back", async () => {

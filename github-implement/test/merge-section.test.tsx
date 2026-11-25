@@ -1,11 +1,12 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { respond, sdk } from "../../test/sdk.tsx";
 import type { PullMerge } from "../src/daemon/ops/mergeable.ts";
 import type { GitHubItemDetail } from "../src/types.ts";
 import Merge from "../src/web/item/sections/merge.tsx";
-import { detail, reads, renderItem, REPO, writes } from "./render.tsx";
+import Merged from "../src/web/item/sections/merged.tsx";
+import { detail, github, reads, renderItem, REPO, writes } from "./render.tsx";
 
 const pull = (over: Partial<GitHubItemDetail> = {}) => detail({ kind: "pulls", title: "マージを足す", head: "feat/12-merge", base: "main", ...over });
 
@@ -137,5 +138,22 @@ describe("the merge of an open pull request", () => {
     expect(screen.getByRole("alert").textContent).toContain("gh: HTTP 502");
     await userEvent.click(screen.getByRole("button", { name: "読み直す" }));
     expect(sdk.reload).toHaveBeenCalledWith("read");
+  });
+});
+
+describe("the dialog that removes the worktree of a merged pull request", () => {
+  it("closes on a press that begins and ends on the backdrop, and not on one that begins inside (selecting the folder)", async () => {
+    const worktree = { path: "/work/app-12", repo: "/work/app", branch: "feat/12-merge", github, sessions: [] };
+    reads({ items: { data: { pulls: [{ kind: "pulls", number: 12, title: "マージを足す", state: "merged", url: "" }], added: [], missing: [], at: 0 } } });
+    renderItem(pull({ state: "merged" }), <Merged.View />, worktree);
+    await userEvent.click(screen.getByRole("button", { name: "worktree とセッションを削除…" }));
+    // A press on the backdrop is a press on the dialog itself.
+    const dialog = screen.getByRole("dialog", { name: "worktree とセッションを削除" });
+    fireEvent.pointerDown(screen.getByText("/work/app-12"));
+    fireEvent.click(dialog);
+    expect(screen.queryByRole("dialog")).toBeTruthy();
+    fireEvent.pointerDown(dialog);
+    fireEvent.click(dialog);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

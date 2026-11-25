@@ -3,18 +3,18 @@
 // as the merge), and the tabs of tabs/ (the conversation, and for a pull request its commits, checks and files). After
 // a change, gasho-daemon drops what it kept of the repository, so reading again shows GitHub as it is now.
 import { ExternalLink, Pencil, RefreshCw } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { cn, RelativeTime, useDaemonReady, useNow, useRequest, type WorktreeViewProps } from "@gasho/plugin-sdk";
 import type { GitHubItemDetail, GitHubKind, WorktreeItems } from "../../types.ts";
 import { readOp, useFreshReload } from "../daemon.ts";
 import { itemsTarget, OfflineContext, useRefreshOptions } from "../tabs.ts";
 import { Alert } from "../ui/alert.tsx";
 import { Button, buttonClass } from "../ui/button.tsx";
-import { INPUT } from "../ui/input.ts";
+import { INPUT, isComposing, useComposingEscape } from "../ui/input.ts";
 import { Skeleton, SkeletonText } from "../ui/skeleton.tsx";
 import { AnimatedTabs } from "../ui/tabs.tsx";
 import { ToastProvider } from "../ui/toast.tsx";
-import { ItemProvider, useChanges, useChosenTab, useItem, type Where } from "./context.tsx";
+import { ItemProvider, useChanges, useChosenTab, useDraft, useDraftsOf, useItem, type Where } from "./context.tsx";
 import { ItemPalette } from "./palette.tsx";
 import { partsOf, type ItemSection, type ItemTab } from "./parts.ts";
 import { Rows } from "./row.tsx";
@@ -26,6 +26,7 @@ const SECTIONS = partsOf(import.meta.glob<{ default: ItemSection }>("./sections/
 const NAME: Record<GitHubKind, string> = { issues: "Issue", pulls: "Pull request" };
 
 export function ItemView(props: WorktreeViewProps) {
+  useComposingEscape();
   // Gasho keeps one view per worktree, so moving to another number of the same worktree only changes params: the key
   // makes the screen anew, and nothing typed or asked for one number (a title, a merge's confirmation) shows on another.
   return (
@@ -58,6 +59,7 @@ function ItemScreen({ machine, worktree, params }: WorktreeViewProps) {
   // the kind it is, and the changes go to that kind.
   const kind = item?.kind ?? asked;
   const where: Where | undefined = repo && valid ? { repo, kind, number } : undefined;
+  useDraftsOf(machine.id, worktree, where);
   // The worktree's tabs show the title and the state: they are read again after a change too.
   const tabs = useRequest<WorktreeItems>(itemsTarget(machine.id, worktree, daemon.ready), options);
   const changes = useChanges(machine.id, where, () => {
@@ -182,8 +184,9 @@ function Detail() {
 
 function Title() {
   const { item, where, busy, run } = useItem();
-  // What is typed, and GitHub's title when the edit started: the daemon part refuses to save over another one.
-  const [edit, setEdit] = useState<{ draft: string; from: string }>();
+  // What is typed, and GitHub's title when the edit started: the daemon part refuses to save over another one. `over`:
+  // the title a save replaced, which the item read before the save still shows until it is read again.
+  const [edit, setEdit] = useDraft<{ draft: string; from: string; over?: string }>("title");
   if (edit === undefined) {
     return (
       <div className="flex items-start gap-2">
@@ -195,22 +198,38 @@ function Title() {
     );
   }
   const { draft, from } = edit;
-  const changed = from !== item.title;
+  const changed = from !== item.title && edit.over !== item.title;
   // `base`: GitHub's title the draft is saved over.
   const save = async (base: string) => {
+    const sent = draft;
     const ok = await run({
       id: "title",
       op: "edit",
-      params: { title: draft, was: { title: base } },
+      params: { title: sent, was: { title: base } },
       summary: `#${where.number} の題を変える`,
       done: "題を変えました",
       undo: { op: "edit", params: { title: base }, summary: `#${where.number} の題を戻す` },
     });
-    if (ok) setEdit(undefined);
+    // A title changed while it was being saved stays in the box, to be saved again over the one just saved.
+    if (ok) setEdit((e) => (!e || e.draft === sent ? undefined : { ...e, from: sent, over: base }));
   };
   return (
     <div className="space-y-2">
-      <input value={draft} onChange={(e) => setEdit({ draft: e.target.value, from })} aria-label="題" className={INPUT} maxLength={256} />
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setEdit({ ...edit, draft: e.target.value })}
+        onKeyDown={(e) => {
+          // Not while it is being saved, as "やめる": the title typed would go if the save then failed.
+          if (e.key === "Escape" && !isComposing(e) && busy !== "title") {
+            e.preventDefault();
+            setEdit(undefined);
+          }
+        }}
+        aria-label="題"
+        className={INPUT}
+        maxLength={256}
+      />
       {changed && (
         <Alert tone="warning">
           <p>
