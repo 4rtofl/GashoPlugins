@@ -38,3 +38,26 @@ test("a file of what is kept that is broken starts empty, says so in the log, an
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("why a worktree was not removed stays while it has the same branch, and goes with it", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "implement-store-"));
+  try {
+    const file = path.join(dir, "worktrees.json");
+    const store = new Store(file, () => undefined);
+    const same = async () => false;
+    await store.seen("/w", "o/r", "feat/7", 1000, same, "/r");
+    await store.notRemoved("/w", "未コミットの変更が 1 件あります。", 2000);
+    // Shown again, without the repository's folder: what was kept of it stays, and the file has it all.
+    await store.seen("/w", "o/r", "feat/7", 3000, same);
+    const reread = new Store(file, () => undefined);
+    await reread.load();
+    assert.equal(reread.get("/w")?.repoDir, "/r");
+    assert.deepEqual(reread.get("/w")?.notRemoved, { problem: "未コミットの変更が 1 件あります。", at: 2000 });
+    await store.seen("/w", "o/r", "other", 4000, same);
+    assert.equal(store.get("/w")?.notRemoved, undefined);
+    await store.forget("/w");
+    assert.equal(store.get("/w"), undefined);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

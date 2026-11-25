@@ -9,7 +9,7 @@ import type { DaemonContext, GitHubReadOptions } from "@gasho/plugin-sdk/daemon"
 import { addDetailParts, askFresh, begin, end, itemRead, readAgain, readDetail, readItems, type Ctx } from "../src/daemon/core.ts";
 import itemsOp from "../src/daemon/ops/items.ts";
 import { branchArg, detailArgs, fitDetail, ghError, itemsQueryArgs, itemVersions, parseDetail, parseItems, repoArg } from "../src/daemon/gh.ts";
-import { worktreeHeads } from "../src/daemon/head.ts";
+import { parseWorktreeList } from "../src/daemon/head.ts";
 import { parseLocked } from "../src/daemon/ops/locked.ts";
 import type { GitHubItemDetail, WorktreeItems } from "../src/types.ts";
 import { commentArgs } from "../src/daemon/ops/comment.ts";
@@ -102,8 +102,9 @@ test("a fork's pull request, and one merged before from a branch of the same nam
 
   // The worktree's HEAD, as `git worktree list --porcelain` gives it.
   const list = ["worktree /home/u/r", `HEAD ${"e".repeat(40)}`, "branch refs/heads/main", "", "worktree /home/u/r-feat", `HEAD ${head}`, "branch refs/heads/feat/5-x", "", "worktree /home/u/r-x", `HEAD ${"f".repeat(40)}`, "detached", ""].join("\n");
-  assert.equal(worktreeHeads(list).get("/home/u/r-feat"), head);
-  assert.equal(worktreeHeads(list).size, 3);
+  assert.deepEqual(parseWorktreeList(list).get("/home/u/r-feat"), { head, branch: "feat/5-x" });
+  assert.deepEqual(parseWorktreeList(list).get("/home/u/r-x"), { head: "f".repeat(40) });
+  assert.equal(parseWorktreeList(list).size, 3);
 });
 
 test("a label, person or reviewer gh did not find is named; a repository it did not find is not taken for one", () => {

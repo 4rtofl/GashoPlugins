@@ -1,7 +1,9 @@
 // What github-implement keeps per worktree on a working server (in its own folder, ctx.dataDir): the numbers added to
-// it by hand, and when Gasho last showed it. The worktrees shown recently are the ones read again in the background.
+// it by hand, when Gasho last showed it, and why it was not removed without asking once merged. The worktrees shown
+// recently are the ones read again in the background.
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { NotRemoved } from "../types.ts";
 
 export interface KeptWorktree {
   /** owner/name on GitHub. */
@@ -11,6 +13,10 @@ export interface KeptWorktree {
   added: number[];
   /** When Gasho last showed the worktree's tabs (ms since the epoch). */
   seenAt: number;
+  /** The folder of its repository's main worktree, as the screen said: where its HEAD is found (head.ts). */
+  repoDir?: string;
+  /** Why it was not removed without asking; it goes when the worktree has another repository or branch. */
+  notRemoved?: NotRemoved;
 }
 
 /** GitHub takes the names of owners and repositories in any case. */
@@ -40,7 +46,15 @@ export class Store {
       const worktrees = (data as { worktrees?: Record<string, KeptWorktree> } | null)?.worktrees;
       for (const [key, w] of Object.entries(typeof worktrees === "object" && worktrees !== null ? worktrees : {})) {
         if (typeof w?.repo !== "string" || !Array.isArray(w.added)) continue;
-        this.worktrees.set(key, { repo: w.repo, ...(typeof w.branch === "string" ? { branch: w.branch } : {}), added: w.added.filter((n) => Number.isInteger(n)), seenAt: Number(w.seenAt) || 0 });
+        const notRemoved = w.notRemoved as Partial<NotRemoved> | undefined;
+        this.worktrees.set(key, {
+          repo: w.repo,
+          ...(typeof w.branch === "string" ? { branch: w.branch } : {}),
+          added: w.added.filter((n) => Number.isInteger(n)),
+          seenAt: Number(w.seenAt) || 0,
+          ...(typeof w.repoDir === "string" ? { repoDir: w.repoDir } : {}),
+          ...(typeof notRemoved?.problem === "string" && typeof notRemoved.at === "number" ? { notRemoved: { problem: notRemoved.problem, at: notRemoved.at } } : {}),
+        });
         this.written.set(key, Number(w.seenAt) || 0);
       }
     });
@@ -61,13 +75,22 @@ export class Store {
    * has the same name, or another name that `renamed` says is of the same repository on GitHub (the origin was set to the
    * repository's new name after a rename).
    */
-  async seen(worktree: string, repo: string, branch: string | undefined, now: number, renamed: (was: string) => Promise<boolean>): Promise<KeptWorktree> {
+  async seen(worktree: string, repo: string, branch: string | undefined, now: number, renamed: (was: string) => Promise<boolean>, repoDir?: string): Promise<KeptWorktree> {
     await this.load();
     const old = this.worktrees.get(worktree);
     const keep = old !== undefined && (sameName(old.repo, repo) || (old.added.length > 0 && (await renamed(old.repo))));
-    const w: KeptWorktree = { repo, ...(branch ? { branch } : {}), added: keep ? old.added : [], seenAt: now };
+    const dir = repoDir ?? old?.repoDir;
+    const same = old !== undefined && old.repo === repo && old.branch === branch;
+    const w: KeptWorktree = {
+      repo,
+      ...(branch ? { branch } : {}),
+      added: keep ? old.added : [],
+      seenAt: now,
+      ...(dir ? { repoDir: dir } : {}),
+      ...(same && old?.notRemoved ? { notRemoved: old.notRemoved } : {}),
+    };
     this.worktrees.set(worktree, w);
-    const changed = !old || old.repo !== repo || old.branch !== branch;
+    const changed = !same || old?.repoDir !== dir;
     if (changed || now - (this.written.get(worktree) ?? 0) >= SEEN_WRITE_MS) await this.save();
     return w;
   }
@@ -76,7 +99,7 @@ export class Store {
     await this.load();
     const old = this.worktrees.get(worktree);
     const added = old && sameName(old.repo, repo) ? old.added : [];
-    this.worktrees.set(worktree, { repo, ...(old?.branch ? { branch: old.branch } : {}), added: added.includes(number) ? added : [...added, number], seenAt: now });
+    this.worktrees.set(worktree, { ...old, repo, added: added.includes(number) ? added : [...added, number], seenAt: now });
     await this.save();
   }
 
@@ -86,6 +109,27 @@ export class Store {
     if (!old || !old.added.includes(number)) return;
     this.worktrees.set(worktree, { ...old, added: old.added.filter((n) => n !== number) });
     await this.save();
+  }
+
+  /** A page shows the worktree now, without reading its items: only one kept already. */
+  touch(worktree: string, now: number): void {
+    const w = this.worktrees.get(worktree);
+    if (w && w.seenAt < now) w.seenAt = now;
+  }
+
+  /** It was not removed without asking, for this reason: it is not tried again until it is used after `at`. */
+  async notRemoved(worktree: string, problem: string, at: number): Promise<void> {
+    await this.load();
+    const old = this.worktrees.get(worktree);
+    if (!old) return;
+    this.worktrees.set(worktree, { ...old, notRemoved: { problem, at } });
+    await this.save();
+  }
+
+  /** The worktree is gone: nothing of it is kept, and the background no longer reads it. */
+  async forget(worktree: string): Promise<void> {
+    await this.load();
+    if (this.worktrees.delete(worktree)) await this.save();
   }
 
   /** Writes the file whole (to a new file, then renamed over it), one write at a time. */

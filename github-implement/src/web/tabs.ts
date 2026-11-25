@@ -1,11 +1,13 @@
 // The tabs github-implement adds beside a worktree's sessions: one per issue and pull request of the worktree (the one
 // its branch is named after, the pull requests of its branch, the ones added by hand), then "GitHub", which lists them
-// and adds more. They are read again every "refreshSeconds" while they show.
+// and adds more. They are read again every "refreshSeconds" while they show, and while a row of them shows, the page
+// removes the merged worktrees nobody uses (auto-remove.ts).
 import { CircleCheck, CircleDot, CircleSlash, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, ListPlus, type LucideIcon } from "lucide-react";
 import { createContext, createElement, useContext, type ComponentType } from "react";
 import { cn, useRequest, useSetting, type RequestOptions, type RequestTarget, type WorktreeContext, type WorktreeInfo, type WorktreeTab } from "@gasho/plugin-sdk";
 import { newsCount } from "../news.ts";
 import type { ItemSummary, WorktreeItems } from "../types.ts";
+import { useAutoRemove } from "./auto-remove.ts";
 import { readOp } from "./daemon.ts";
 import { newsText, useNews } from "./news.ts";
 import type { BadgeTone } from "./ui/badge.tsx";
@@ -97,6 +99,7 @@ export function itemsInOrder(items: WorktreeItems): ItemSummary[] {
 }
 
 export function useItemTabs({ machine, worktree, daemon }: WorktreeContext): WorktreeTab[] {
+  useAutoRemove(machine.id, worktree.path);
   const target = itemsTarget(machine.id, worktree, daemon.ready);
   const options = useRefreshOptions();
   const r = useRequest<WorktreeItems>(target, options);

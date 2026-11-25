@@ -37,6 +37,35 @@ export interface WorktreeItems {
   missing: number[];
   /** When gh read them (ms since the epoch). */
   at: number;
+  /** Why removing it without asking ("removeMergedMinutes") did not, as the working server keeps it. */
+  notRemoved?: NotRemoved;
+}
+
+/** Why a merged worktree was not removed without asking, and when (ms since the epoch, the working server's clock). */
+export interface NotRemoved {
+  problem: string;
+  at: number;
+}
+
+/**
+ * A worktree shown in the last day whose branch's pull request is merged, at the pull request's head commit (the
+ * operation "merged"): what the screen needs to remove it without asking once it is not used for "removeMergedMinutes".
+ */
+export interface MergedWorktree {
+  /** Its top folder. */
+  path: string;
+  /** The folder of its repository's main worktree. */
+  repoDir: string;
+  branch: string;
+  /** owner/name on GitHub. */
+  repo: string;
+  /** The merged pull request. */
+  number: number;
+  /** Its head commit, which the worktree has checked out: what counts as pushed. */
+  head: string;
+  /** When Gasho last showed the worktree (ms since the epoch, the working server's clock). */
+  seenAt: number;
+  notRemoved?: NotRemoved;
 }
 
 /** A repository's labels and the people its issues can be assigned to, for the pickers of an item's screen. */
