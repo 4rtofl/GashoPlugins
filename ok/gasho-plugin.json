@@ -1,0 +1,27 @@
+{
+  "id": "ok",
+  "name": "OK",
+  "version": "1.0.0",
+  "description": "Claude が返答したあと、次に送りそうな指示を予測して、入力欄の上にボタンで出す。押すと、その指示をセッションに送る",
+  "genre": "other",
+  "api": "1.4",
+  "web": { "js": "web.js", "css": "web.css" },
+  "daemon": { "js": "daemon.js" },
+  "permissions": ["session.input"],
+  "methods": {
+    "predict": { "kind": "read", "timeoutSeconds": 100 }
+  },
+  "settings": {
+    "model": {
+      "type": "select",
+      "scope": "server",
+      "default": "haiku",
+      "options": [
+        { "value": "haiku", "label": "Haiku（速い）" },
+        { "value": "sonnet", "label": "Sonnet" }
+      ],
+      "label": "予測に使うモデル",
+      "description": "返答のたびに、このモデルの Claude Code を 1 回動かして、次の指示を予測する。プランの使用量を使う"
+    }
+  }
+}
