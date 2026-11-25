@@ -142,8 +142,13 @@ function Stage({ file, image, name, nav, position }: { file: FileContent; image:
   const move = useCallback((how: Parameters<typeof moveView>[3]) => {
     const { stage, natural } = sizes.current;
     if (!stage || !natural) return;
-    fitted.current = false;
-    setView((v) => v && moveView(v, natural, stage, how));
+    setView((v) => {
+      if (!v) return v;
+      const next = moveView(v, natural, stage, how);
+      // A wheel turned down or a drag while the whole image is shown changes nothing, and it stays fitted.
+      if (next.scale !== v.scale || next.x !== v.x || next.y !== v.y) fitted.current = false;
+      return next;
+    });
   }, []);
 
   const local = (e: { clientX: number; clientY: number }): Point => {

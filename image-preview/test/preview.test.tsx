@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DirEntry, FileContent } from "@gasho/plugin-sdk";
@@ -39,7 +39,10 @@ describe("ImagePreview", () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("goes to the images before and after it in the folder, with ← → and the buttons", async () => {
     const openFile = show("shots/b.webp");
@@ -79,6 +82,19 @@ describe("ImagePreview", () => {
     expect(await screen.findByText("100%")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "全体を表示" }));
     expect(screen.getByText("50%")).toBeTruthy();
+  });
+
+  it("fits the image again when the box narrows, after a wheel that could not zoom it out", () => {
+    let width = 400;
+    let resized = () => {};
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
+    vi.stubGlobal("ResizeObserver", class { constructor(cb: () => void) { resized = cb; } observe() {} disconnect() {} });
+    show("a.png");
+    load(800, 600);
+    screen.getByRole("img").parentElement!.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true }));
+    width = 200;
+    act(() => resized());
+    expect(screen.getByText("25%")).toBeTruthy();
   });
 
   it("tells why a large image is not shown, and still goes on to the next", async () => {
