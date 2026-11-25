@@ -27,7 +27,7 @@ const pr = (over: Partial<PrRow> = {}): PrRow => ({
 const mergeable = (n: number) => ({ verdict: "mergeable" as const, sha: head, url: `${url(n)}#issuecomment-1` });
 /** #n with its review worktree, whose review says it can be merged: the panel offers "マージしてもらう". */
 const reviewed = (n: number): PrRow => pr({ number: n, url: url(n), mark: mergeable(n), place: { primary: "/work/app", worktree: { path: `/work/review-${n}`, branch: `pr-${n}`, review: true } } });
-const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], errors: [], ...over });
+const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], hidden: [], errors: [], ...over });
 const detail = (over: Partial<PrDetail> = {}): PrDetail => ({ pr: pr(), body: "", comments: [], commentsMore: 0, checks: [], ...over });
 const panel = (n = 7) => <PrPanel params={{ repo: "4rtofl/app", number: String(n) }} docked />;
 

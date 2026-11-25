@@ -26,7 +26,7 @@ const pr = (over: Partial<PrRow> = {}): PrRow => ({
   place: { primary: "/work/app" },
   ...over,
 });
-const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], errors: [], ...over });
+const listing = (over: Partial<Listing> = {}): Listing => ({ watched: ["/work/app"], requested: [], repos: [], hidden: [], errors: [], ...over });
 const listed = (over: Partial<Listing> = {}) => ({ data: listing(over) });
 const review = { path: "/work/review-7", branch: "pr-7", review: true };
 
@@ -260,7 +260,7 @@ describe("a pull request with a worktree", () => {
 
   it("in a watched repository, starts a new session there rather than opening the one used last", async () => {
     set({ machines: [machine({ canLaunch: true, sessions: [session({ sessionId: "old", cwd: "/work/review-7", managed: true })] })] });
-    respond({ list: listed({ repos: [{ repo: "4rtofl/app", watched: true, prs: [pr({ place: { primary: "/work/app", worktree: review } })] }] }) });
+    respond({ list: listed({ repos: [{ repo: "4rtofl/app", watched: true, prs: [pr({ place: { primary: "/work/app", worktree: review } })], total: 1, kept: [] }] }) });
     render(<ReviewPage params={{}} />);
     await userEvent.click(screen.getByRole("button", { name: "新たにセッションを作成する" }));
     await waitFor(() => expect(sdk.nav.openSession).toHaveBeenCalledWith("m1", "launched"));
@@ -309,7 +309,8 @@ describe("a pull request with a worktree", () => {
 
   it("once merged, can be removed with its branch after the person agrees, and says what went", async () => {
     respond({ list: listed({ requested: [pr({ state: "merged", place: { primary: "/work/app", worktree: review } })] }) });
-    answerCalls({ remove: { ok: true, data: { path: "/work/review-7", branch: "pr-7" } } });
+    // The daemon part is asked first what would go, then to remove it.
+    answerCalls({ remove: (p: { check?: boolean }) => ({ ok: true, data: { path: "/work/review-7", branch: "pr-7", files: [], fileCount: 0, removed: !p.check } }) });
     render(<ReviewPage params={{}} />);
     expect(screen.getByText("マージされたので片付けてよい")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "片付ける" }));
@@ -318,16 +319,38 @@ describe("a pull request with a worktree", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "片付ける" }));
     // The "removing…" notice may still be leaving while this one comes in, so both can be a status for a moment.
     expect((await screen.findByText("review-7 を片付けました（ローカルのブランチ pr-7 も消しました）。")).closest('[role="status"]')).not.toBeNull();
-    expect(callsOf("remove")).toEqual([{ repo: "4rtofl/app", number: 7 }]);
+    expect(callsOf("remove")).toEqual([
+      { repo: "4rtofl/app", number: 7, check: true },
+      { repo: "4rtofl/app", number: 7 },
+    ]);
   });
 
   it("is not removed when the person does not agree", async () => {
     respond({ list: listed({ requested: [pr({ state: "closed", place: { primary: "/work/app", worktree: review } })] }) });
+    answerCalls({ remove: { ok: true, data: { path: "/work/review-7", branch: "pr-7", files: [], fileCount: 0, removed: false } } });
     render(<ReviewPage params={{}} />);
     await userEvent.click(screen.getByRole("button", { name: "片付ける" }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "やめる" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(callsOf("remove")).toEqual([]);
+    expect(callsOf("remove")).toEqual([{ repo: "4rtofl/app", number: 7, check: true }]);
+  });
+
+  it("removes the session that posted its review, in a row kept for its worktree too", async () => {
+    set({ machines: [machine({ canLaunch: true, sessions: [session({ sessionId: "s1", cwd: "/work/review-7" })] })] });
+    const kept = pr({ state: "merged", place: { primary: "/work/app", worktree: review, finishedSessions: ["s1"] } });
+    respond({ list: listed({ repos: [{ repo: "4rtofl/app", watched: true, prs: [], total: 0, kept: [kept] }] }) });
+    answerCalls({ reviewSession: { ok: true, data: { claimed: true } } });
+    render(<ReviewPage params={{}} />);
+    await waitFor(() => expect(sdk.removeSession).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1" }));
+  });
+
+  it("removes the session that posted its review in a row the search words leave out, without showing the row", async () => {
+    set({ machines: [machine({ canLaunch: true, sessions: [session({ sessionId: "s1", cwd: "/work/review-7" })] })] });
+    respond({ list: listed({ hidden: [pr({ place: { primary: "/work/app", worktree: review, finishedSessions: ["s1"] } })] }) });
+    answerCalls({ reviewSession: { ok: true, data: { claimed: true } } });
+    render(<ReviewPage params={{}} />);
+    await waitFor(() => expect(sdk.removeSession).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1" }));
+    expect(screen.queryByText("ログインを直す")).toBeNull();
   });
 
   it("offers no removal for a worktree that was not made for the review", () => {

@@ -41,6 +41,8 @@ import { MENU, MENU_ITEM } from "./ui/styles";
 export interface RowShared {
   tools: Tools;
   templates: Template[];
+  /** Why some of the setting of the templates is left out (template.ts readTemplates). */
+  templatesProblem?: string;
   busy: Pick<ReadonlySet<string>, "has">;
   /** Runs a button's work, with the row's buttons off meanwhile. */
   run: (url: string, work: () => Promise<void>) => void;
@@ -206,7 +208,8 @@ export function PrItemRow({ item, now, showRepo, fresh }: { item: Item; now: num
         )}
         {ask?.blocked && placed.length > 0 && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{ask.blocked}</p>}
       </div>
-      <div className="ml-auto flex shrink-0 items-start gap-3">
+      {/* At most the row's width: on a phone its buttons wrap rather than run past the edge. */}
+      <div className="ml-auto flex max-w-full min-w-0 items-start justify-end gap-3">
         {pr.comments > 0 && (
           <span title={`コメント ${pr.comments} 件`} className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
             <MessageSquare className="size-3.5" />
@@ -233,7 +236,7 @@ function RowActions({ item, fresh }: { item: Item; fresh?: boolean }) {
     // A worktree with no Gasho session opens only where Gasho can start one.
     const canOpen = (s: Spot) => s.machine.canLaunch === true || sessionsIn(s.machine, s.worktree?.path ?? "").length > 0;
     return (
-      <div className="flex flex-wrap justify-end gap-1.5">
+      <div className="flex min-w-0 flex-wrap justify-end gap-1.5">
         <AgentAsk item={item} />
         {fresh ? (
           <SpotButton label="新たにセッションを作成する" icon={<SquarePlus />} spots={placed} disabled={off} usable={(s) => s.machine.canLaunch === true} onPick={(s) => run(pr.url, () => newSessionIn(item, s, tools))} />
@@ -483,6 +486,7 @@ function TemplateMenu({
 }) {
   const shared = useContext(RowContext);
   if (!shared) return null;
+  const { templatesProblem } = shared;
   const choices = none ? [undefined, ...shared.templates] : shared.templates;
   return (
     <DropdownMenu.Root>
@@ -495,6 +499,7 @@ function TemplateMenu({
       <DropdownMenu.Portal>
         <PortalScope>
           <DropdownMenu.Content align="end" sideOffset={4} className={MENU}>
+            {templatesProblem && <p className="max-w-72 px-2.5 pt-1 pb-1.5 text-[11px] text-amber-700 dark:text-amber-300">{templatesProblem}</p>}
             {spots.map((s, i) => (
               <DropdownMenu.Group key={s.machine.id}>
                 {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
@@ -516,8 +521,10 @@ function TemplateMenu({
   );
 }
 
-/** "totosuki が 3日前に開いた": who opened a pull request, and when. */
+/** "totosuki が 3 日前に開いた", "totosuki が 昨日開いた": who opened a pull request, and when. */
 export function openedText(pr: Pick<PrRow, "author" | "createdAt">, now: number): string {
   const when = pr.createdAt ? relativeTime(Date.parse(pr.createdAt), now) : undefined;
-  return [pr.author ? `${pr.author} が` : undefined, when ? `${when}に開いた` : "開いた"].filter(Boolean).join(" ");
+  // relativeTime says "3 日前" and "5 分後", but also "昨日" and "たった今", which take no に.
+  const opened = when ? `${when}${/[前後]$/.test(when) ? "に" : ""}開いた` : "開いた";
+  return pr.author ? `${pr.author} が ${opened}` : opened;
 }

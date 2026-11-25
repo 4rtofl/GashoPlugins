@@ -1,7 +1,7 @@
 {
   "id": "better-worktree-list",
   "name": "Better WorktreeList",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "サイドバーの worktree の一覧を、リポジトリごとか、確認待ち・作業中・待機中などの状態ごとのカテゴリに分けて出す。分け方は一覧の見出しのメニューで選ぶ",
   "genre": "appearance",
   "api": "1.8",
