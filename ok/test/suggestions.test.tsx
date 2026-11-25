@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { lastRequest, machine, respond, sdk, session } from "../../test/sdk.tsx";
-import { HOLD_MS } from "../src/web/hold.ts";
+import { lastRequest, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
+import { HOLD_MS, holdMsOf } from "../src/web/hold.ts";
 import { shows } from "../src/web/index.tsx";
 import { Suggestions } from "../src/web/suggestions.tsx";
 
@@ -93,7 +93,7 @@ describe("holding a digit key", () => {
     expect(sdk.sendInput).not.toHaveBeenCalled();
   });
 
-  it("in an empty chat box, keeps the digit from being typed while held, and types it after a short press", () => {
+  it("leaves the digit keys to the chat box while it has the focus, empty or not", () => {
     respond({ predict: { data: three, loading: false } });
     render(
       <>
@@ -103,18 +103,14 @@ describe("holding a digit key", () => {
     );
     const box = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "入力" });
     box.focus();
-    const down = fireEvent.keyDown(box, { key: "3" });
-    expect(down).toBe(false);
-    fireEvent.keyUp(box, { key: "3" });
-    expect(box.value).toBe("3");
-    expect(sdk.sendInput).not.toHaveBeenCalled();
-    // With text in it, the digits are the person's.
     expect(fireEvent.keyDown(box, { key: "1" })).toBe(true);
-    act(() => vi.advanceTimersByTime(HOLD_MS));
+    expect(ring(1)).toBeNull();
+    act(() => vi.advanceTimersByTime(HOLD_MS * 2));
+    fireEvent.keyUp(box, { key: "1" });
     expect(sdk.sendInput).not.toHaveBeenCalled();
   });
 
-  it("in an empty chat box, sends the suggestion held for 2.5 s without typing the digit", () => {
+  it("ends the hold when the focus goes to the chat box", () => {
     respond({ predict: { data: three, loading: false } });
     render(
       <>
@@ -122,12 +118,34 @@ describe("holding a digit key", () => {
         <Suggestions machine={machine()} session={idle()} />
       </>,
     );
-    const box = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "入力" });
-    box.focus();
-    fireEvent.keyDown(box, { key: "1" });
-    act(() => vi.advanceTimersByTime(HOLD_MS));
-    fireEvent.keyUp(box, { key: "1" });
-    expect(box.value).toBe("");
+    fireEvent.keyDown(document.body, { key: "2" });
+    expect(ring(2)).toBeTruthy();
+    act(() => screen.getByRole("textbox", { name: "入力" }).focus());
+    expect(ring(2)).toBeNull();
+    act(() => vi.advanceTimersByTime(HOLD_MS * 2));
+    expect(sdk.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("waits for the seconds of the setting holdSeconds", () => {
+    set({ settings: { holdSeconds: 1 } });
+    respond({ predict: { data: three, loading: false } });
+    render(<Suggestions machine={machine()} session={idle()} />);
+    expect(screen.getByRole("button", { name: "はい" }).getAttribute("title")).toContain("1 秒押し続けても送る");
+    fireEvent.keyDown(document.body, { key: "1" });
+    act(() => vi.advanceTimersByTime(999));
+    expect(sdk.sendInput).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
     expect(sdk.sendInput).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1", text: "はい" });
+  });
+});
+
+describe("holdMsOf", () => {
+  it("is 2.5 s without a number, and keeps to the range of the setting", () => {
+    expect(holdMsOf(undefined)).toBe(HOLD_MS);
+    expect(holdMsOf("3")).toBe(HOLD_MS);
+    expect(holdMsOf(Number.NaN)).toBe(HOLD_MS);
+    expect(holdMsOf(1.5)).toBe(1500);
+    expect(holdMsOf(0)).toBe(500);
+    expect(holdMsOf(60)).toBe(10_000);
   });
 });
