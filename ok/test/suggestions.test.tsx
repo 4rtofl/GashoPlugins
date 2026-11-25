@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { lastRequest, machine, respond, sdk, session } from "../../test/sdk.tsx";
-import { HOLD_MS } from "../src/web/hold.ts";
+import { lastRequest, machine, respond, sdk, session, set } from "../../test/sdk.tsx";
+import { HOLD_MS, holdMsOf } from "../src/web/hold.ts";
 import { shows } from "../src/web/index.tsx";
 import { Suggestions } from "../src/web/suggestions.tsx";
 
@@ -129,5 +129,28 @@ describe("holding a digit key", () => {
     fireEvent.keyUp(box, { key: "1" });
     expect(box.value).toBe("");
     expect(sdk.sendInput).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1", text: "はい" });
+  });
+
+  it("waits for the seconds of the setting holdSeconds", () => {
+    set({ settings: { holdSeconds: 1 } });
+    respond({ predict: { data: three, loading: false } });
+    render(<Suggestions machine={machine()} session={idle()} />);
+    expect(screen.getByRole("button", { name: "はい" }).getAttribute("title")).toContain("1 秒押し続けても送る");
+    fireEvent.keyDown(document.body, { key: "1" });
+    act(() => vi.advanceTimersByTime(999));
+    expect(sdk.sendInput).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(sdk.sendInput).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1", text: "はい" });
+  });
+});
+
+describe("holdMsOf", () => {
+  it("is 2.5 s without a number, and keeps to the range of the setting", () => {
+    expect(holdMsOf(undefined)).toBe(HOLD_MS);
+    expect(holdMsOf("3")).toBe(HOLD_MS);
+    expect(holdMsOf(Number.NaN)).toBe(HOLD_MS);
+    expect(holdMsOf(1.5)).toBe(1500);
+    expect(holdMsOf(0)).toBe(500);
+    expect(holdMsOf(60)).toBe(10_000);
   });
 });

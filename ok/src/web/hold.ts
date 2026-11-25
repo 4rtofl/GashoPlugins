@@ -1,10 +1,19 @@
-// Choosing a suggestion from the keyboard: holding the digit key of its number (1 for the leftmost) for HOLD_MS sends
-// it. The keys are read on the whole page, except where they type into something that already has text: the chat box
+// Choosing a suggestion from the keyboard: holding the digit key of its number (1 for the leftmost) for the time of the
+// setting holdSeconds (HOLD_MS by default) sends it. The keys are read on the whole page, except where they type into something that already has text: the chat box
 // has the focus, and an empty one is where the person waits for the reply. In an empty text box the digit is kept from
-// being typed while it is held; let go before HOLD_MS, it is typed then, so that a prompt can start with a digit ("2 で").
+// being typed while it is held; let go before that, it is typed then, so that a prompt can start with a digit ("2 で").
 import { useEffect, useRef, useState } from "react";
 
 export const HOLD_MS = 2500;
+/** The range of the setting holdSeconds (gasho-plugin.json). */
+export const HOLD_MIN_MS = 500;
+export const HOLD_MAX_MS = 10_000;
+
+/** The time to hold a key for, from the setting holdSeconds: HOLD_MS when it is not a number, else within its range. */
+export function holdMsOf(seconds: unknown): number {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return HOLD_MS;
+  return Math.min(HOLD_MAX_MS, Math.max(HOLD_MIN_MS, Math.round(seconds * 1000)));
+}
 
 /** Whether a key press in `target` is for the suggestions, and whether it would type there (an empty text box). */
 export function holdTarget(target: EventTarget | null): { take: boolean; types: boolean } {
@@ -50,9 +59,9 @@ interface Held {
 
 /**
  * The index of the suggestion whose key is held (undefined: none). `onHold` is called with it once the key has been
- * held for HOLD_MS. Off while `enabled` is false (no suggestions, or one is being sent).
+ * held for `holdMs`. Off while `enabled` is false (no suggestions, or one is being sent).
  */
-export function useHoldKeys(count: number, enabled: boolean, onHold: (index: number) => void): number | undefined {
+export function useHoldKeys(count: number, enabled: boolean, holdMs: number, onHold: (index: number) => void): number | undefined {
   const [holding, setHolding] = useState<number | undefined>();
   const held = useRef<Held | undefined>(undefined);
   const latest = useRef(onHold);
@@ -90,7 +99,7 @@ export function useHoldKeys(count: number, enabled: boolean, onHold: (index: num
         held.current = undefined;
         setHolding(undefined);
         latest.current(index);
-      }, HOLD_MS);
+      }, holdMs);
       held.current = { index, key: e.key, timer, ...(where.types ? { box: e.target as HTMLElement } : {}) };
       setHolding(index);
     };
@@ -108,7 +117,7 @@ export function useHoldKeys(count: number, enabled: boolean, onHold: (index: num
       window.removeEventListener("blur", onBlur);
       cancel(false);
     };
-  }, [count, enabled]);
+  }, [count, enabled, holdMs]);
 
   return holding;
 }
