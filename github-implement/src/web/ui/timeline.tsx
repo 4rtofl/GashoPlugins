@@ -46,15 +46,19 @@ export function Timeline({ entries, label, className }: { entries: TimelineEntry
   };
   return (
     <div role="region" aria-label={label} className={cn("relative", className)}>
-      {/* The line, and its filled part growing in over it. */}
-      <div aria-hidden className="absolute top-4 bottom-4 left-[15px] w-[2px] bg-border" />
-      <motion.div
-        aria-hidden
-        className="absolute top-4 bottom-4 left-[15px] w-[2px] origin-top bg-gradient-to-b from-foreground/30 via-foreground/15 to-transparent"
-        initial={{ scaleY: 0 }}
-        animate={{ scaleY: 1 }}
-        transition={motionTransitions.springGentle}
-      />
+      {/* The line, and its filled part growing in over it. It joins entries, so a single one goes without. */}
+      {entries.length > 1 && (
+        <>
+          <div aria-hidden className="absolute top-4 bottom-4 left-[15px] w-[2px] bg-border" />
+          <motion.div
+            aria-hidden
+            className="absolute top-4 bottom-4 left-[15px] w-[2px] origin-top bg-gradient-to-b from-foreground/30 via-foreground/15 to-transparent"
+            initial={{ scaleY: 0 }}
+            animate={{ scaleY: 1 }}
+            transition={motionTransitions.springGentle}
+          />
+        </>
+      )}
       <ol className="relative space-y-3">
         {entries.map((e) => {
           const Icon = e.icon;
