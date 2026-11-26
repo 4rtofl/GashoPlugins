@@ -1,7 +1,7 @@
 {
   "id": "ok",
   "name": "OK",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Claude が返答したあと、次に送りそうな指示を予測して、入力欄の上にボタンで出す。押すと、その指示をセッションに送る",
   "genre": "other",
   "api": "1.4",
@@ -38,6 +38,26 @@
       ],
       "label": "予測に使うモデル",
       "description": "返答のたびに、このモデルの Claude Code を 1 回動かして、次の指示を予測する。プランの使用量を使う"
+    },
+    "count": {
+      "type": "number",
+      "scope": "server",
+      "default": 3,
+      "min": 1,
+      "max": 9,
+      "step": 1,
+      "label": "候補の数",
+      "description": "次の予測から、この数まで候補を出す。数字キーも、この数まで使える"
+    },
+    "maxChars": {
+      "type": "number",
+      "scope": "server",
+      "default": 200,
+      "min": 1,
+      "max": 1000,
+      "step": 1,
+      "label": "1 つの候補の最大文字数",
+      "description": "Claude Code に、この文字数までの候補を頼む。これより長い候補は、切って出す"
     },
     "holdSeconds": {
       "type": "number",
