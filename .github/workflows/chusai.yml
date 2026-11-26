@@ -1,0 +1,29 @@
+# Brings main into the open pull requests, and has Claude Code fix their conflicts and what breaks the checks once merged
+# with main (https://github.com/4rtofl/Chusai; copied from its examples/chusai.yml). The commands it runs are in
+# .github/chusai.json, read from main.
+name: Chusai
+
+on:
+  # Every merge to main can make open pull requests conflict, or break them without a conflict.
+  push:
+    branches: [main]
+  # A branch made from an old main may conflict as soon as it is opened or pushed to.
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  packages: read # `npm ci` installs the SDK, @4rtofl/gasho-plugin-sdk, from GitHub Packages
+
+jobs:
+  chusai:
+    uses: 4rtofl/Chusai/.github/workflows/resolve.yml@main
+    with:
+      registry-url: https://npm.pkg.github.com
+      registry-scope: "@4rtofl"
+      # Through sigw instead of Workload Identity Federation: the secret CHUSAI_ANTHROPIC_API_KEY holds `sgk_….sgu_…`.
+      anthropic-base-url: https://si.sigw.4rtofl.org/anthropic
+    secrets:
+      anthropic-api-key: ${{ secrets.CHUSAI_ANTHROPIC_API_KEY }}
+      app-id: ${{ secrets.CHUSAI_APP_ID }}
+      app-private-key: ${{ secrets.CHUSAI_APP_PRIVATE_KEY }}
