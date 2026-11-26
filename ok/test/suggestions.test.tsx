@@ -93,6 +93,15 @@ describe("holding a digit key", () => {
     expect(sdk.sendInput).not.toHaveBeenCalled();
   });
 
+  it("reads the digit keys up to the number of suggestions, which the setting count can make 9", () => {
+    respond({ predict: { data: { prompts: Array.from({ length: 9 }, (_, i) => `候補${i + 1}`) }, loading: false } });
+    render(<Suggestions machine={machine()} session={idle()} />);
+    expect(screen.getByRole("button", { name: "候補9" }).getAttribute("aria-keyshortcuts")).toBe("9");
+    fireEvent.keyDown(document.body, { key: "9" });
+    act(() => vi.advanceTimersByTime(HOLD_MS));
+    expect(sdk.sendInput).toHaveBeenCalledWith({ machine: "m1", sessionId: "s1", text: "候補9" });
+  });
+
   it("leaves the digit keys to the chat box while it has the focus, empty or not", () => {
     respond({ predict: { data: three, loading: false } });
     render(

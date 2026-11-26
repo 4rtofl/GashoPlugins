@@ -14,10 +14,23 @@ export interface Turn {
   text: string;
 }
 
+/** The ranges of the settings count and maxChars (gasho-plugin.json). */
+export const COUNT = { default: 3, min: 1, max: 9 };
+export const CHARS = { default: 200, min: 1, max: 1000 };
 
-export const MAX_PROMPTS = 3;
-/** A prompt longer than this is cut: it is a button. */
-export const MAX_PROMPT_CHARS = 200;
+/** How many prompts are asked for, and the length a longer one is cut to. */
+export interface Limits {
+  count: number;
+  chars: number;
+}
+
+// The Gasho server checks the range, not the step: 2.5 can come.
+const intOf = (v: unknown, r: typeof COUNT) =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(r.max, Math.max(r.min, Math.round(v))) : r.default;
+
+/** The limits of the settings count and maxChars, their defaults when they are not numbers. */
+export const limitsOf = (settings: Record<string, unknown>): Limits => ({ count: intOf(settings.count, COUNT), chars: intOf(settings.maxChars, CHARS) });
+
 /** How much of the end of the transcript is read: it can be hundreds of MB. */
 export const TAIL_BYTES = 2 * 1024 * 1024;
 /** The messages given to the model, the newest ones. */
@@ -120,7 +133,7 @@ const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s)
 const cutHead = (s: string, n: number) => (s.length > n ? `…${s.slice(-n)}` : s);
 
 /** What Claude Code is asked, or undefined when the conversation does not end with a reply of Claude's. */
-export function promptOf(turns: Turn[]): string | undefined {
+export function promptOf(turns: Turn[], { count, chars }: Limits): string | undefined {
   const recent = turns.slice(-MAX_TURNS);
   if (recent.at(-1)?.role !== "assistant") return undefined;
   const log = recent
@@ -133,10 +146,10 @@ export function promptOf(turns: Turn[]): string | undefined {
     .join("\n");
   return [
     "Below is the end of a conversation between a human and a coding agent. The agent has just replied.",
-    `Predict the ${MAX_PROMPTS} messages the human is most likely to type next, the likeliest first.`,
-    "Write each as the human would type it: short (one sentence at most), in the language the human uses, and something the agent can act on.",
+    `Predict the ${count} message${count === 1 ? "" : "s"} the human is most likely to type next, the likeliest first.`,
+    `Write each as the human would type it: at most ${chars} characters, in the language the human uses, and something the agent can act on.`,
     'When the agent asked a question or offered choices, answer it ("はい、進めて", "2 で"). Do not repeat what was already done.',
-    'Answer with a JSON array of strings only, such as ["...", "...", "..."], with nothing else.',
+    `Answer with a JSON array of strings only, such as [${Array(count).fill('"..."').join(", ")}], with nothing else.`,
     "",
     "<conversation>",
     log,
@@ -145,7 +158,7 @@ export function promptOf(turns: Turn[]): string | undefined {
 }
 
 /** The prompts in what Claude Code answered (`--output-format json`: its `result`, which should be a JSON array). */
-export function promptsOf(stdout: string): string[] {
+export function promptsOf(stdout: string, { count, chars }: Limits): string[] {
   let result: unknown;
   try {
     result = (JSON.parse(stdout) as { result?: unknown }).result;
@@ -167,9 +180,9 @@ export function promptsOf(stdout: string): string[] {
   const prompts: string[] = [];
   for (const p of list) {
     if (typeof p !== "string") continue;
-    const text = cut(p.replace(/\s+/g, " ").trim(), MAX_PROMPT_CHARS);
+    const text = cut(p.replace(/\s+/g, " ").trim(), chars);
     if (text && !prompts.includes(text)) prompts.push(text);
-    if (prompts.length === MAX_PROMPTS) break;
+    if (prompts.length === count) break;
   }
   return prompts;
 }
@@ -203,7 +216,10 @@ function failure(e: ExecError): PluginError {
   return new PluginError(why ? `次の指示を予測できませんでした（${why}）。` : "次の指示を予測できませんでした。");
 }
 
-/** The answers already given, by session and the time of its last activity, so that browsers share one run. */
+/**
+ * The answers already given, by session, the time of its last activity and the settings, so that browsers share one
+ * run and one made before the settings changed is not given after.
+ */
 const known = new Map<string, Promise<Prediction>>();
 const KNOWN_MAX = 100;
 
@@ -214,19 +230,21 @@ export function predict(ctx: DaemonContext, at: number, o: { base?: string; clau
   // DaemonSession.agent (plugin API 1.16) is not in the SDK this repository builds with yet.
   const agent = (session as { agent?: unknown }).agent;
   if (agent !== undefined && agent !== "claude") throw new PluginError("Claude Code のセッションでだけ予測します。");
-  const key = `${session.sessionId}@${at}`;
+  const model = modelOf(ctx.settings.model);
+  const limits = limitsOf(ctx.settings);
+  const key = `${session.sessionId}@${at}:${model}:${limits.count}:${limits.chars}`;
   const had = known.get(key);
   if (had) return had;
   const run = (async (): Promise<Prediction> => {
     const file = await findTranscript(session.sessionId, session.cwd, o.base);
     if (!file) return { prompts: [] };
-    const prompt = promptOf(turnsOf(await readTail(file)));
+    const prompt = promptOf(turnsOf(await readTail(file)), limits);
     if (!prompt) return { prompts: [] };
     await fs.mkdir(ctx.dataDir, { recursive: true });
     const claude = o.claude ?? process.env.GASHO_CLAUDE_BIN ?? "claude";
     try {
-      const { stdout } = await ctx.exec(claude, argsOf(prompt, modelOf(ctx.settings.model)), { cwd: ctx.dataDir, timeoutMs: RUN_MS, maxBuffer: 1024 * 1024 });
-      return { prompts: promptsOf(stdout) };
+      const { stdout } = await ctx.exec(claude, argsOf(prompt, model), { cwd: ctx.dataDir, timeoutMs: RUN_MS, maxBuffer: 1024 * 1024 });
+      return { prompts: promptsOf(stdout, limits) };
     } catch (e) {
       throw failure(e as ExecError);
     }

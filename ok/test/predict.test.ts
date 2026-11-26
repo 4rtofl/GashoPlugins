@@ -6,10 +6,12 @@ import { beforeEach, test } from "node:test";
 import { execError, fakeContext, loadDaemon } from "../../test/daemon.ts";
 import {
   argsOf,
+  CHARS,
+  COUNT,
   findTranscript,
   forget,
   LAST_REPLY_CHARS,
-  MAX_PROMPT_CHARS,
+  limitsOf,
   MAX_TURNS,
   projectFolder,
   promptOf,
@@ -34,6 +36,7 @@ async function transcript(lines: string[], cwd = "/work/app"): Promise<string> {
 }
 
 const answer = (result: string) => JSON.stringify({ type: "result", subtype: "success", result });
+const DEFAULTS = { count: COUNT.default, chars: CHARS.default };
 
 beforeEach(() => forget());
 
@@ -82,24 +85,40 @@ test("keeps what the person typed and Claude's texts, and leaves out tools, thin
 });
 
 test("asks only after a reply of Claude's, with the newest messages and the end of a long reply", () => {
-  assert.equal(promptOf([]), undefined);
-  assert.equal(promptOf([{ role: "user", text: "hi" }]), undefined);
+  assert.equal(promptOf([], DEFAULTS), undefined);
+  assert.equal(promptOf([{ role: "user", text: "hi" }], DEFAULTS), undefined);
   const turns = Array.from({ length: MAX_TURNS + 2 }, (_, i) => ({ role: i % 2 ? ("assistant" as const) : ("user" as const), text: `m${i}` }));
   turns.at(-1)!.text = `${"a".repeat(LAST_REPLY_CHARS)}END`;
-  const prompt = promptOf(turns)!;
+  const prompt = promptOf(turns, DEFAULTS)!;
   assert.ok(!prompt.includes("<human>\nm0\n"));
   assert.ok(prompt.includes("<human>\nm2\n"));
   assert.ok(prompt.includes("END\n</agent>"));
   assert.ok(prompt.includes("JSON array"));
 });
 
-test("reads the prompts out of Claude Code's answer", () => {
-  assert.deepEqual(promptsOf(answer('["はい、進めて", "テストも足して", "はい、進めて", 3]')), ["はい、進めて", "テストも足して"]);
-  assert.deepEqual(promptsOf(answer('```json\n["a", "b", "c", "d"]\n```')), ["a", "b", "c"]);
-  assert.equal(promptsOf(answer(`["${"x".repeat(MAX_PROMPT_CHARS + 10)}"]`))[0]!.length, MAX_PROMPT_CHARS + 1);
-  assert.deepEqual(promptsOf(answer("no idea")), []);
-  assert.deepEqual(promptsOf(answer("[not json]")), []);
-  assert.deepEqual(promptsOf("garbage"), []);
+test("asks for as many prompts and as many characters as the settings say", () => {
+  const prompt = promptOf([{ role: "assistant", text: "直しました。" }], { count: 5, chars: 40 })!;
+  assert.ok(prompt.includes("Predict the 5 messages"));
+  assert.ok(prompt.includes("at most 40 characters"));
+  assert.ok(prompt.includes('["...", "...", "...", "...", "..."]'));
+});
+
+test("the settings count and maxChars are whole numbers in their ranges, their defaults when not numbers", () => {
+  assert.deepEqual(limitsOf({}), { count: 3, chars: 200 });
+  assert.deepEqual(limitsOf({ count: "5", maxChars: Number.NaN }), { count: 3, chars: 200 });
+  assert.deepEqual(limitsOf({ count: 2.6, maxChars: 0 }), { count: 3, chars: 1 });
+  assert.deepEqual(limitsOf({ count: 20, maxChars: 5000 }), { count: 9, chars: 1000 });
+});
+
+test("reads the prompts out of Claude Code's answer, as many as the settings say and cut to their length", () => {
+  assert.deepEqual(promptsOf(answer('["はい、進めて", "テストも足して", "はい、進めて", 3]'), DEFAULTS), ["はい、進めて", "テストも足して"]);
+  assert.deepEqual(promptsOf(answer('```json\n["a", "b", "c", "d"]\n```'), DEFAULTS), ["a", "b", "c"]);
+  assert.equal(promptsOf(answer(`["${"x".repeat(CHARS.default + 10)}"]`), DEFAULTS)[0]!.length, CHARS.default + 1);
+  assert.deepEqual(promptsOf(answer('["a", "b", "c", "d", "e"]'), { count: 4, chars: 200 }), ["a", "b", "c", "d"]);
+  assert.deepEqual(promptsOf(answer('["コミットして", "はい"]'), { count: 3, chars: 3 }), ["コミッ…", "はい"]);
+  assert.deepEqual(promptsOf(answer("no idea"), DEFAULTS), []);
+  assert.deepEqual(promptsOf(answer("[not json]"), DEFAULTS), []);
+  assert.deepEqual(promptsOf("garbage", DEFAULTS), []);
 });
 
 test("runs Claude Code without tools, hooks or a saved session", () => {
@@ -122,6 +141,18 @@ test("predict runs Claude Code in the plugin's folder once per reply, with the m
   assert.ok(calls[0]!.args[1]!.includes("マージしますか？"));
   await daemon.call("predict", { at: 2 }, ctx);
   assert.equal(calls.length, 2);
+});
+
+test("predict runs Claude Code again for the same reply once the settings changed, and keeps to them", async () => {
+  process.env.CLAUDE_CONFIG_DIR = await transcript([user("直して"), assistant(text("直しました。マージしますか？"))]);
+  const daemon = await loadDaemon("ok");
+  const { ctx, calls } = fakeContext({ session: { cwd: "/work/app", sessionId: SID }, run: () => answer('["マージして", "テストを足して", "差分を見せて"]') });
+  assert.deepEqual(await daemon.call("predict", { at: 1 }, ctx), { prompts: ["マージして", "テストを足して", "差分を見せて"] });
+  ctx.settings.count = 2;
+  ctx.settings.maxChars = 5;
+  assert.deepEqual(await daemon.call("predict", { at: 1 }, ctx), { prompts: ["マージして", "テストを足…"] });
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1]!.args[1]!.includes("Predict the 2 messages"));
 });
 
 test("predict gives nothing without a transcript or a reply, and says why Claude Code failed", async () => {
