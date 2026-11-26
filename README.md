@@ -16,13 +16,12 @@
 | `pondering/` | Claude が作業しているあいだ、会話の末尾に Claude Code のスピナーのような文言とアニメーションを出す。文言は6つの言語から作業ごとに選び、作業の時間、書いたトークン数、動いているツールも添える。プラグインの API 1.2 に対応した Gasho が要る |
 | `remote-control-shell/` | セッションのヘッダーの「シェル」から右にパネルを開き、セッションのフォルダーでシェルのコマンドを実行する。出力は実行中から少しずつ出て、Claude の会話には入らない。プラグインの API 1.1 に対応した gasho-daemon が要る。仕様は [remote-control-shell/README.md](remote-control-shell/README.md) |
 | `session-list-rewind/` | サイドバーに、worktree の行の代わりに、リポジトリごとのカテゴリに分けたセッションを並べる。カテゴリは畳め、カテゴリもセッションもドラッグで並べ替えられる。セッション画面の上の行からは、セッションのタブと「＋」を外す。プラグインの API 1.7 に対応した Gasho が要る。仕様は [session-list-rewind/README.md](session-list-rewind/README.md) |
-| `usage/` | 入力欄の下に、セッションの Context Window の使用率をリングで出す。押すと、Context Window の使用量と、Claude.ai のプランの使用量の上限（モデルごとの週の上限を含む）を出す。プラグインの API 1.4 に対応した Gasho が要る。仕様は [usage/README.md](usage/README.md) |
 | `vscode-dark-2026/` | Gasho の画面全体を、VS Code の既定の暗いテーマ Dark 2026（microsoft/vscode の `2026-dark.json`、MIT）の色にするテーマ。プラグインの API 1.6 に対応した Gasho が要る |
 | `worktree-status/` | サイドバーの worktree の一覧に、分け方「手で決めた状態」を足す。見出し（進行中・レビュー待ちなど）はプラグインの設定で足す・名前を変える・並べ替える・消す。worktree の行を見出しへドラッグすると、その見出しに入る。どの見出しにも入れていない worktree は「その他」に並ぶ。見出しと入れた先は Gasho サーバーに保存し、どのブラウザーでも同じになる。プラグインの API 1.9 に対応した Gasho が要る。仕様は [worktree-status/README.md](worktree-status/README.md) |
 
 ## ジャンル
 
-プラグインは、`gasho-plugin.json` の `genre` に、ジャンルの ID を1つ書く。使えるジャンルは `genres.json` に並べた、連携（`integration`）、作業の管理（`workflow`）、監視（`monitoring`）、見た目（`appearance`）、開発ツール（`devtools`）、テーマ（`theme`）、その他（`other`）である。それぞれにどんなプラグインが当てはまるかも、`genres.json` に書いた。いまのプラグインは、`git` と `github` と `github-implement` が連携、`kanban` と `github-review` と `worktree-status` が作業の管理、`usage` が監視、`pondering` と `session-list-rewind` と `better-worktree-list` と `image-preview` が見た目、`remote-control-shell` が開発ツール、`ayu-dark` と `vscode-dark-2026` がテーマ、`ok` がその他である。Gasho のプラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて、`genres.json` の順に並べる。
+プラグインは、`gasho-plugin.json` の `genre` に、ジャンルの ID を1つ書く。使えるジャンルは `genres.json` に並べた、連携（`integration`）、作業の管理（`workflow`）、監視（`monitoring`）、見た目（`appearance`）、開発ツール（`devtools`）、テーマ（`theme`）、その他（`other`）である。それぞれにどんなプラグインが当てはまるかも、`genres.json` に書いた。いまのプラグインは、`git` と `github` と `github-implement` が連携、`kanban` と `github-review` と `worktree-status` が作業の管理、`pondering` と `session-list-rewind` と `better-worktree-list` と `image-preview` が見た目、`remote-control-shell` が開発ツール、`ayu-dark` と `vscode-dark-2026` がテーマ、`ok` がその他である。Gasho のプラグインの画面は、カードにジャンルの名前を出し、「GashoPlugins にあるもの」をジャンルごとに分けて、`genres.json` の順に並べる。
 
 ```json
 {
