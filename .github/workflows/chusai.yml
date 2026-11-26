@@ -19,8 +19,6 @@ jobs:
   chusai:
     uses: 4rtofl/Chusai/.github/workflows/resolve.yml@main
     with:
-      # true: push and comment nothing; write what Chusai would do to the job summary.
-      dry-run: true
       registry-url: https://npm.pkg.github.com
       registry-scope: "@4rtofl"
       # Through sigw instead of Workload Identity Federation: the secret CHUSAI_ANTHROPIC_API_KEY holds `sgk_….sgu_…`.
