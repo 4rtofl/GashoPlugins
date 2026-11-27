@@ -1,0 +1,50 @@
+{
+  "id": "word-meaning",
+  "name": "Word Meaning",
+  "version": "1.0.0",
+  "description": "会話の Claude の回答で語を選ぶと、その語の意味を、前後の文に合わせて一言で出す",
+  "genre": "other",
+  "api": "1.21",
+  "web": {
+    "js": "web.js",
+    "css": "web.css"
+  },
+  "daemon": {
+    "js": "daemon.js"
+  },
+  "methods": {
+    "meaning": {
+      "kind": "read",
+      "timeoutSeconds": 60
+    }
+  },
+  "settings": {
+    "model": {
+      "type": "select",
+      "scope": "server",
+      "default": "haiku",
+      "options": [
+        {
+          "value": "haiku",
+          "label": "Haiku（速い）"
+        },
+        {
+          "value": "sonnet",
+          "label": "Sonnet"
+        }
+      ],
+      "label": "意味を調べるモデル",
+      "description": "意味を調べるたびに、このモデルの Claude Code を 1 回動かす。プランの使用量を使う"
+    },
+    "contextChars": {
+      "type": "number",
+      "scope": "server",
+      "default": 600,
+      "min": 0,
+      "max": 4000,
+      "step": 100,
+      "label": "Claude Code に渡す文字数",
+      "description": "選んだ語と、同じ回答の中で語の前後を合わせて、この文字数まで渡す。前と後に半分ずつ渡し、片方が足りなければ、もう片方を多く渡す。語より少ないときは語だけを渡す"
+    }
+  }
+}
