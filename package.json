@@ -17,6 +17,7 @@
     "remote-control-shell",
     "session-list-rewind",
     "vscode-dark-2026",
+    "word-meaning",
     "worktree-status"
   ],
   "scripts": {
