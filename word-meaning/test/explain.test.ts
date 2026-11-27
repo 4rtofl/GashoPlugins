@@ -81,6 +81,9 @@ test("meaning says why there is no meaning, and cuts a long one", async () => {
   await assert.rejects(daemon.call("meaning", params, ctx), { message: "Claude Code が見つかりません（gasho-daemon の GASHO_CLAUDE_BIN）。" });
   out = execError({ stderr: "Invalid API key\nmore" });
   await assert.rejects(daemon.call("meaning", params, ctx), { message: "意味を調べられませんでした（Invalid API key）。" });
+  // As Claude Code fails when it is not logged in: exit 1, why in the JSON on stdout, nothing on stderr.
+  out = execError({ code: 1, stdout: answer("Not logged in · Please run /login", { is_error: true }) });
+  await assert.rejects(daemon.call("meaning", params, ctx), { message: "意味を調べられませんでした（Not logged in · Please run /login）。" });
   out = answer("Credit balance is too low", { is_error: true });
   await assert.rejects(daemon.call("meaning", params, ctx), { message: "意味を調べられませんでした（Credit balance is too low）。" });
   out = answer(" ");

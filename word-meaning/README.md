@@ -29,7 +29,7 @@
 4. Claude Code は、プラグインのフォルダー（`ctx.dataDir`）の中で、`-p --output-format json --effort low` と、短い system prompt、ツール・フック・MCP サーバー・スキル・セッションの保存なしで動かす。gasho-daemon はこのフォルダーの Claude Code をセッションとして扱わないので、Gasho のセッションの一覧には出ない（API 1.4）
 5. 答えの `result` を 1 行にして返す。300 字より長ければ切る
 
-Claude Code は 50 秒まで待つ。過ぎたとき、Claude Code が見つからないとき（gasho-daemon の `GASHO_CLAUDE_BIN`）、Claude Code が失敗したとき（標準エラーの 1 行目を添える）、答えが空のときは、それぞれの理由を画面に出す。
+Claude Code は 50 秒まで待つ。過ぎたとき、Claude Code が見つからないとき（gasho-daemon の `GASHO_CLAUDE_BIN`）、Claude Code が失敗したとき（Claude Code が答えた理由を添える。無ければ標準エラーの 1 行目）、答えが空のときは、それぞれの理由を画面に出す。
 
 ## 設定
 

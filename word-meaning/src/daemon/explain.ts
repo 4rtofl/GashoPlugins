@@ -78,26 +78,37 @@ export function argsOf(prompt: string, model: string): string[] {
   ];
 }
 
-/** The meaning in what Claude Code answered (`--output-format json`: its `result`), on one line. */
-function meaningOf(stdout: string): string {
-  let out: { result?: unknown; is_error?: unknown };
+/** What Claude Code answered (`--output-format json`: its `result`, on one line), undefined when stdout is not that. */
+function resultOf(stdout: string): { text: string; isError: boolean } | undefined {
+  let out: { result?: unknown; is_error?: unknown } | null;
   try {
     out = JSON.parse(stdout) as typeof out;
   } catch {
-    throw new PluginError("Claude Code の答えを読めませんでした。");
+    return undefined;
   }
-  const text = typeof out.result === "string" ? out.result.replace(/\s+/g, " ").trim() : "";
-  if (out.is_error === true) throw new PluginError(text ? `意味を調べられませんでした（${text.slice(0, 200)}）。` : "意味を調べられませんでした。");
-  if (!text) throw new PluginError("Claude Code が意味を答えませんでした。");
-  return text.length > MEANING_CHARS ? `${text.slice(0, MEANING_CHARS)}…` : text;
+  if (typeof out !== "object" || out === null) return undefined;
+  return { text: typeof out.result === "string" ? out.result.replace(/\s+/g, " ").trim() : "", isError: out.is_error === true };
+}
+
+const notExplained = (why: string | undefined) => new PluginError(why ? `意味を調べられませんでした（${why.slice(0, 200)}）。` : "意味を調べられませんでした。");
+
+/** The meaning in what Claude Code answered. */
+function meaningOf(stdout: string): string {
+  const out = resultOf(stdout);
+  if (!out) throw new PluginError("Claude Code の答えを読めませんでした。");
+  if (out.isError) throw notExplained(out.text);
+  if (!out.text) throw new PluginError("Claude Code が意味を答えませんでした。");
+  return out.text.length > MEANING_CHARS ? `${out.text.slice(0, MEANING_CHARS)}…` : out.text;
 }
 
 /** Why Claude Code gave no answer, for the person. */
 function failure(e: ExecError): PluginError {
   if (e.killed) return new PluginError("意味を、時間内に調べられませんでした。");
   if (e.code === "ENOENT" || e.code === 127) return new PluginError("Claude Code が見つかりません（gasho-daemon の GASHO_CLAUDE_BIN）。");
-  const why = (e.stderr || e.stdout || "").trim().split("\n")[0]?.slice(0, 200);
-  return new PluginError(why ? `意味を調べられませんでした（${why}）。` : "意味を調べられませんでした。");
+  // A Claude Code that fails (not logged in, a usage limit) exits with 1 and says why in its JSON on stdout, often with
+  // nothing on stderr.
+  const out = resultOf(e.stdout ?? "");
+  return notExplained((out ? out.text || e.stderr || "" : e.stderr || e.stdout || "").trim().split("\n")[0]);
 }
 
 /** The params of `meaning`, which come from the browser. */
