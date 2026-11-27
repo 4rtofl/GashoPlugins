@@ -32,7 +32,11 @@ const NODE: Record<TimelineTone, string> = {
   merged: "border-violet-500/50 bg-violet-500/10 text-violet-600 dark:text-violet-300",
 };
 
-export function Timeline({ entries, label, className }: { entries: TimelineEntry[]; label: string; className?: string }) {
+/**
+ * `nodes={false}`: no icons on the left and no line, so the cards take the whole width; the chevron in a card's
+ * header is then the button that folds it.
+ */
+export function Timeline({ entries, label, nodes = true, className }: { entries: TimelineEntry[]; label: string; nodes?: boolean; className?: string }) {
   const id = useId();
   const [picked, setPicked] = useState<string>();
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
@@ -47,7 +51,7 @@ export function Timeline({ entries, label, className }: { entries: TimelineEntry
   return (
     <div role="region" aria-label={label} className={cn("relative", className)}>
       {/* The line, and its filled part growing in over it. It joins entries, so a single one goes without. */}
-      {entries.length > 1 && (
+      {nodes && entries.length > 1 && (
         <>
           <div aria-hidden className="absolute top-4 bottom-4 left-[15px] w-[2px] bg-border" />
           <motion.div
@@ -66,11 +70,13 @@ export function Timeline({ entries, label, className }: { entries: TimelineEntry
           if (e.body === undefined) {
             return (
               <li key={e.key} className="flex min-h-8 items-center gap-3 text-xs text-muted-foreground">
-                <span className="flex w-8 shrink-0 justify-center">
-                  <span className={cn("relative z-10 flex size-6 items-center justify-center rounded-full border", tone)}>
-                    <Icon className="size-3.5" />
+                {nodes && (
+                  <span className="flex w-8 shrink-0 justify-center">
+                    <span className={cn("relative z-10 flex size-6 items-center justify-center rounded-full border", tone)}>
+                      <Icon className="size-3.5" />
+                    </span>
                   </span>
-                </span>
+                )}
                 <span className="min-w-0 flex-1 leading-relaxed break-words">
                   {e.title}
                   {e.time && <span className="ml-1.5 whitespace-nowrap">{e.time}</span>}
@@ -80,18 +86,24 @@ export function Timeline({ entries, label, className }: { entries: TimelineEntry
           }
           const open = !folded.has(e.key);
           const panel = `${id}-${e.key}`;
+          const fold = { "aria-expanded": open, "aria-controls": panel, "aria-label": open ? "畳む" : "開く" };
+          const chevron = (
+            <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }} className="text-muted-foreground">
+              <ChevronDown className="size-3.5" />
+            </motion.span>
+          );
           return (
             <li key={e.key} className="flex items-start gap-3">
-              <button
-                type="button"
-                onClick={() => toggle(e.key)}
-                aria-expanded={open}
-                aria-controls={panel}
-                aria-label={open ? "畳む" : "開く"}
-                className={cn("relative z-10 flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50", tone)}
-              >
-                <Icon className="size-4" />
-              </button>
+              {nodes && (
+                <button
+                  type="button"
+                  onClick={() => toggle(e.key)}
+                  {...fold}
+                  className={cn("relative z-10 flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50", tone)}
+                >
+                  <Icon className="size-4" />
+                </button>
+              )}
               <article className={cn("min-w-0 flex-1 overflow-hidden rounded-xl border transition-colors", picked === e.key ? "border-border-hover bg-surface" : "border-border")}>
                 <header onClick={() => toggle(e.key)} className="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 bg-surface/60 px-3 py-1.5 text-xs text-muted-foreground">
                   <span className="min-w-0">{e.title}</span>
@@ -99,9 +111,14 @@ export function Timeline({ entries, label, className }: { entries: TimelineEntry
                   <span className="ml-auto flex items-center gap-1" onClick={(ev) => ev.stopPropagation()}>
                     {e.actions}
                   </span>
-                  <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }} className="text-muted-foreground">
-                    <ChevronDown className="size-3.5" />
-                  </motion.span>
+                  {nodes ? (
+                    chevron
+                  ) : (
+                    // Its click goes up to the header, which folds the card.
+                    <button type="button" {...fold} className="flex cursor-pointer rounded outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+                      {chevron}
+                    </button>
+                  )}
                 </header>
                 <AnimatePresence initial={false}>
                   {open && (

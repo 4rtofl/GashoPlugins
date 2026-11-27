@@ -15,7 +15,7 @@ function Conversation() {
   const rest = [...pinned(undefined), ...pinned("bottom")];
   return (
     <div className="space-y-4">
-      <Timeline label="本文" entries={pinned("top")} />
+      <Timeline label="本文" nodes={false} entries={pinned("top")} />
       {PARTS.map((p, i) => p.UnderBody && <p.UnderBody key={i} />)}
       {rest.length > 0 && <Timeline label="会話" entries={rest} />}
     </div>
